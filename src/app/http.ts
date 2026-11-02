@@ -36,7 +36,7 @@ export interface HttpHost {
   readonly sources: SourceRegistry
   readonly prompts: Pick<Prompts, 'current' | 'version' | 'history' | 'preview' | 'save' | 'defaultChanged'>
   readonly sessions: Pick<Sessions, 'status' | 'notify' | 'delivery'>
-  readonly settings: Pick<Settings, 'view' | 'save' | 'pause' | 'sync' | 'refreshLabels'>
+  readonly settings: Pick<Settings, 'view' | 'save' | 'pause' | 'sync' | 'refreshLabels' | 'proposal' | 'acceptProposal' | 'dismissProposal'>
   readonly engine: EngineForPeople
   readonly executor: Pick<DshExecutor, 'activeCount'>
   readonly health: Record<string, Health>
@@ -202,6 +202,9 @@ function routes(runtime: HttpHost): Routes {
       return runtime.settings.save(block, request.value, request.revision, 'panel')
     },
     'GET policy/history': () => policyHistory(store, runtime.sources, policyVersion(store.settings())),
+    'GET policy-proposal': () => ({ proposal: runtime.settings.proposal() }),
+    'POST policy-proposal/accept': () => runtime.settings.acceptProposal(),
+    'POST policy-proposal/dismiss': () => runtime.settings.dismissProposal(),
     'POST policy-sync/:id': async ({ params }) => ({ policy: await runtime.settings.sync(params.id) }),
     'POST setup/check': () => { runtime.checkSetup(); return { restarting: true } },
     'GET models': () => runtime.models(),

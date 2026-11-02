@@ -175,7 +175,7 @@ curl -s -b "$jar" -H 'x-orchestrator-request: 1' http://127.0.0.1:3082/orchestra
 
 `login` reads the tokenized URL (`dsh web: http://127.0.0.1:<port>/?token=…`) from the newest startup log of the profile, or takes it from `--launch-url`, exchanges it on `GET /` for the cookie, and writes the cookie as a curl cookie jar, `.artifacts/control/profiles/<profile>/cookies.txt`, readable only by its owner. It prints the jar's path. The token changes with each process, but the cookie stays valid across restarts until it expires, 30 days by default (`cookieMaxAgeDays` of DeepSeek Harness's Connection), so sign in again only after it expires or after a 401. Use the same host name as the URL DeepSeek Harness printed, since the cookie belongs to that host and port. Treat the jar as a password.
 
-API saves have the panel's permissions. They can change execution environment and setup account fields, unlike saves made through the main Session's tools. The sign-in keeps other local users and processes without the cookie out; it is not a boundary against the agent itself, whose shell runs as the operator's user and can read the same log and DeepSeek Harness credentials (see Permissions and isolation).
+API saves have the panel's permissions. They can change the Policy, the accept mode, the execution environment and setup account fields, unlike saves made through the main Session's tools, which can only propose a Policy or accept-mode change for a person to accept. The sign-in keeps other local users and processes without the cookie out; it is not a boundary against the agent itself, whose shell runs as the operator's user and can read the same log and DeepSeek Harness credentials (see Permissions and isolation).
 
 Agents may rely on these routes and fields. The other routes in `src/app/api.ts` serve the panel and change with it.
 
@@ -188,6 +188,8 @@ Agents may rely on these routes and fields. The other routes in `src/app/api.ts`
 | `POST executor/pause` with `{"paused": true}` or `false` | Pauses or resumes processing: `paused` |
 | `POST setup/check` | Runs setup again by restarting dsh-superagent: `restarting: true`. Refused when setup has nothing to fix |
 | `POST policy-sync/<source id>` | Syncs that Source's allowed list now: `policy`, the Source's part as saved |
+| `GET policy-proposal` | The main Session's pending Policy proposal, or `null`: `proposal`, with its `block` (`policy` or `eval`), `value`, the `revision` it was made from, `reason`, the request it carries out, `changed`, the settings paths it changes, `at`, and `stale`, true once the block was saved since |
+| `POST policy-proposal/accept`, `POST policy-proposal/dismiss` | Accepts the proposal, saving it as `PUT settings/<block>` would against the revision it was made from (409 when stale, 404 when none waits), or discards it: `dismissed`, whether one was waiting |
 | `GET prompts`, `PUT prompts` with `{"config", "baseRevision"}` | Reads the prompt configuration: `current`, with its `revision` and `config`, `defaults`, `sections`, the team sections in the order Sessions read them, `skillName`, the pattern of a team skill's name, `builtin`, the names a team skill cannot take, and `skillPrefix`, which Sessions load a skill's name under. Or saves it: the new `revision` |
 | `POST tickets/<id>/retry`, `POST tickets/<id>/stop` | Retries or stops a Ticket, as the panel does |
 

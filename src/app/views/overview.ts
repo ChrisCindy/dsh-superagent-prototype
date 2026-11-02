@@ -1,8 +1,9 @@
-/** Overview view: active system problems, tickets awaiting human action, executor load, and 24-hour trigger flow. */
+/** Overview view: active system problems, a pending Policy proposal, tickets awaiting human action, executor load, and 24-hour trigger flow. */
 import { reasonText, ticketStage, type Decision, type Thread } from '../../core/index.ts'
 import type { Health } from '../../sources/host.ts'
 import type { SetupProblem } from '../../setup.ts'
 import { anyoneAllowed } from '../../policy.ts'
+import { KV } from '../../kv.ts'
 import type { Store } from '../store.ts'
 import { awaitingEval, dayAgo, newestFirst, ownersOf, snapshot, threadSummary, type ViewHost } from './records.ts'
 import { sourceHealth, type HealthMap } from './sources.ts'
@@ -45,8 +46,12 @@ export function overview(host: ViewHost, health: HealthMap, policyVersionValue: 
   const running = instances.filter(instance => instance.enabled && instance.installed).map(instance => sourceHealth(sources, instance, health))
   // Exclude source-owned and policy-sync health entries so only core runtime errors surface as `runtime-error`.
   const sourceParts = new Set(instances.flatMap(instance => sources.kind(instance.kind)?.health ?? []))
+  // A Policy change the main Session proposed takes effect only once a person accepts it here.
+  const proposal = store.get(KV.settings.proposal)
   const problems = [
     ...(setup ? [{ kind: 'setup' as const, ...setup }] : []),
+    ...(proposal ? [{ kind: 'policy-proposal' as const, proposal: { block: proposal.block, changed: proposal.changed, reason: proposal.reason,
+      at: proposal.at, stale: proposal.revision !== store.blockRevision(proposal.block) } }] : []),
     ...(running.length ? [] : [{ kind: 'no-source' as const }]),
     // Only allowed senders can originate work, so empty allowlists mean no request can ever become a ticket.
     ...(anyoneAllowed(settings) ? [] : [{ kind: 'no-allowed' as const }]),

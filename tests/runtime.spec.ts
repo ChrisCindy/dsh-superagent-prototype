@@ -1795,3 +1795,29 @@ it('keeps the Policy the main Session judges by in its prompt, after admission a
   expect(policy()).toContain('No rule is enabled: a proactive candidate can only be ignored.')
   expect(policy()).toContain('The accept mode and the rules decide proactive candidates only')
 })
+
+it('shows the main Session\'s Policy proposal on the overview and applies it only when a person accepts it through the panel API', async () => {
+  const policy = runtime.store.settings().policy
+  const rules = policy.rules.map(rule => ({ ...rule, enabled: false }))
+  const propose = () => runTool(runtime.masterId, 'orchestrator_policy_propose',
+    { block: 'policy', value: { ...policy, rules }, revision: runtime.store.blockRevision('policy'), reason: 'Alice asked to pause the rules' })
+  expect(await propose()).toMatchObject({ proposed: true })
+  expect(runtime.store.settings().policy).toEqual(policy)
+  expect(overviewOf(runtime).problems).toContainEqual({ kind: 'policy-proposal', proposal: { block: 'policy', changed: rules.map((_, index) => `policy.rules.${index}.enabled`),
+    reason: 'Alice asked to pause the rules', at: expect.any(String), stale: false } })
+  expect(await api('GET', 'policy-proposal')).toMatchObject({ status: 200, body: { proposal: { block: 'policy', revision: runtime.store.blockRevision('policy') } } })
+  expect(await api('POST', 'policy-proposal/accept')).toMatchObject({ status: 200, body: { saved: true, policy_changed: true } })
+  expect(runtime.store.settings().policy.rules.every(rule => !rule.enabled)).toBe(true)
+  expect(runtime.store.settingsHistory(1)[0]).toMatchObject({ source: 'panel', block: 'policy' })
+  expect(overviewOf(runtime).problems.some(problem => problem.kind === 'policy-proposal')).toBe(false)
+  expect(await api('POST', 'policy-proposal/accept')).toMatchObject({ status: 404, body: { code: 'noPolicyProposal' } })
+  // A proposal made against a revision the panel saved over since is refused with the stale-settings status, and a person dismisses it.
+  await runTool(runtime.masterId, 'orchestrator_policy_propose',
+    { block: 'policy', value: policy, revision: runtime.store.blockRevision('policy'), reason: 'Alice asked to turn them on again' })
+  await runtime.settings.save('policy', { ...runtime.store.settings().policy, rules: [] }, runtime.store.blockRevision('policy'), 'panel')
+  expect(overviewOf(runtime).problems).toContainEqual(expect.objectContaining({ kind: 'policy-proposal', proposal: expect.objectContaining({ stale: true }) }))
+  expect(await api('POST', 'policy-proposal/accept')).toMatchObject({ status: 409 })
+  expect(runtime.store.settings().policy.rules).toEqual([])
+  expect(await api('POST', 'policy-proposal/dismiss')).toEqual({ status: 200, body: { dismissed: true } })
+  expect(await api('GET', 'policy-proposal')).toEqual({ status: 200, body: { proposal: null } })
+})

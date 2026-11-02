@@ -274,6 +274,34 @@ it('saves a settings block by name, a Source\'s block with the Source\'s id', as
   expect(await save({ block: 'pause', value: { paused: true }, revision: 0 })).toEqual({ paused: true })
 })
 
+it('refuses a Policy or accept-mode save from the main Session, which proposes it for a person to accept on the panel instead', async () => {
+  const save = (args: Record<string, unknown>) => h.runTool(h.runtime.masterId, 'orchestrator_settings_save', args)
+  const propose = (args: Record<string, unknown>) => h.runTool(h.runtime.masterId, 'orchestrator_policy_propose', args)
+  const { policy, eval: evaluation } = h.runtime.store.settings()
+  const rules = policy.rules.map(rule => ({ ...rule, enabled: false })), mode = evaluation.mode === 'auto' ? 'observe' : 'auto'
+  // The settings tool no longer takes the Policy block, and refuses a change of the accept mode by its code.
+  await expect(save({ block: 'policy', value: { ...policy, rules }, revision: h.runtime.store.blockRevision('policy') })).rejects.toThrow()
+  await expect(save({ block: 'eval', value: { ...evaluation, mode }, revision: h.runtime.store.blockRevision('eval') }))
+    .rejects.toMatchObject({ code: 'panelOnlyPolicy' })
+  expect(h.runtime.store.settings().eval.mode).toBe(evaluation.mode)
+  // A proposal changes nothing; the latest one replaces an earlier one.
+  expect(await propose({ block: 'eval', value: { ...evaluation, mode }, revision: h.runtime.store.blockRevision('eval'), reason: 'Alice asked for it' }))
+    .toEqual({ proposed: true, changed: ['eval.mode'], effect: expect.stringContaining('person') })
+  expect(await propose({ block: 'policy', value: { ...policy, rules }, revision: h.runtime.store.blockRevision('policy'), reason: 'Alice asked to pause the rules' }))
+    .toMatchObject({ proposed: true, changed: rules.map((_, index) => `policy.rules.${index}.enabled`) })
+  expect(h.runtime.store.settings().policy).toEqual(policy)
+  expect(h.runtime.settings.proposal()).toMatchObject({ block: 'policy', reason: 'Alice asked to pause the rules', stale: false })
+  // A value that changes nothing, or a stale revision, records no proposal.
+  expect(await propose({ block: 'policy', value: policy, revision: h.runtime.store.blockRevision('policy'), reason: 'No change' }))
+    .toEqual({ proposed: false, changed: [] })
+  await expect(propose({ block: 'eval', value: evaluation, revision: h.runtime.store.blockRevision('eval') + 1, reason: 'Stale' })).rejects.toThrow('Settings changed')
+  expect(h.runtime.settings.proposal()).toMatchObject({ block: 'policy' })
+  // A person accepts it on the panel, which saves it as the panel would.
+  expect(await h.runtime.settings.acceptProposal()).toMatchObject({ saved: true, policy_changed: true })
+  expect(h.runtime.store.settings().policy.rules.every(rule => !rule.enabled)).toBe(true)
+  expect(h.runtime.settings.proposal()).toBeNull()
+})
+
 it('previews a prompt configuration without saving it, and saves one only against the revision it edits', async () => {
   const save = (args: Record<string, unknown>) => h.runTool(h.runtime.masterId, 'orchestrator_prompts_save', args)
   const config = { ...h.runtime.prompts.current().config, scope: 'Finish what was asked.' }
@@ -424,7 +452,7 @@ it('tells the main Session of the settings, prompts, requeues and unsubscription
   await h.runtime.idle()
   expect(notices().at(-1)).toEqual({ settings_saved: 'eval', changed: ['eval.mode'], read: 'settings/eval' })
   const before = notices().length
-  expect(await save({ block: 'eval', value: { ...evaluation, mode: 'auto' }, revision: h.runtime.store.blockRevision('eval') })).not.toHaveProperty('context_delivery')
+  expect(await save({ block: 'eval', value: { ...evaluation, mode: 'observe', timeoutSeconds: 90 }, revision: h.runtime.store.blockRevision('eval') })).not.toHaveProperty('context_delivery')
   const config = { ...h.runtime.prompts.current().config, scope: 'Finish what was asked.' }
   expect(await h.runTool(h.runtime.masterId, 'orchestrator_prompts_save', { config, baseRevision: 0 })).not.toHaveProperty('context_delivery')
   await h.acceptedTicket(feishu('1', '@bot 修一下回归'))

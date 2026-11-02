@@ -7,6 +7,7 @@ import type { HttpHost } from '../src/app/http.ts'
 import { SettingsSchema } from '../src/policy.ts'
 import { SetupError } from '../src/setup.ts'
 import { fakeConnection, PANEL_HEADERS } from './fixtures/connection.ts'
+import { UserError } from '../src/core/index.ts'
 
 type Handler = (req: unknown, res: unknown) => Promise<void>
 type Headers = Record<string, string | undefined>
@@ -141,4 +142,26 @@ it('passes on the status of a request Connection refuses at its Host and Origin 
   const call = serve({})
   call.connection.admit = () => ({ rejection: 403 })
   expect(await call('POST', 'executor/pause', { paused: true })).toEqual({ status: 403, body: { error: 'Request refused by DeepSeek Harness' } })
+})
+
+it('serves the pending Policy proposal and answers a stale or missing one\'s accept with 409 or 404', async () => {
+  let proposal: { block: string; stale: boolean } | null = { block: 'policy', stale: true }
+  const call = serve({
+    settings: {
+      proposal: () => proposal,
+      acceptProposal: async () => {
+        if (!proposal) throw new UserError('noPolicyProposal')
+        if (proposal.stale) throw new SettingsConflict('Settings changed. Reload before saving.')
+        proposal = null
+        return { saved: true, revision: 4, restarting: false }
+      },
+      dismissProposal: () => { const dismissed = proposal !== null; proposal = null; return { dismissed } },
+    },
+  })
+  expect(await call('GET', 'policy-proposal')).toEqual({ status: 200, body: { proposal: { block: 'policy', stale: true } } })
+  expect(await call('POST', 'policy-proposal/accept')).toMatchObject({ status: 409 })
+  proposal = { block: 'policy', stale: false }
+  expect(await call('POST', 'policy-proposal/accept')).toMatchObject({ status: 200, body: { revision: 4 } })
+  expect(await call('POST', 'policy-proposal/accept')).toMatchObject({ status: 404, body: { code: 'noPolicyProposal' } })
+  expect(await call('POST', 'policy-proposal/dismiss')).toEqual({ status: 200, body: { dismissed: false } })
 })

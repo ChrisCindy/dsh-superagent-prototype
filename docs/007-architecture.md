@@ -218,7 +218,9 @@ Its `context`, `read` and `decide` methods serve `orchestrator_eval`, `orchestra
 
 `Settings` (`src/app/settings.ts`) reads and writes revisioned settings blocks. `current` and `view` read them; `save(block, value, revision, origin)` validates a save; `pause(paused, origin)` changes the separate `paused` setting.
 
-Every save declares its origin: `panel`, `tool` or `sync`. Only `panel` can change the execution environment or fields listed in `SETUP_FIELDS` (`src/deployment.ts`).
+Every save declares its origin: `panel`, `tool` or `sync`. Only `panel` can change the execution environment or fields listed in `SETUP_FIELDS` (`src/deployment.ts`). A `tool` save cannot change the `policy` block or the accept mode (`panelOnlyPolicy`); `sync` still saves a Source's synced list.
+
+`propose(block, value, revision, reason)` records the main Session's change to `policy` or `eval` as the one pending proposal, `KV.settings.proposal`, with the paths it changes (`changedPaths`); a later proposal replaces it. `proposal()` reads it, `stale` once its block's revision moved; `acceptProposal()` saves it with origin `panel` against its revision, refusing a stale one with `SettingsConflict`; `dismissProposal()` discards it.
 
 A Policy-version change calculates `policyEffects`, records which Tickets were notified, and calls `Engine.policyChanged`. `syncable` and `sync(id)` refresh a Source's Policy part. `refreshLabels(id)` refreshes display names.
 
@@ -350,7 +352,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/app/views/threads.ts` | The Thread lists, a Thread's timeline, the search and the Decision list |
 | `src/app/views/sources.ts` | The Source status: each Source instance's state, its last day's counts, and what it filtered and dropped in that day |
 | `src/app/views/settings.ts` | The settings page's view: each block with its revision, each Source's settings with its kind's form, and the execution environment |
-| `src/app/views/overview.ts` | The overview: Tickets that need a person, problems, the last day's flow and the Executor's load |
+| `src/app/views/overview.ts` | The overview: Tickets that need a person, problems with the pending Policy proposal, the last day's flow and the Executor's load |
 | `src/executor/dsh.ts` | The DshExecutor, `WorkerSlots`, `ticketExecution`, `inputMessage` and `mandateInstructions` |
 | `src/executor/background.ts` | A worker's background work in DeepSeek Harness, the shell jobs its Session owns (`ctx.jobs`) and its subagents (`ctx.subagents`): `runningJobs`, `untilQuiet`, `killJobs`, `collectJobs`, `stopSubagents`, `stopBackground`, `until`, and `cancelled`, the workers whose turn a stop of their subagents cancelled |
 | `src/infra/commands.ts` | `Commands`, the CLI transport: `run`; `api` and `pages`, limited to the configured repository and validated; `lark` as the bot; `git`. `CliError` carries the code a command's output reports, such as a GitHub HTTP status, and a command that prints nothing fails with how it ended, never with its arguments; `validItems` skips and counts the malformed items of a list |
@@ -427,7 +429,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `tests/tools.spec.ts` | The Sessions' tools: what `orchestrator_read` reads for each role, and the shapes and checks of the other main Session tools |
 | `tests/runtime-concurrency.spec.ts` | Work that overlaps: Triggers during a pass, Tickets that change during deliveries and launches |
 | `tests/http.spec.ts` | The same-origin and loopback checks, the sign-in every route but `GET state` requires, the status of each kind of failure, the body limit, path parameters and queries |
-| `tests/settings.spec.ts` | Settings saves that race a model or account check, a Policy sync that a save outran, and the refusals of the pause, a sync and a block |
+| `tests/settings.spec.ts` | Settings saves that race a model or account check, a Policy sync that a save outran, the refusals of the pause, a sync and a block, the refusal of a tool's Policy or accept-mode change, and the pending Policy proposal |
 | `tests/views.spec.ts` | What the management views derive from the Store, such as the Thread a dropped message belongs to |
 | `tests/timeline.spec.ts` | A Thread's pages and a Trigger's neighbours by time and then id, with every received Trigger's time in one form |
 | `tests/migration.spec.ts` | The schema 11 migration: every stored record in its current shape, and the refusal of older schemas |
@@ -471,6 +473,7 @@ A generated column is computed from its row's JSON and is empty outside its set,
 | --- | --- |
 | Schema | Current schema version |
 | Settings versions | `settings-revision`, `settings-version:<n>`, `settings-block-revision:<block>`; snapshots include origin, Policy version and affected Tickets |
+| Policy proposal | `settings-proposal`: the main Session's one pending change to `policy` or `eval`, its revision, request and changed paths |
 | Prompt versions | `prompt-revision`, `prompt-version:<n>` |
 | Main Session | `master-id` |
 | Session prompt history | `session-prompts:<session id>` |
@@ -489,7 +492,7 @@ Nothing deletes old records yet, so these grow without bound: the `trigger`, `di
 
 ### Main Session tools
 
-The main Session has 14 application tools:
+The main Session has 15 application tools:
 
 | Purpose | Tools |
 | --- | --- |
@@ -498,11 +501,11 @@ The main Session has 14 application tools:
 | Re-evaluate | `orchestrator_trigger_requeue` |
 | Assess proactive work | `orchestrator_eval`, `orchestrator_eval_read`, `orchestrator_eval_decide` |
 | Communicate and unsubscribe | `orchestrator_reply`, `orchestrator_thread_unsubscribe` |
-| Configure | `orchestrator_settings_save`, `orchestrator_policy_sync`, `orchestrator_prompts_save` |
+| Configure | `orchestrator_settings_save`, `orchestrator_policy_propose`, `orchestrator_policy_sync`, `orchestrator_prompts_save` |
 
 `orchestrator_route` accepts 1–20 decisions in order. Each accept, attach, stop or ignore runs as a separate Engine command. It also permits ignoring an inferred candidate directly from its card. `orchestrator_ticket_note` sends a fact as context, not authority.
 
-Settings saves select `policy`, `eval`, `executor`, `pause`, or `source`; the last also names its Source id. A prompt save with `preview: true` composes text without saving.
+Settings saves select `eval`, `executor`, `pause`, or `source`; the last also names its Source id. A save that changes the accept mode is refused. A Policy or accept-mode change goes through `orchestrator_policy_propose` with `policy` or `eval`, the whole block, its revision and the person's request; it changes nothing until a person accepts it on the panel. A prompt save with `preview: true` composes text without saving.
 
 The main Session also has DeepSeek Harness's `skill`, `bash`, `read`, `read_image`, `job_output`, `job_list` and `job_kill`. Avoiding code reads is a prompt rule, not a tool restriction.
 
@@ -535,7 +538,7 @@ The worker preset is defined in `cordis.patch.yml` and selected through `WORKER_
 
 Routing results use `{decision?, reason, ticket?}`. `orchestrator_route` returns `{results}`, preserving item order and adding each item's `trigger_id` and `kind`. Invalid or refused items return `refused` and a reason without stopping the batch.
 
-Settings and prompt saves return the saved configuration. Policy sync returns the Source, allowed-list size, and `added` and `removed` names.
+Settings and prompt saves return the saved configuration. A proposal returns `proposed`, false when it changes nothing, and the `changed` paths. Policy sync returns the Source, allowed-list size, and `added` and `removed` names.
 
 `orchestrator_eval` returns context rather than instructions. Assessment instructions live in `runtime/admission` (`prompts/admission.md`), and rules in `runtime/policy`. Its context includes:
 

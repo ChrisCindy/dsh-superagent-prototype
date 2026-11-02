@@ -108,6 +108,8 @@ export interface PanelServer {
   opened: string[]
   dropped: DroppedReply[]
   failing: Extract<Problem, { kind: 'outgoing' }>['outgoing'][]
+  /** The main Session's pending Policy proposal, if any. */
+  proposal?: Extract<Problem, { kind: 'policy-proposal' }>['proposal'] | undefined
 }
 export let server: PanelServer
 
@@ -181,6 +183,7 @@ const overviewView = (): ApiResponse<'GET overview'> => {
   const setup = problem ?? feishuProblem
   return {
     problems: [...setup ? [{ kind: 'setup' as const, ...setup }] : [],
+      ...server.proposal ? [{ kind: 'policy-proposal' as const, proposal: server.proposal }] : [],
       ...KINDS.some(kind => server.settings.sources[kind.kind]?.enabled !== false) ? [] : [{ kind: 'no-source' as const }],
       ...feishuProblem || server.settings.sources.feishu?.enabled === false ? [] : [{ kind: 'source-error' as const, source: { id: 'feishu',
         title: { zh: '飞书', en: 'Feishu' },
@@ -367,6 +370,14 @@ const ROUTES: { [K in keyof Api]: Route<K> } = {
     return { restarting, revision: server.revisions[block] }
   } },
   'GET policy/history': { answer: () => server.history },
+  'GET policy-proposal': { answer: () => ({ proposal: server.proposal ? { ...server.proposal, value: {}, revision: 0 } : null }) },
+  'POST policy-proposal/accept': { answer: () => {
+    if (!server.proposal) return refuse(404, 'No Policy proposal is waiting', { code: 'noPolicyProposal', values: {} })
+    if (server.proposal.stale) return refuse(409, 'Settings changed. Reload before saving.')
+    server.proposal = undefined
+    return { revision: 4, restarting: false }
+  } },
+  'POST policy-proposal/dismiss': { answer: () => { const dismissed = !!server.proposal; server.proposal = undefined; return { dismissed } } },
   'POST policy-sync/:id': { answer: ({ params }) => ({ policy: server.settings.policy.sources[params.id] }) },
   'POST setup/check': { answer: () => ({ restarting: true }) },
   'GET models': { answer: () => ({ default: { provider: 'host', model: 'default' }, routableProviders: [], failures: [],

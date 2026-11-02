@@ -1,4 +1,4 @@
-/** Overview page: pending Tickets requiring human action, active system problems, 24-hour flow counts, and Executor load. */
+/** Overview page: pending Tickets requiring human action, active system problems (including a pending Policy proposal), 24-hour flow counts, and Executor load. */
 import type { ReactNode } from 'react'
 import { usePoll, type Problem } from './api.ts'
 import { Button, Icon } from './controls.tsx'
@@ -28,6 +28,21 @@ function ProblemLine({ problem, onChanged }: { problem: Problem; onChanged: () =
     case 'setup': return row(t(problem.place === 'feishu' ? 'problemSetupFeishu' : 'problemSetup'), <p className="dt-error"><SetupMessage
       problem={problem} /></p>,
       setupPage(problem.place), t(`problemSetupFix.${problem.place}`), <CheckSetupButton />)
+    // A Policy change the main Session proposed waits here for a person, who accepts it as a panel save or dismisses it.
+    case 'policy-proposal': {
+      const { proposal } = problem
+      const paths = proposal.changed.join(t('listSeparator'))
+      return row(t(`problemPolicyProposal.${proposal.block}`), <>
+        <ul className="dt-changes dt-mono">{proposal.changed.map(path => <li key={path}>{path}</li>)}</ul>
+        <p className="dt-clamp">{t('policyProposalReason', { reason: proposal.reason })}</p>
+      </>, settingsRoute('eval'), proposal.stale ? t('policyProposalStale') : undefined, <>
+        {!proposal.stale && <ConfirmButton variant="outline" icon="shield" label={t('policyProposalAccept')} title={t('policyProposalAccept')}
+          message={t('policyProposalAcceptConfirm', { paths })}
+          onConfirm={async () => { await call('POST policy-proposal/accept'); await onChanged() }} />}
+        <ConfirmButton variant="outline" icon="dismiss" label={t('dismiss')} title={t('dismiss')} message={t('policyProposalDismissConfirm')}
+          onConfirm={async () => { await call('POST policy-proposal/dismiss'); await onChanged() }} />
+      </>)
+    }
     case 'no-source': return row(t('problemNoSource'), undefined, settingsRoute('source'), undefined, go(t('actionOpenSources'),
       settingsRoute('source')))
     case 'no-allowed': return row(t('problemNoAllowed'), undefined, settingsRoute('eval'), undefined, go(t('actionAddAllowed'),

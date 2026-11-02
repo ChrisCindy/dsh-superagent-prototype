@@ -16,12 +16,16 @@ The tabs follow the workflow: **Overview**, **Source**, **Trigger**, **Eval**, *
 
 | Tab | Shows |
 | --- | --- |
-| Overview | Tickets needing action, system problems, activity counts for the last 24 hours, and Executor load. Each block links to its detailed page |
+| Overview | Tickets needing action, system problems with the main Session's pending Policy proposal first, activity counts for the last 24 hours, and Executor load. Each block links to its detailed page |
 | Source | Source state, setup problems and non-zero counts. Filtered Triggers and dropped messages cover the same 24-hour window as Overview |
 | Trigger | Threads filtered by Subscribed, Evaluating, New Triggers in 24 h, or All Threads. Each Thread shows its Triggers newest first, Decisions and Subscriptions |
 | Eval | Decisions with their reason and matched rules |
 | Execution | Executor state, Pause processing, and Tickets filtered by Open, Pending, Working, Waiting for a Trigger or Ended. Ticket details show actions, authorization, waiting Inputs, Subscriptions and Assignments |
 | Settings | Sources, Eval, Execution, Prompts and Deployment. Each group includes its save history |
+
+### Policy proposals
+
+The main Session cannot save the Policy or the accept mode; it proposes a change a person asked for. Overview lists the one pending proposal as a problem row: what it changes (the Policy or the Eval settings), the settings paths it changes, and the request it carries out. **Accept** asks for confirmation, names the paths, and saves the proposal as a panel save. **Dismiss** asks for confirmation and discards it. A proposal whose block was saved since is stale: the row says so and offers only **Dismiss**.
 
 ### Reading individual records
 

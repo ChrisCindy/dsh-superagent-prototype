@@ -157,3 +157,30 @@ it('says when no Source is on, an Eval is past its deadline or a message keeps f
   await click('评估超时未决定：#9 迟迟未决')
   expect(server.requests.some(request => request.path.startsWith('threads/github:9'))).toBe(true)
 })
+
+it('puts the main Session\'s Policy proposal before the other problems, for a person to accept or dismiss after confirming', async () => {
+  server.proposal = { block: 'policy', changed: ['policy.rules.0.enabled', 'policy.sources.github.allowed.1'], reason: 'Alice asked to add Bob',
+    at: '2026-09-22T00:00:00Z', stale: false }
+  await mount()
+  const row = () => all('.dt-cards .dt-att').find(item => item.textContent?.includes(zh['problemPolicyProposal.policy']))
+  expect(all('.dt-cards .dt-att-what')[0]?.textContent).toBe(zh['problemPolicyProposal.policy'])
+  expect([...row()!.querySelectorAll('.dt-changes li')].map(item => item.textContent)).toEqual(['policy.rules.0.enabled', 'policy.sources.github.allowed.1'])
+  expect(row()!.textContent).toContain(zh.policyProposalReason.replace('{reason}', 'Alice asked to add Bob'))
+  // Accepting asks first and names what it changes; nothing is sent until the person confirms.
+  await click(zh.policyProposalAccept)
+  expect(server.requests.some(request => request.path === 'policy-proposal/accept')).toBe(false)
+  expect(text()).toContain(zh.policyProposalAcceptConfirm.replace('{paths}', 'policy.rules.0.enabled、policy.sources.github.allowed.1'))
+  await click(zh.confirm)
+  expect(server.requests.find(request => request.path === 'policy-proposal/accept')).toMatchObject({ method: 'POST' })
+  expect(row()).toBeUndefined()
+  // A stale proposal offers only dismissal, and says why.
+  server.proposal = { block: 'eval', changed: ['eval.mode'], reason: 'Alice asked for auto', at: '2026-09-22T00:00:00Z', stale: true }
+  await remount()
+  const stale = all('.dt-cards .dt-att').find(item => item.textContent?.includes(zh['problemPolicyProposal.eval']))!
+  expect(stale.textContent).toContain(zh.policyProposalStale)
+  expect([...stale.querySelectorAll('button')].map(button => button.textContent)).toEqual([zh['problemPolicyProposal.eval'], zh.dismiss])
+  await click([...stale.querySelectorAll<HTMLElement>('button')].at(-1)!)
+  await click(zh.confirm)
+  expect(server.requests.find(request => request.path === 'policy-proposal/dismiss')).toMatchObject({ method: 'POST' })
+  expect(server.proposal).toBeUndefined()
+})
