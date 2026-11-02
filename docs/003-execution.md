@@ -83,13 +83,34 @@ These wrappers establish defaults, not a security boundary: a worker can still e
 
 ## Merging
 
-Auto-merge is governed by the **Delivery requirements** prompt. The host has no merge-specific decision logic.
+The host checks a merge, and GitHub enforces it; the prompt only says when to ask.
 
-By default, the Executor never enables auto-merge as the agent account: GitHub attributes the merge to whoever enabled it. Delivery requirements must name another account's CLI for merging. Without one, people merge the pull request.
+An Executor never merges or enables auto-merge with its `gh`: GitHub attributes the merge to whoever enabled auto-merge, and that must not be the agent account. It calls `orchestrator_merge_request` with the pull request's number. The host refuses unless every check passes:
 
-The default instructions allow auto-merge only for a pull request opened for the Ticket, when it is ready, the required approvals cover the head commit, and additions plus deletions total fewer than 200 lines. Before pushing another revision, the Executor withdraws auto-merge.
+- the Ticket opened the pull request and follows it (`follows` with `own`), and the pull request is open;
+- it is not a draft;
+- every CI check run and commit status of its head commit succeeded, none failing or still running;
+- its additions plus deletions are at most `maxLines`;
+- approvals of accounts other than the agent's cover the head commit, at least `requireApprovals` of them, counting each person's latest decision and no bot; an approval of an earlier commit with the same tree, such as one rewritten to credit a reviewer, covers it too;
+- no requested change is outstanding;
+- the merge CLI is set and is signed in to an account other than the agent's.
 
-Reviews without a body, such as approvals, also arrive as Triggers and can wake an Executor waiting for review. These instructions govern the agent, not GitHub's merge rules. To enforce approvals, require them in branch protection and dismiss stale approvals. Omit the merge CLI or remove the auto-merge paragraph to require manual merging.
+A refusal lists each failed check, with `next` saying whether a person merges the pull request or the Executor may ask again. Once every check passes, the host runs `<merge CLI> pr merge <number> --auto --<method> --match-head-commit <head> --repo <repository>`, so only the commit it checked can merge.
+
+The checks read GitHub through the agent's CLI, as every Source read does. The merge settings are part of the Execution settings, and only the panel changes them:
+
+| Setting | Default | Means |
+| --- | --- | --- |
+| `merge.cli` | empty | A command name or absolute path signed in to another account that may merge. Empty: people merge every pull request, and every request is refused so |
+| `merge.method` | `squash` | `squash`, `merge` or `rebase`, as the repository allows |
+| `merge.maxLines` | 200 | The largest change, additions plus deletions, that auto-merge accepts |
+| `merge.requireApprovals` | 1 | The approvals of the head commit required from accounts other than the agent's |
+
+The Delivery requirements prompt says when to ask: for a pull request opened for the Ticket once it is ready, again when approvals arrive, and never on a reviewer's behalf. Before pushing another revision, the Executor withdraws auto-merge with `gh pr merge <number> --disable-auto`. A team that removes the merge paragraph from the prompt still has the host's checks.
+
+Defense in depth: the `gh` shim refuses `gh pr merge` (except `--disable-auto`), and a `gh api` call that names the REST merge endpoint or the `mergePullRequest` or `enablePullRequestAutoMerge` mutations, pointing to the tool. The shim is not a security boundary: a query read from a file, an alias or the real CLI by its path still reaches GitHub as the agent account. GitHub's own rules are the boundary. Setup checks that the default branch requires at least one approving review, dismisses stale approvals on a push, and that the agent account cannot bypass this; otherwise it shows a warning, as Setup checks in 006 Deployment describes.
+
+Reviews without a body, such as approvals, also arrive as Triggers and can wake an Executor waiting for review.
 
 ## How a Ticket ends
 

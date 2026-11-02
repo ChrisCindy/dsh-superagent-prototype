@@ -87,6 +87,19 @@ export const EvalConfigSchema = z.object({
 }).strict()
 const CommandNameSchema = z.string().regex(/^[A-Za-z0-9._-]+$/).refine(name => name !== '.' && name !== '..', 'Not a command name')
   .refine(name => !WORKER_COMMANDS.includes(name), `${WORKER_COMMANDS.join(', ')} cannot be blocked`)
+/**
+ * How `orchestrator_merge_request` enables auto-merge: the CLI of an account other than the agent's that enables it (a command
+ * name or an absolute path; empty means people merge every PR), the merge method, the largest change it accepts (additions plus
+ * deletions), and the approvals of the head commit it requires from accounts other than the agent's.
+ */
+export const MergeConfigSchema = z.object({
+  cli: z.string().trim().refine(cli => cli === '' || cli.startsWith('/') || !cli.includes('/'), 'A command name or an absolute path, or empty')
+    .default(''),
+  method: z.enum(['squash', 'merge', 'rebase']).default('squash'),
+  maxLines: z.number().int().min(LIMITS.mergeMaxLines.min).max(LIMITS.mergeMaxLines.max).default(200),
+  requireApprovals: z.number().int().min(LIMITS.mergeApprovals.min).max(LIMITS.mergeApprovals.max).default(1),
+}).strict()
+export type MergeConfig = z.infer<typeof MergeConfigSchema>
 /** An absolute path without `.` or `..` segments, written without a trailing slash (except `/` itself). */
 const WritableRootSchema = z.string().trim().max(LIMITS.writableRoots.chars)
   .refine(path => path.startsWith('/') && !path.split('/').some(part => part === '.' || part === '..'), 'An absolute path without . or ..')
@@ -100,7 +113,7 @@ export const SANDBOXES = ['workspace', 'full'] as const
 export type Sandbox = typeof SANDBOXES[number]
 /**
  * Executor settings: worker model, concurrency, ticket directory root (empty defaults to `<stateDir>/work`), `prepare` command,
- * blocked commands, the `sandbox` of managed Sessions, and the extra `writableRoots` of an Executor Session.
+ * blocked commands, the `sandbox` of managed Sessions, the extra `writableRoots` of an Executor Session, and merging.
  */
 export const ExecutorConfigSchema = z.object({
   model: RoleModelSchema.nullable().default(null),
@@ -111,6 +124,7 @@ export const ExecutorConfigSchema = z.object({
   sandbox: z.enum(SANDBOXES).default('workspace'),
   writableRoots: z.array(WritableRootSchema).max(LIMITS.writableRoots.count)
     .refine(roots => new Set(roots).size === roots.length, 'Duplicate writable roots').default([]),
+  merge: MergeConfigSchema.default(() => MergeConfigSchema.parse({})),
 }).strict()
 export const SourceInstanceSchema = z.object({ enabled: z.boolean().default(true), config: z.record(z.string(), z.unknown()).default({}) }).strict()
 export const SettingsSchema = z.object({

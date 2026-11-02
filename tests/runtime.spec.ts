@@ -12,7 +12,7 @@ import { PRESET_TABLE, jobRegistry, permissionPresets } from './fixtures/host.ts
 import { evalsHealth } from '../src/app/views/overview.ts'
 import { mandateInstructions } from '../src/executor/dsh.ts'
 import { masterPrompt } from '../src/app/context.ts'
-import { reference, testMachine } from './fixtures/deployment.ts'
+import { reference, reviewedBranch, testMachine } from './fixtures/deployment.ts'
 import type { Machine } from '../src/deployment.ts'
 import { SCHEMA_VERSION, Store } from '../src/app/store.ts'
 import { TextCache } from '../src/app/cache.ts'
@@ -38,7 +38,7 @@ import { fakeConnection, PANEL_HEADERS } from './fixtures/connection.ts'
 
 let runtime: Runtime
 const viewsOf = (value: Runtime) => ({ store: value.store, sources: value.sources, links: value.links() })
-const overviewOf = (value: Runtime) => overview(viewsOf(value), value.health, policyVersion(value.store.settings()), executorLoad(value.store, value.executor.activeCount()), value.setupProblem ?? value.feishuProblem)
+const overviewOf = (value: Runtime) => overview(viewsOf(value), value.health, policyVersion(value.store.settings()), executorLoad(value.store, value.executor.activeCount()), value.setupProblem ?? value.feishuProblem, value.setupWarnings)
 let directory: string
 let controller: { create: ReturnType<typeof vi.fn>; selectModel: ReturnType<typeof vi.fn>; resolveAgent: ReturnType<typeof vi.fn>; rename: ReturnType<typeof vi.fn>; prompt: ReturnType<typeof vi.fn>; inspect: ReturnType<typeof vi.fn> }
 type RegisteredTool = { name: string; output: { render: (args: unknown, result: unknown) => unknown }; execute: (args: unknown, execution: { signal: AbortSignal }) => Promise<unknown> }
@@ -147,6 +147,7 @@ beforeEach(async () => {
     [`git -C ${directory} remote get-url --push origin`]: 'https://github.com/acme/widgets.git\n',
     [`${AGENT()} api user`]: '{"login":"agent-bot","id":7}', [`${AGENT()} api repos/acme/widgets --jq {name: .full_name, push: .permissions.push}`]: '{"name":"acme/widgets","push":true}\n',
     [`${OTHER()} api user`]: '{"login":"agent-bot","id":7}', [`${OTHER()} api repos/acme/widgets --jq {name: .full_name, push: .permissions.push}`]: '{"name":"acme/widgets","push":true}\n',
+    ...reviewedBranch(AGENT()), ...reviewedBranch(OTHER()),
     [`${BOT()} auth status`]: JSON.stringify({ appId: 'cli_bot', brand: 'feishu', identities: { bot: { status: 'ready' } } }),
     [`${BOT()} config strict-mode`]: 'strict-mode: bot (source: profile)',
     [`${BOT()} api GET /open-apis/bot/v3/info --as bot --format ndjson`]: '{"bot":{"open_id":"ou_bot"},"code":0,"msg":"ok"}',
@@ -888,6 +889,27 @@ it('waits for setup without the agent\'s GitHub CLI: the panel works, and nothin
   await vi.waitFor(() => expect(restarts).toHaveBeenCalledTimes(2))
 })
 
+it('runs with a warning when the agent account may bypass the review rules of the default branch, shown on the overview, the Source and the state', async () => {
+  answers[`${AGENT()} api repos/acme/widgets/rulesets/1`] = '{"current_user_can_bypass":"always"}\n'
+  const next = await restart()
+  await next.ready
+  expect(next.configured()).toBe(true)
+  const warning = { place: 'github', code: 'mergeBypass', values: { account: 'agent-bot', branch: 'master', repository: 'acme/widgets' },
+    detail: expect.stringContaining('@agent-bot may bypass the review rules of master') }
+  expect(next.setupWarnings).toEqual([warning])
+  expect(next.health.runtime).toMatchObject({ state: 'ready' })
+  // Warnings follow a setup problem, of which there is none; no Source kind is registered after this restart.
+  expect(overviewOf(next).problems).toEqual([{ kind: 'setup-warning', ...warning }, { kind: 'no-source' }])
+  expect(((await api('GET', 'overview')).body as { problems: unknown[] }).problems).toEqual([{ kind: 'setup-warning', ...warning }, { kind: 'no-source' }])
+  expect((await api('GET', 'state')).body).toMatchObject({ setup: { problem: null, warnings: [warning] } })
+  const sources = (await api('GET', 'sources')).body as unknown as { id: string; warnings?: unknown[] }[]
+  expect(sources.find(source => source.id === 'github')?.warnings).toEqual([warning])
+  expect(sources.find(source => source.id === 'feishu')).not.toHaveProperty('warnings')
+  // Checking again is allowed while a warning stands, so a fix made on GitHub shows without another change.
+  next.checkSetup()
+  await vi.waitFor(() => expect(restarts).toHaveBeenCalledTimes(1))
+})
+
 it('reports each setup problem where the operator fixes it, and checks the agent CLI the way worker shells run it', async () => {
   const needs = async (place: string, code: string, values: Record<string, string>, accounts: Accounts = {}) => {
     const next = await restart({}, accounts)
@@ -1112,15 +1134,17 @@ it('passes team text with template braces to every Session literally, without re
   }
 })
 
-it('leaves auto-merge to the delivery requirements, with the agent\'s own gh and the line threshold', async () => {
+it('leaves auto-merge to the merge tool the delivery requirements name, whose conditions are settings rather than prompt text', async () => {
   const { ticket } = await acceptedTicket()
   expect(runtime.ticketEnvironment(ticket).map(variable => variable.key)).not.toContain('DSH_SUPERAGENT_GITHUB_MERGE_ACCOUNT')
   expect(ticket.mandate).not.toHaveProperty('autoMergeLineLimit')
   const delivery = runtime.prompts.current().config.delivery
-  expect(delivery).toContain('it changes fewer than 200 lines (additions plus deletions);')
-  // Auto-merge is never enabled as the agent account; only a merge CLI the section names enables it.
-  expect(delivery).toContain('Never enable auto-merge as the agent account')
-  expect(delivery).toContain('<merge CLI> pr merge <number> --auto --merge --match-head-commit <sha>')
+  expect(delivery).not.toContain('200 lines')
+  // Auto-merge is never enabled with the agent's gh; the host enables it as the merge account once its checks pass.
+  expect(delivery).toContain('A worker never merges a PR or enables auto-merge with gh')
+  expect(delivery).toContain('orchestrator_merge_request')
+  expect(delivery).not.toContain('<merge CLI>')
+  expect(runtime.store.settings().executor.merge).toEqual({ cli: '', method: 'squash', maxLines: 200, requireApprovals: 1 })
   expect(runtime.prompts.preview(runtime.prompts.current().config).worker).not.toContain('gh-merge')
 })
 

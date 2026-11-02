@@ -40,3 +40,19 @@ export class SetupError extends Error {
   }
   get problem(): SetupProblem { return { place: this.place, code: this.code, values: this.values, detail: this.message } }
 }
+
+/**
+ * Setup findings that leave dsh-superagent running: the Overview and the Source page show each with its fix. A warning names
+ * a GitHub rule that should back what the prompts ask of the agent, such as an approval before a merge.
+ */
+export const SETUP_WARNINGS = {
+  mergeUnverified: ['github', '@{account} cannot read the review rules of {branch}, so dsh-superagent cannot check that GitHub requires an approval before a merge; check in the repository settings that {branch} requires an approving review and dismisses stale approvals when new commits are pushed.'],
+  mergeUnprotected: ['github', '{branch} does not require an approving review that a new push dismisses, so only the prompts keep unreviewed commits from merging; in a branch protection rule or ruleset of {branch}, require at least one approving review and dismiss stale approvals when new commits are pushed.'],
+  mergeBypass: ['github', '@{account} may bypass the review rules of {branch}, so the agent could merge without an approval; remove it from the bypass list, or turn on Do not allow bypassing the above settings.'],
+} as const satisfies Record<string, readonly [SetupPlace, string]>
+export type SetupWarningCode = keyof typeof SETUP_WARNINGS
+export interface SetupWarning { place: SetupPlace; code: SetupWarningCode; values: Record<string, string>; detail: string }
+export function setupWarning(code: SetupWarningCode, values: Record<string, string> = {}): SetupWarning {
+  const [place, text] = SETUP_WARNINGS[code]
+  return { place, code, values, detail: fill(text, values) }
+}

@@ -20,9 +20,9 @@ import { KV } from '../kv.ts'
  */
 export class SettingsConflict extends Error {}
 const now = (): string => new Date().toISOString()
-/** Executor settings that control shell execution paths, prepare commands, command shims, and how managed Sessions are confined. */
+/** Executor settings that control shell execution paths, prepare commands, command shims, how managed Sessions are confined, and who merges and when. */
 const environment = ({ executor }: SettingsValue) => JSON.stringify([executor.directory, executor.prepare, executor.blockedCommands,
-  executor.sandbox, executor.writableRoots])
+  executor.sandbox, executor.writableRoots, executor.merge])
 /** Executor settings that decide the permission preset of every managed Session, which a restart applies to them all. */
 const confinement = ({ executor }: SettingsValue) => JSON.stringify([executor.sandbox, executor.writableRoots])
 
@@ -64,7 +64,7 @@ const BLOCKS: Record<'policy' | 'eval' | 'executor' | 'source', Block> = {
   executor: {
     parse: value => ExecutorConfigSchema.parse(value),
     merge: (settings, value) => ({ ...settings, executor: value as SettingsValue['executor'] }),
-    // Only the management panel may modify shell execution paths or commands.
+    // Only the management panel may modify shell execution paths or commands, or the merge account and its conditions.
     guard: (current, candidate, origin) => { if (origin !== 'panel' && environment(current) !== environment(candidate)) throw new UserError('panelOnlyEnvironment') },
   },
   source: {
@@ -91,7 +91,7 @@ export interface SettingsHost {
   /** Source host passed to source kinds' policy syncs and label refreshes. */
   readonly sourceHost: SourceHost
   /** Setup state, account/command checks, and restart trigger when setup-read fields change. */
-  readonly setup: Pick<Setup, 'configured' | 'checkAccounts' | 'checkConfinement' | 'blockCommands' | 'restart'>
+  readonly setup: Pick<Setup, 'configured' | 'checkAccounts' | 'checkConfinement' | 'checkMergeCli' | 'blockCommands' | 'restart'>
   /** Triggers an immediate pass so work newly allowed by a settings save runs right away. */
   requestPass(): void
 }
@@ -190,6 +190,8 @@ export class Settings {
     rules.guard?.(current, candidate, origin)
     if (setupChanged(current, candidate)) await this.host.setup.checkAccounts(block, candidate)
     if (confinement(current) !== confinement(candidate)) this.host.setup.checkConfinement(candidate)
+    // A changed merge CLI is checked before it is saved; it takes effect at the next merge request, without a restart.
+    if (candidate.executor.merge.cli !== current.executor.merge.cli) await this.host.setup.checkMergeCli(candidate.executor.merge)
     if (stale()) throw new SettingsConflict('Settings changed during the checks. Reload before saving.')
     // Re-read current settings after async checks in case unrelated blocks were saved concurrently.
     const old = store.settings()

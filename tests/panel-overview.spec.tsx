@@ -4,6 +4,7 @@ import { expect, it } from 'vitest'
 import { en, zh } from '../src/client/locales.ts'
 import { usePanel, mount, remount, all, find, tab, click, text } from './fixtures/panel.tsx'
 import { server, droppedReply, threadSummary } from './fixtures/panel-server.ts'
+import { setupWarning } from '../src/setup.ts'
 
 usePanel()
 it('leads the overview with the pending Tickets, then problems, the last day and the Executor, each linking to its stage', async () => {
@@ -183,4 +184,21 @@ it('puts the main Session\'s Policy proposal before the other problems, for a pe
   await click(zh.confirm)
   expect(server.requests.find(request => request.path === 'policy-proposal/dismiss')).toMatchObject({ method: 'POST' })
   expect(server.proposal).toBeUndefined()
+})
+
+it('shows a setup warning as a warning that keeps dsh-superagent running, on the overview and on its Source, with a check again', async () => {
+  const warning = setupWarning('mergeBypass', { account: 'agent-bot', branch: 'main', repository: 'acme/widgets' })
+  server.setup = { ...server.setup, warnings: [warning] }
+  await mount()
+  const row = all('.dt-cards .dt-att').find(item => item.textContent?.includes(zh.problemSetupWarning))!
+  expect(row.classList.contains('dt-att-error')).toBe(false)
+  expect(row.textContent).toContain('@agent-bot 可以绕过 main 的审查规则')
+  expect(row.textContent).toContain(zh.problemSetupWarningFix)
+  expect([...row.querySelectorAll('button')].some(button => button.textContent === '重新检查')).toBe(true)
+  await click(find(zh.problemSetupWarning, 'button'))
+  expect(tab(zh['tab.source']).getAttribute('aria-selected')).toBe('true')
+  // Only the GitHub Source names it.
+  const rows = all('.dt-form > .dt-list > .dt-row')
+  expect(rows.find(item => item.textContent?.includes('GitHub'))!.textContent).toContain('@agent-bot 可以绕过 main 的审查规则')
+  expect(rows.find(item => item.textContent?.includes('飞书'))!.textContent).not.toContain('审查规则')
 })

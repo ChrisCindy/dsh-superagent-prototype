@@ -2,7 +2,7 @@
  * Bilingual UI dictionaries (`[zh, en]`) and glossary groupings, following the domain terms in `docs/001-domain.md`.
  */
 import { USER_ERRORS } from '../core/errors.ts'
-import { SETUP_PROBLEMS } from '../setup.ts'
+import { SETUP_PROBLEMS, SETUP_WARNINGS } from '../setup.ts'
 import { HEALTH_TEXT } from '../sources/host.ts'
 
 const TEXT = {
@@ -151,6 +151,8 @@ const TEXT = {
   'problemSetupFix.execution': ['在设置 › 执行修正后保存，会重新检查；在 dsh-superagent 之外修复的（例如配置文件），点“重新检查”。', 'Fix it in the Execution settings and save to check again; after a fix outside dsh-superagent, such as in the profile configuration, choose Check again.'],
   'problemSetupFix.deployment': ['在部署设置里修正后保存，会重新检查；在 dsh-superagent 之外修复的（例如升级 git），点“重新检查”。', 'Fix it in the Deployment settings and save to check again; after a fix outside dsh-superagent, such as upgrading git, choose Check again.'],
   problemSetupFeishu: ['飞书机器人检查未通过，飞书来源暂停', 'Feishu bot check failed; the Feishu Source is paused'],
+  problemSetupWarning: ['GitHub 没有强制合并前的审批', 'GitHub does not enforce approval before a merge'],
+  problemSetupWarningFix: ['dsh-superagent 照常运行。在 GitHub 修改仓库设置后，点“重新检查”。', 'dsh-superagent keeps running. After changing the repository settings on GitHub, choose Check again.'],
   // Source
   labelsAdded: ['列表已更新，新增：{names}', 'List updated, added: {names}'],
   labelsCurrent: ['列表已是最新', 'List is up to date'],
@@ -385,6 +387,19 @@ const TEXT = {
   prepareCommandEmpty: ['留空：空目录', 'Empty: an empty directory'],
   blockedCommands: ['禁止调用的命令', 'Blocked commands'],
   blockedCommandsHint: ['执行器 Session 调用这些命令名时直接失败，例如用你个人账号登录的 CLI。只拦按名字的调用，用绝对路径仍能运行，所以不是安全边界。gh、git、lark-cli 不能禁止。', 'Command names that fail when an Executor Session calls them, such as a CLI signed in to your own account. Only calls by name fail; an absolute path still runs, so this is not a security boundary. gh, git and lark-cli cannot be blocked.'],
+  mergeTitle: ['合并', 'Merging'],
+  mergeIntro: ['执行器 Session 用 orchestrator_merge_request 请求合并它开的 PR。dsh-superagent 检查 PR 已就绪、CI 通过、改动不超过行数上限、智能体以外的账号批准了 head 提交且没有未处理的修改要求，然后用合并用的 CLI 开启自动合并。智能体的 gh 拒绝 pr merge。只能在管理页修改。', 'An Executor Session requests the merge of a PR it opened with orchestrator_merge_request. dsh-superagent checks that the PR is ready, CI passed, it changes no more lines than the limit, accounts other than the agent approved its head commit and no requested change is outstanding, then enables auto-merge with the merge CLI. The agent\'s gh refuses pr merge. Only the management page can change these settings.'],
+  mergeCli: ['合并用的 CLI', 'Merge CLI'],
+  mergeCliHint: ['命令名或绝对路径，登录的是智能体以外、可以合并的账号；GitHub 把合并记在开启自动合并的账号上。留空时由人合并每个 PR。', 'A command name or absolute path signed in to an account other than the agent\'s that may merge; GitHub attributes the merge to the account that enabled auto-merge. Leave it empty for people to merge every PR.'],
+  mergeCliEmpty: ['留空：由人合并', 'Empty: people merge'],
+  mergeMethod: ['合并方式', 'Merge method'],
+  'mergeMethod.squash': ['压缩合并', 'Squash'],
+  'mergeMethod.merge': ['合并提交', 'Merge commit'],
+  'mergeMethod.rebase': ['变基合并', 'Rebase'],
+  mergeMaxLines: ['行数上限', 'Line limit'],
+  mergeMaxLinesHint: ['新增加删除的行数超过它的 PR 由人合并。', 'A PR whose additions plus deletions exceed it is merged by a person.'],
+  mergeApprovals: ['需要的批准', 'Approvals required'],
+  mergeApprovalsHint: ['智能体以外的账号对 head 提交的批准数。', 'Approvals of the head commit from accounts other than the agent\'s.'],
   blockedCommandsNone: ['以空格分隔；没有', 'Separated by spaces; none'],
   sandbox: ['沙箱', 'Sandbox'],
   sandboxHint: ['工作区：主 Session 只读，执行器 Session 只能写工单目录、临时目录和可写目录，都不弹审批，被拒的写入直接失败。完全访问：两者都能写操作系统用户能写的任何地方，包括状态目录和配置文件；只在工具链在沙箱里跑不了时临时使用。', 'Workspace: the main Session reads only, and an Executor Session writes only its Ticket directory, the temporary areas and the writable roots; neither asks for approval, and a denied write fails. Full access: both write anywhere the OS user can, the state directory and the profile included; use it only while a toolchain cannot run in the sandbox.'],
@@ -441,6 +456,10 @@ const TEXT = {
   'change.blockedCommands': ['禁止调用的命令：{from} → {to}', 'Blocked commands: {from} → {to}'],
   'change.sandbox': ['沙箱：{from} → {to}', 'Sandbox: {from} → {to}'],
   'change.writableRoots': ['可写目录：{from} → {to}', 'Writable roots: {from} → {to}'],
+  'change.mergeCli': ['合并用的 CLI：{from} → {to}', 'Merge CLI: {from} → {to}'],
+  'change.mergeMethod': ['合并方式：{from} → {to}', 'Merge method: {from} → {to}'],
+  'change.mergeMaxLines': ['自动合并的行数上限：{from} → {to}', 'Auto-merge line limit: {from} → {to}'],
+  'change.mergeApprovals': ['自动合并需要的批准：{from} → {to}', 'Approvals auto-merge requires: {from} → {to}'],
   configHistory: ['配置历史', 'Configuration history'],
   'change.evalModel': ['研判模型', 'Assessor model'],
   'change.executorModel': ['执行器模型', 'Executor model'],
@@ -731,11 +750,13 @@ const TEXT = {
   'userError.notQuestion': ['回答必须针对最初由人提出的问题，而不是执行器报告或自动触发。', USER_ERRORS.notQuestion[1]],
   'userError.noAnswer': ['执行器还没有回答这条人发的触发。请等待执行器的报告，或用 orchestrator_ticket_request_status 请求一份（它只对处于等待状态的执行器起作用）；普通进展不能当作回答。', USER_ERRORS.noAnswer[1]],
   'userError.noChannel': ['这个工单或触发没有可以回复的渠道。', USER_ERRORS.noChannel[1]],
-  'userError.panelOnlyEnvironment': ['执行环境（执行目录、准备命令、禁止调用的命令）只能在管理页修改。', USER_ERRORS.panelOnlyEnvironment[1]],
+  'userError.panelOnlyEnvironment': ['执行环境（执行目录、准备命令、禁止调用的命令）和合并设置只能在管理页修改。', USER_ERRORS.panelOnlyEnvironment[1]],
   'userError.panelOnlyAccounts': ['部署检查读取的来源字段（例如账号 CLI）只能在管理页修改。', USER_ERRORS.panelOnlyAccounts[1]],
   'userError.panelOnlyPolicy': ['策略和接单模式只在有人于管理页接受后才修改；请用 orchestrator_policy_propose 提出修改。', USER_ERRORS.panelOnlyPolicy[1]],
   'userError.noPolicyProposal': ['没有待接受的策略修改提议。', USER_ERRORS.noPolicyProposal[1]],
   'userError.setupComplete': ['部署检查已通过。', USER_ERRORS.setupComplete[1]],
+  'userError.mergeCliFailed': ['合并用的 CLI {cli} 读不到它的账号：{error}', USER_ERRORS.mergeCliFailed[1]],
+  'userError.mergeCliAgent': ['合并用的 CLI {cli} 登录的是智能体账号 @{account}；请让它登录另一个可以合并的账号', USER_ERRORS.mergeCliAgent[1]],
   'userError.modelUnavailable': ['{block} 的模型不可用：{error}', USER_ERRORS.modelUnavailable[1]],
   'userError.promptTooLong': ['提示词配置超过 {limit} 个字符。', USER_ERRORS.promptTooLong[1]],
   'userError.promptPlaceholders': ['「{part}」的模板必须保留占位符 {placeholders}，由系统填入内容。', USER_ERRORS.promptPlaceholders[1]],
@@ -762,6 +783,9 @@ const TEXT = {
   'setup.feishuNoApp': ['机器人的 lark-cli 的 auth status 没有报告应用。', SETUP_PROBLEMS.feishuNoApp[1]],
   'setup.feishuBotNotReady': ['应用 {app} 的机器人身份状态是 {status}；用 lark-cli 配置应用密钥。', SETUP_PROBLEMS.feishuBotNotReady[1]],
   'setup.feishuUserIdentity': ['机器人的 lark-cli 允许用户身份（strict mode 为 {mode}）；按 docs/006-deployment.md 给机器人一份 strict mode 为 bot 的单独配置。', SETUP_PROBLEMS.feishuUserIdentity[1]],
+  'setupWarning.mergeUnverified': ['@{account} 读不到 {branch} 的审查规则，dsh-superagent 无法确认 GitHub 在合并前要求审批；请在仓库设置里确认 {branch} 要求至少一个批准，并在推送新提交时撤销过时的批准。', SETUP_WARNINGS.mergeUnverified[1]],
+  'setupWarning.mergeUnprotected': ['{branch} 没有要求在新推送时会被撤销的批准，只有提示词阻止未经审查的提交合并；请在 {branch} 的分支保护规则或规则集里要求至少一个批准，并在推送新提交时撤销过时的批准。', SETUP_WARNINGS.mergeUnprotected[1]],
+  'setupWarning.mergeBypass': ['@{account} 可以绕过 {branch} 的审查规则，智能体可能不经批准就合并；把它移出绕过名单，或打开“不允许绕过上述设置”。', SETUP_WARNINGS.mergeBypass[1]],
   'setup.feishuNoBot': ['飞书机器人接口没有返回机器人的 open_id。', SETUP_PROBLEMS.feishuNoBot[1]],
   'healthCode.setupPending': ['等待部署检查', HEALTH_TEXT.setupPending],
   'healthCode.sourceOff': ['已关闭', HEALTH_TEXT.sourceOff],

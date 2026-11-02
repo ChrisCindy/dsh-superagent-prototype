@@ -62,6 +62,11 @@ If a toolchain cannot run in the sandbox, set **Sandbox** to **Full access** in 
    ```
 
    Sign in as the agent account; the last command prints its login. dsh-superagent reads the login the same way.
+3. Protect the default branch on GitHub: in a branch protection rule or ruleset, require at least one approving review, dismiss stale approvals when new commits are pushed, and do not let the agent account bypass it. Setup checks this as the agent account and shows a warning otherwise; an account without admin rights may not read branch protection, and then the warning says it cannot verify.
+
+### Merge account (optional)
+
+For auto-merge, sign another account that may merge in to its own wrapper, such as `gh-merge` with its own `GH_CONFIG_DIR`, and set it as the merge CLI in the Execution settings. GitHub attributes a merge to the account that enabled auto-merge, so it must not be the agent account; the host refuses a merge CLI signed in to it. Without one, people merge every pull request.
 
 ### Feishu bot (optional)
 
@@ -177,8 +182,8 @@ Setup must succeed before polling or work starts. Overview lists missing require
 
    `--shared` borrows the local clone's objects and keeps the Ticket's own commits and refs in its directory, which the sandbox lets the worker write. The `refs/dsh-superagent/*` refs keep the borrowed objects alive: do not delete them, or prune the local clone, while a Ticket uses them. The prepare command itself runs unconfined, as the operator's command, so it can write the local clone. With the full-access sandbox, or with the clone's `.git` as a granted writable root, `git -C /home/me/src/widgets worktree add -b "agent/$DSH_SUPERAGENT_NAME" "$DSH_SUPERAGENT_DIR" "refs/dsh-superagent/$DSH_SUPERAGENT_TICKET"` in place of the last four lines also works.
 
-   List personal CLIs, such as one signed in to your own account, as blocked commands. **Sandbox** and **Writable roots** confine Executor Sessions; see Permissions and isolation above.
-4. **Prompts.** Set the team sections: the GitHub disclosure line, review bots, the commit author and the auto-merge condition.
+   List personal CLIs, such as one signed in to your own account, as blocked commands. **Sandbox** and **Writable roots** confine Executor Sessions; see Permissions and isolation above. Under **Merging**, set the merge CLI, the merge method, the line limit and the approvals auto-merge requires ([003 Execution](003-execution.md)); leave the CLI empty for people to merge.
+4. **Prompts.** Set the team sections: the GitHub disclosure line, review bots, the commit author and when to request a merge.
 
 ### Management API
 
@@ -203,9 +208,9 @@ Agents may rely on these routes and fields. The other routes in `src/app/api.ts`
 
 | Request | Answer |
 | --- | --- |
-| `GET state` (no sign-in) | What every page reads: `setup`, with `problem` and `feishuProblem`, each `null` or a setup problem with `place`, `code`, `values` and `detail`, and `accounts` once setup resolved them; `health`, an entry per part, below, with `state` (`starting`, `ready`, `paused` or `error`), `detail` and `at`; `load`, the Executor Sessions `running`, the Tickets `queued` and `maxWorkers`; `paused`; and `masterId` |
+| `GET state` (no sign-in) | What every page reads: `setup`, with `problem` and `feishuProblem`, each `null` or a setup problem with `place`, `code`, `values` and `detail`, `warnings`, the setup warnings in the same shape, which leave dsh-superagent running, and `accounts` once setup resolved them; `health`, an entry per part, below, with `state` (`starting`, `ready`, `paused` or `error`), `detail` and `at`; `load`, the Executor Sessions `running`, the Tickets `queued` and `maxWorkers`; `paused`; and `masterId` |
 | `GET settings` | `blocks`: `policy`, `eval` and `executor`, each with its `value` and its `revision`; `sources`: the Source instances, each with `id`, `kind`, `installed`, its block's `value`, `{"enabled": …, "config": {…}}`, and `revision`, its kind's form, and its setup `problem` when it has one; `policyVersion`; and `environment`, the execution environment's `root` and `variables` |
-| `GET sources` | Each Source's status: `state` (`missing`, `off`, `error`, `setup`, `starting`, `paused` or `ready`), the `health` of its parts, its setup `problem`, the last day's `stats`, the Triggers it `filtered` in that day, and the messages it `dropped` in that day, newest drop first, each with its `channel`, `preview`, `ticket` (`id` and `title`) when it was for one, its `thread` when the store has it, and `dropped.at` and `dropped.reason`, `channelGone` or `channelIgnored` |
+| `GET sources` | Each Source's status: `state` (`missing`, `off`, `error`, `setup`, `starting`, `paused` or `ready`), the `health` of its parts, its setup `problem`, its setup `warnings` when it has any, the last day's `stats`, the Triggers it `filtered` in that day, and the messages it `dropped` in that day, newest drop first, each with its `channel`, `preview`, `ticket` (`id` and `title`) when it was for one, its `thread` when the store has it, and `dropped.at` and `dropped.reason`, `channelGone` or `channelIgnored` |
 | `PUT settings/<block>` with `{"value": …, "revision": n}` | Saves one block: `saved`, the block's new `revision`, `policy_changed` and `restarting`. `value` is the whole block, as `GET settings` holds it; a missing key takes its default |
 | `POST executor/pause` with `{"paused": true}` or `false` | Pauses or resumes processing: `paused` |
 | `POST setup/check` | Runs setup again by restarting dsh-superagent: `restarting: true`. Refused when setup has nothing to fix |
@@ -239,7 +244,7 @@ The blocks:
 - `source:github`, `source:feishu`: `{"enabled": true, "config": {…}}`. GitHub's config has `repository` and `cli`, and the switches `observeIssues`, `observePulls`, `observeComments` and `observeCi`, off by default, which receive every new Issue, new pull request and comment in the repository and the default branch's CI; Feishu's has `cli`, `chats` as `[{"chatId": "oc_…", "name": "…", "listen": "mentions"}]` (or `"all"`), `directMessages`, and `otherChats` as `"none"` or `"mentions"`.
 - `policy`: `{"rules": […], "sources": {"github": {"allowed": [{"id": "<login>"}], "bots": [{"id": "dependabot[bot]"}]}, "feishu": {"allowed": [{"id": "ou_…", "name": "…"}], "syncChat": "oc_…", "admission": {"oc_…": {"unlistedAddressed": "explicit"}}}}}`. `bots` lists the bots whose messages may become inferred candidates. An `admission` row is keyed by chat id, `other` or `direct` for Feishu, and by `issues`, `pulls`, `comments` or `ci` for GitHub; an unset cell takes its default (see [002 Authorization](002-authorization.md)).
 - `eval`: `mode`, `timeoutSeconds` and `model`.
-- `executor`: `model`, `maxWorkers`, `directory`, `prepare`, `blockedCommands`, `sandbox` (`workspace`, the default, or `full`) and `writableRoots`, absolute paths. Saves that change `sandbox` or `writableRoots` are checked as setup checks them, and restart. The processing pause is a setting of its own, `paused`, which `POST executor/pause` sets.
+- `executor`: `model`, `maxWorkers`, `directory`, `prepare`, `blockedCommands`, `sandbox` (`workspace`, the default, or `full`) and `writableRoots`, absolute paths, and `merge`, `{"cli": "", "method": "squash", "maxLines": 200, "requireApprovals": 1}`. The main Session's tools cannot change `directory`, `prepare`, `blockedCommands`, `sandbox`, `writableRoots` or `merge`. Saves that change `sandbox` or `writableRoots` are checked as setup checks them, and restart. A save that changes `merge.cli` first runs it, as setup probes CLIs, and refuses one that cannot read its account or is signed in to the agent account; merge settings take effect without a restart. The processing pause is a setting of its own, `paused`, which `POST executor/pause` sets.
 
 Changing a repository or CLI runs the corresponding setup check first. A failed check returns 400 with details in `setup`. A successful account change, or any save while setup is pending, returns `restarting: true`. The API is temporarily unavailable while the application restarts.
 
@@ -259,9 +264,11 @@ Setup first checks how Sessions are confined: the profile must hold the permissi
 
 Setup verifies the GitHub repository and the agent's push access, writes the worker environment, and checks that git uses only the agent credentials for github.com. A Feishu setup failure disables only the Feishu Source.
 
+Setup also reads, as the agent account, the rulesets of the default branch (`repos/<repository>/rules/branches/<branch>`, and `rulesets/<id>` for whether the account can bypass one) and its branch protection (`branches/<branch>/protection`). When no rule requires at least one approving review that a push dismisses, or the agent account can bypass the rule that does, it records a setup warning. When it cannot read them, such as a 403 or 404 for an account without admin rights, the warning says it cannot verify. A warning never stops dsh-superagent: Overview and the GitHub Source show it with its fix, and **Check again** runs setup once the repository settings changed.
+
 The process environment that setup writes:
 
-- **Command shims** in `<stateDir>/worker-bin`, first on `PATH`: `gh` runs the agent's CLI; `lark-cli` runs the bot's CLI; blocked commands fail. A shim removes its own directory from `PATH` before it runs its target.
+- **Command shims** in `<stateDir>/worker-bin`, first on `PATH`: `gh` runs the agent's CLI, except that it refuses `gh pr merge` (but `--disable-auto`) and a `gh api` call naming the REST merge endpoint or the `mergePullRequest` or `enablePullRequestAutoMerge` mutations, pointing to `orchestrator_merge_request`; `lark-cli` runs the bot's CLI; blocked commands fail. A shim removes its own directory from `PATH` before it runs its target. Shims are guardrails on the default path, not a security boundary: a program run by its absolute path, an alias or a query read from a file passes them. Branch protection on GitHub is what stops an unreviewed merge.
 - **git configuration** in `<stateDir>/worker-gitconfig`: replaces the operator's global and system git configuration. It selects the agent CLI as the github.com credential helper, rewrites GitHub SSH addresses to HTTPS and defines Git LFS filters. Personal git settings such as an HTTP proxy do not apply. No commit identity is set here, git never prompts for credentials, and `GH_TOKEN` and `GITHUB_TOKEN` are removed.
 
 A file in `worker-bin` or `worker-gitconfig` that dsh-superagent did not write stops setup. A Ticket directory inside a git repository whose own configuration adds credentials fails the Ticket.
@@ -277,7 +284,7 @@ From an allowed GitHub account, open an Issue or post a comment containing `@<ag
 3. Run `git pull && pnpm install && pnpm build`.
 4. Run `scripts/dsh-superagent restart` and inspect its status.
 
-A restart ends running Assignments and starts replacements with recovery notes. Team text and overridden prompt parts are retained; parts without overrides follow the new defaults. Review parts marked **Default updated** after upgrading.
+A restart ends running Assignments and starts replacements with recovery notes. Team text and overridden prompt parts are retained; parts without overrides follow the new defaults. Review parts marked **Default updated** after upgrading. A team that saved its Delivery requirements before `orchestrator_merge_request` existed keeps its own merge paragraph: replace it with the default's, and move the merge CLI and the line threshold into the Execution settings.
 
 A database migrated by a newer version cannot be opened by an older one. Rollback therefore requires the pre-upgrade backup. After upgrading DeepSeek Harness itself, restart the running instance so the panel loads matching artifacts.
 
@@ -311,6 +318,10 @@ Setup problems appear on the overview with a link to the fix, in the panel's lan
 | `The bot lark-cli allows user identities` | Point the Feishu Source at a bot-only configuration, as in Feishu bot above |
 | `The bot lark-cli does not work.` or `The bot identity of app … is …` | Check the configuration's app id and secret |
 | `The Feishu bot is not a member of the chat.` | Add the bot to the chat in the chat's settings; the next attempt succeeds |
+| `… does not require an approving review that a new push dismisses …` (warning) | In a branch protection rule or ruleset of the default branch, require at least one approving review and dismiss stale approvals on a push, then choose **Check again** |
+| `@… may bypass the review rules of …` (warning) | Remove the agent account from the bypass list, or turn on **Do not allow bypassing the above settings** (enforce for administrators), then choose **Check again** |
+| `@… cannot read the review rules of …` (warning) | The agent account may not read branch protection, usually without admin rights; check the rules yourself in the repository settings. The warning stays while the account cannot read them |
+| `orchestrator_merge_request` answers `merge_account` | The merge CLI cannot read its account, or is signed in to the agent account; sign it in to another account |
 | `status` exits 2 | A part reports an error, which a restart does not fix: `errors` names each part, as listed under Management API, with its detail; each part clears its own entry once it works again |
 | `status` exits 3 | Setup waits: `setup` says what is missing, and the overview links to the setting that fixes it |
 | `status` exits 1 | The service does not run, runs twice, does not answer, or its runtime reports an error; the output and the newest log say which |

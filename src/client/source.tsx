@@ -8,7 +8,7 @@ import { sourceMark } from './marks.ts'
 import { usePanel, usePanelData } from './provider.tsx'
 import { setupPage, settingsRoute, type Route } from './route.ts'
 import { ConfigHistory, Fields, SourceField, useBlockDraft, useSettings } from './settings-kit.tsx'
-import { actorName, healthText, localized, readableMarkers, reasonLabel, valueLabel, when } from './text.ts'
+import { actorName, healthText, localized, readableMarkers, reasonLabel, setupWarningText, valueLabel, when } from './text.ts'
 import { CheckSetupButton, Hint, LabelValue, LoadState, SetupMessage, StatusHead, When } from './widgets.tsx'
 
 function SourceCard({ source }: { source: SourceView }) {
@@ -118,6 +118,7 @@ function SourceRow({ source }: { source: SourceStatusRow }) {
           {t('sourceOpenSettings')}
         </button>
       </p>}
+      {source.warnings?.map(warning => <p key={warning.code} className="dt-hint">{setupWarningText(t, warning)}</p>)}
       {notes.map(item => <p key={item.name} className={item.state === 'error' ? 'dt-error dt-clamp' : 'dt-hint dt-clamp'}>
         {valueLabel(t, 'health', item.name)}{t('labelSeparator')}<span className={item.code ? undefined : 'dt-mono'}>{healthText(t,
           item)}</span>

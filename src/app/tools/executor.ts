@@ -1,7 +1,8 @@
-/** Executor Session tools for reading ticket context, acknowledging requests, managing threads, handing back out-of-scope triggers, and reporting status. */
+/** Executor Session tools for reading ticket context, acknowledging requests, managing threads, handing back out-of-scope triggers, requesting a merge, and reporting status. */
 import { z } from 'zod'
 import { liveTicket, type EngineForExecutor, type Ticket } from '../../core/index.ts'
 import { IM_WORDS } from '../../infra/text.ts'
+import { requestMerge } from '../../sources/github-merge.ts'
 import { claimPull, readPull } from '../../sources/github-pull.ts'
 import type { SourceContext } from '../../sources/host.ts'
 import { readResource, type ResourceHost } from '../resources.ts'
@@ -12,10 +13,10 @@ import { AcknowledgementSchema, readTool, tool, type Tool } from './tool.ts'
 
 export interface ExecutorToolsHost {
   readonly engine: Pick<EngineForExecutor, 'report' | 'reply' | 'markUnrelated' | 'handback' | 'followForContext'>
-  readonly store: Pick<Store, 'tickets' | 'replyStatus' | 'atomic'>
+  readonly store: Pick<Store, 'tickets' | 'replyStatus' | 'atomic' | 'settings'>
   readonly sessions: Pick<Sessions, 'relay' | 'notify'>
   readonly resources: ResourceHost
-  /** GitHub Source context whose pull-request rules govern claiming a reported PR. */
+  /** GitHub Source context whose pull-request rules govern claiming a reported PR and requesting its merge. */
   readonly github: SourceContext
   sendReplies(): Promise<void>
 }
@@ -70,6 +71,16 @@ export function executorTools(host: ExecutorToolsHost, ticket: Ticket): Tool[] {
         reason: z.string().trim().min(1).max(300).describe('One sentence on what it asks for beyond this ticket.'),
       }).strict(),
       execute: async args => ({ trigger_id: args.trigger_id, queued: host.engine.handback(ticketId, args.trigger_id, args.reason) }),
+    }),
+    tool({
+      name: 'orchestrator_merge_request',
+      description: 'Ask the host to enable auto-merge of a PR this ticket opened, as the delivery requirements say. The host checks that the PR is ready, its CI passed, it is small enough, approvals of others cover its head commit and no requested change is outstanding, then enables auto-merge with the merge account; otherwise it lists each failed check. Never merge or enable auto-merge with gh.',
+      schema: z.object({ pull: z.number().int().positive().describe('The PR number.') }).strict(),
+      execute: async (args, signal) => {
+        const current = host.store.tickets.get(ticketId)
+        if (!current || !liveTicket(current)) throw new Error('Ticket ended (PR was closed or work finished); do not resume it')
+        return requestMerge(host.github, current, args.pull, host.store.settings().executor.merge, signal)
+      },
     }),
     tool({
       name: 'orchestrator_report',

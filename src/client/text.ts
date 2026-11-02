@@ -2,7 +2,7 @@
 import type { Translate } from '@deepseek-ai/dsh-client-ui-slots'
 import type { DshSuperagentKey } from './locales.ts'
 import type { Localized } from '../sources/kind.ts'
-import type { SetupProblem } from '../setup.ts'
+import type { SetupProblem, SetupWarning } from '../setup.ts'
 import type { Health } from '../sources/host.ts'
 import { reasonText, type Reason } from '../core/reasons.ts'
 
@@ -32,6 +32,7 @@ function label(t: T, reason: Reason): string {
   return written
 }
 export const setupText = (t: T, problem: Pick<SetupProblem, 'code' | 'values'>): string => t(`setup.${problem.code}`, problem.values)
+export const setupWarningText = (t: T, warning: Pick<SetupWarning, 'code' | 'values'>): string => t(`setupWarning.${warning.code}`, warning.values)
 export const healthText = (t: T, health: Pick<Health, 'detail' | 'code' | 'values'>): string =>
   health.code ? t(`healthCode.${health.code}` as const, health.values) : health.detail
 /** Replaces Feishu and GitHub content placeholders (images, cards, media, forwards, unresolved mentions) with localized labels. */

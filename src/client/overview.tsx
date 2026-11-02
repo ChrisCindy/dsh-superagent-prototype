@@ -5,14 +5,16 @@ import { Button, Icon } from './controls.tsx'
 import { useAction, usePanel, usePanelData } from './provider.tsx'
 import { setupPage, settingsRoute, type Route } from './route.ts'
 import { TicketLine } from './rows.tsx'
-import { healthText, localized, reasonLabel, valueLabel, readableMarkers } from './text.ts'
+import { healthText, localized, reasonLabel, setupWarningText, valueLabel, readableMarkers } from './text.ts'
 import { CheckSetupButton, ConfirmButton, Hint, LoadState, Section, SetupMessage } from './widgets.tsx'
 
 function ProblemLine({ problem, onChanged }: { problem: Problem; onChanged: () => Promise<void> }) {
   const { t, call, navigate } = usePanel()
   const post = useAction((request: () => Promise<unknown>) => request(), { reload: onChanged })
+  // A setup warning leaves dsh-superagent running, so it reads as a warning rather than an error.
+  const warning = problem.kind === 'setup-warning'
   const row = (title: string, detail: ReactNode, route: Route | undefined, hint?: string, actions?: ReactNode) => <li
-    className="dt-row dt-link dt-att dt-att-error">
+    className={warning ? 'dt-row dt-link dt-att' : 'dt-row dt-link dt-att dt-att-error'}>
     <div className="dt-row-main">
       <div className="dt-att-what">{route ? <button type="button" className="dt-open dt-open-wrap"
         onClick={() => navigate(route)}>{title}</button> : title}</div>
@@ -43,6 +45,8 @@ function ProblemLine({ problem, onChanged }: { problem: Problem; onChanged: () =
           onConfirm={async () => { await call('POST policy-proposal/dismiss'); await onChanged() }} />
       </>)
     }
+    case 'setup-warning': return row(t('problemSetupWarning'), <p className="dt-hint">{setupWarningText(t, problem)}</p>,
+      { page: 'source' }, t('problemSetupWarningFix'), <CheckSetupButton />)
     case 'no-source': return row(t('problemNoSource'), undefined, settingsRoute('source'), undefined, go(t('actionOpenSources'),
       settingsRoute('source')))
     case 'no-allowed': return row(t('problemNoAllowed'), undefined, settingsRoute('eval'), undefined, go(t('actionAddAllowed'),

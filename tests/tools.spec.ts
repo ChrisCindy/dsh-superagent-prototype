@@ -1,5 +1,7 @@
 /** Session tool registration, role-scoped resource reads, and routing/settings tool contracts. */
-import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import { writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { TICKET_STATES } from '../src/app/cards.ts'
 import { builtInBase, builtInParts, defaultPrompts } from '../src/app/prompts.ts'
 import { UserError } from '../src/core/index.ts'
@@ -516,4 +518,140 @@ it('gives a worker the other messages of the request its ticket was accepted fro
   const page = await h.runTool(`worker-${ticket.id}`, 'orchestrator_read', { resource: `ticket/${ticket.id}` })
   expect(page).toMatchObject({ batch: [{ trigger_id: other, read: `trigger/${other}` }] })
   expect(await h.runTool(`worker-${ticket.id}`, 'orchestrator_read', { resource: `trigger/${other}` })).toMatchObject({ trigger_id: other })
+})
+
+describe('orchestrator_merge_request', () => {
+  const MERGE = '/usr/local/bin/gh-merge'
+  /** The ticket's branch, named after its short name. */
+  let branch = ''
+  /** GitHub as the agent's gh reads it: PR 42 from the ticket's branch, its CI, its reviews and the trees of its commits. */
+  function github(overrides: { pull?: Record<string, unknown>; checks?: unknown[]; statuses?: unknown[]; reviews?: unknown[]; trees?: Record<string, string> } = {}) {
+    const pull = { number: 42, state: 'open', draft: false, additions: 120, deletions: 30, html_url: 'https://github.com/acme/widgets/pull/42',
+      user: { login: 'agent-bot' }, head: { sha: 'head2', ref: branch, repo: { full_name: 'acme/widgets' } }, ...overrides.pull }
+    const trees: Record<string, string> = { head2: 'tree2', head1: 'tree1', ...overrides.trees }
+    const answers: Record<string, unknown> = {
+      'repos/acme/widgets/pulls/42': pull,
+      'repos/acme/widgets/commits/head2/check-runs?per_page=100': [{ check_runs: overrides.checks ?? [{ name: 'test', status: 'completed', conclusion: 'success' }] }],
+      'repos/acme/widgets/commits/head2/statuses?per_page=100': [overrides.statuses ?? []],
+      'repos/acme/widgets/pulls/42/reviews?per_page=100': [overrides.reviews ?? [{ user: { login: 'alice', type: 'User' }, state: 'APPROVED', commit_id: 'head2' }]],
+      ...Object.fromEntries(Object.entries(trees).map(([sha, tree]) => [`repos/acme/widgets/git/commits/${sha}`, { tree: { sha: tree } }])),
+    }
+    vi.mocked(Commands.prototype.gh).mockImplementation(async args => args[1] === 'user' ? { login: 'agent-bot' }
+      : args[1]! in answers ? answers[args[1]!] : { default_branch: 'master', permissions: { push: true } })
+  }
+  /** The merge CLI, signed in to `merger`; every other program answers as the fixture does. */
+  function mergeCli(merger = 'merger') {
+    vi.mocked(Commands.prototype.run).mockImplementation(async (program, args) => program !== MERGE ? '{"ok":true,"data":{}}'
+      : args[0] === 'api' ? `${merger}\n` : '')
+    return () => vi.mocked(Commands.prototype.run).mock.calls.filter(([program, args]) => program === MERGE && args[0] === 'pr')
+  }
+  const configure = (merge: Record<string, unknown>) => {
+    const settings = h.runtime.store.settings()
+    h.runtime.store.saveSettings({ ...settings, executor: { ...settings.executor, merge: { ...settings.executor.merge, ...merge } } })
+  }
+  /** A ticket whose worker reported PR 42, opened from its branch, so the ticket follows it as its own. */
+  async function ticketWithPull() {
+    const { sessionId, ticket } = await h.acceptedTicket(feishu('1', '@bot 修一下回归'))
+    branch = `agent/${ticket.execution!.name}`
+    github()
+    await h.runTool(sessionId, 'orchestrator_report', { state: 'progress', summary: 'pr open', pr_number: 42 })
+    return sessionId
+  }
+  const request = (sessionId: string, pull = 42) => h.runTool(sessionId, 'orchestrator_merge_request', { pull })
+
+  it('refuses without a merge CLI, so people merge, and for a PR the ticket did not open, without reading GitHub', async () => {
+    const sessionId = await ticketWithPull()
+    const runs = mergeCli()
+    vi.mocked(Commands.prototype.gh).mockClear()
+    expect(await request(sessionId)).toEqual({ auto_merge: 'refused', pull: 42, next: 'A person merges this PR; say so in your report.',
+      refused: [{ check: 'merge_cli', detail: expect.stringContaining('No merge CLI is set') }] })
+    configure({ cli: MERGE })
+    expect(await request(sessionId, 7)).toMatchObject({ auto_merge: 'refused', refused: [{ check: 'ticket_pull', detail: expect.stringContaining('#7') }] })
+    expect(Commands.prototype.gh).not.toHaveBeenCalled()
+    expect(runs()).toEqual([])
+  })
+
+  it('enables auto-merge as the merge account for the head commit it checked once every check passes', async () => {
+    const sessionId = await ticketWithPull()
+    const runs = mergeCli()
+    configure({ cli: MERGE, method: 'merge', maxLines: 150 })
+    expect(await request(sessionId)).toEqual({ auto_merge: 'enabled', pull: 42, head: 'head2', method: 'merge' })
+    expect(runs()).toEqual([[MERGE, ['pr', 'merge', '42', '--auto', '--merge', '--match-head-commit', 'head2', '--repo', 'acme/widgets']]])
+  })
+
+  it('lists every failed check: a draft, failing CI, too many lines, approvals that miss the head, requested changes and the agent as merger', async () => {
+    const sessionId = await ticketWithPull()
+    const runs = mergeCli('Agent-Bot')
+    configure({ cli: MERGE, requireApprovals: 2 })
+    github({ pull: { draft: true, additions: 180, deletions: 21 }, checks: [{ name: 'lint', status: 'completed', conclusion: 'failure' },
+      { name: 'test', status: 'in_progress', conclusion: null }], reviews: [
+      // The agent's own approval, a bot's, and one of an earlier commit with another tree count for nothing.
+      { user: { login: 'agent-bot', type: 'User' }, state: 'APPROVED', commit_id: 'head2' },
+      { user: { login: 'review[bot]', type: 'Bot' }, state: 'APPROVED', commit_id: 'head2' },
+      { user: { login: 'alice', type: 'User' }, state: 'APPROVED', commit_id: 'head1' },
+      { user: { login: 'carol', type: 'User' }, state: 'APPROVED', commit_id: 'head2' },
+      // Carol's later request for changes replaces her approval; Dave's comment decides nothing.
+      { user: { login: 'carol', type: 'User' }, state: 'CHANGES_REQUESTED', commit_id: 'head2' },
+      { user: { login: 'dave', type: 'User' }, state: 'COMMENTED', commit_id: 'head2' }] })
+    const result = await request(sessionId) as { auto_merge: string; refused: { check: string; detail: string }[]; next: string }
+    expect(result.auto_merge).toBe('refused')
+    expect(result.refused).toEqual([
+      { check: 'ready', detail: expect.stringContaining('draft') },
+      { check: 'size', detail: expect.stringContaining('201 lines') },
+      { check: 'ci', detail: 'CI failed on head2: lint' },
+      { check: 'changes_requested', detail: expect.stringContaining('carol') },
+      { check: 'approvals', detail: '0 of the 2 approvals required cover the head commit head2' },
+      { check: 'merge_account', detail: 'The merge CLI is signed in to the agent account @agent-bot' }])
+    expect(result.next).toBe('A person merges this PR; say so in your report.')
+    expect(runs()).toEqual([])
+  })
+
+  it('counts an approval of an earlier commit with the same tree, drops a dismissed request, and waits for running CI', async () => {
+    const sessionId = await ticketWithPull()
+    const runs = mergeCli()
+    configure({ cli: MERGE })
+    github({ trees: { head1: 'tree2' }, statuses: [{ context: 'deploy', state: 'pending' }], reviews: [
+      { user: { login: 'alice', type: 'User' }, state: 'APPROVED', commit_id: 'head1' },
+      { user: { login: 'carol', type: 'User' }, state: 'CHANGES_REQUESTED', commit_id: 'head1' },
+      { user: { login: 'carol', type: 'User' }, state: 'DISMISSED', commit_id: 'head1' }] })
+    expect(await request(sessionId)).toEqual({ auto_merge: 'refused', pull: 42, refused: [{ check: 'ci', detail: 'CI is still running on head2: deploy' }],
+      next: expect.stringContaining('call again') })
+    github({ trees: { head1: 'tree2' }, reviews: [{ user: { login: 'alice', type: 'User' }, state: 'APPROVED', commit_id: 'head1' }] })
+    expect(await request(sessionId)).toMatchObject({ auto_merge: 'enabled', head: 'head2', method: 'squash' })
+    expect(runs()).toHaveLength(1)
+  })
+
+  it('refuses a merged PR, and answers an ended ticket that it ended', async () => {
+    const sessionId = await ticketWithPull()
+    mergeCli()
+    configure({ cli: MERGE })
+    github({ pull: { state: 'closed', merged: true } })
+    expect(await request(sessionId)).toMatchObject({ refused: expect.arrayContaining([{ check: 'open', detail: 'PR #42 is merged' }]) })
+    h.runtime.engine.stopTicket(h.runtime.store.tickets.list()[0]!.id)
+    await expect(request(sessionId)).rejects.toThrow('Ticket ended')
+  })
+
+  it('leaves the merge settings to the management panel: the main Session cannot name a merge CLI or loosen a condition', async () => {
+    const save = (merge: Record<string, unknown>) => h.runTool(h.runtime.masterId, 'orchestrator_settings_save', { block: 'executor',
+      value: { ...h.runtime.store.settings().executor, merge: { ...h.runtime.store.settings().executor.merge, ...merge } },
+      revision: h.runtime.store.blockRevision('executor') })
+    await expect(save({ cli: MERGE })).rejects.toThrow(new UserError('panelOnlyEnvironment'))
+    await expect(save({ maxLines: 5000 })).rejects.toThrow(new UserError('panelOnlyEnvironment'))
+    await expect(h.runtime.settings.save('executor', { ...h.runtime.store.settings().executor, merge: { cli: 'bin/gh-merge' } },
+      h.runtime.store.blockRevision('executor'), 'panel')).rejects.toThrow('A command name or an absolute path')
+    // A panel save checks a changed merge CLI first, as setup probes CLIs: it must run and read an account other than the agent's.
+    const panel = (merge: Record<string, unknown>) => h.runtime.settings.save('executor', { ...h.runtime.store.settings().executor, merge },
+      h.runtime.store.blockRevision('executor'), 'panel')
+    await expect(panel({ cli: MERGE })).rejects.toThrow(`The merge CLI ${MERGE} cannot read its account`)
+    const cli = join(h.directory, 'gh-merge')
+    writeFileSync(cli, '#!/bin/sh\n', { mode: 0o755 })
+    h.answers[`${cli} api user --jq .login`] = 'Agent-Bot\n'
+    await expect(panel({ cli })).rejects.toThrow(new UserError('mergeCliAgent', { cli, account: 'agent-bot' }))
+    h.answers[`${cli} api user --jq .login`] = 'merger\n'
+    expect(await panel({ cli, maxLines: 80 })).toMatchObject({ saved: true, restarting: false })
+    expect(h.runtime.store.settings().executor.merge).toEqual({ cli, method: 'squash', maxLines: 80, requireApprovals: 1 })
+    // Changing only a condition does not check the CLI again.
+    h.answers[`${cli} api user --jq .login`] = ''
+    expect(await panel({ cli, maxLines: 90 })).toMatchObject({ saved: true })
+  })
 })

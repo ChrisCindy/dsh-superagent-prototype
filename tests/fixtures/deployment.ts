@@ -17,3 +17,13 @@ export const testDeployment = (overrides: Partial<Deployment> = {}): Deployment 
   feishu: { cli: '/bin/false', botId: 'ou_bot', appId: 'cli_bot', brand: 'feishu', name: 'Widgets Bot' },
   ...overrides,
 })
+/**
+ * Probe answers of `cli` for a default branch `master` of acme/widgets whose ruleset requires an approving review that a push
+ * dismisses, and which the agent account cannot bypass, so setup records no merge warning.
+ */
+export const reviewedBranch = (cli: string): Record<string, string> => ({
+  [`${cli} api repos/acme/widgets --jq {branch: .default_branch, admin: .permissions.admin}`]: '{"branch":"master","admin":false}\n',
+  [`${cli} api repos/acme/widgets/rules/branches/master`]:
+    '[{"type":"pull_request","ruleset_id":1,"parameters":{"required_approving_review_count":1,"dismiss_stale_reviews_on_push":true}}]\n',
+  [`${cli} api repos/acme/widgets/rulesets/1`]: '{"current_user_can_bypass":"never"}\n',
+})
