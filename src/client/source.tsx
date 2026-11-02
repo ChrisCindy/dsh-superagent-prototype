@@ -142,8 +142,8 @@ export function SourceStatus() {
   const { t, call, navigate } = usePanel()
   const { setup } = usePanelData()
   const { data, error } = usePoll(() => call('GET sources'), [])
-  // Global deployment setup problems halt all Sources and show at the top; Source-specific setup problems show on that Source's row.
-  const elsewhere = setup?.problem?.place === 'deployment' ? setup.problem : undefined
+  // Global deployment and execution setup problems halt all Sources and show at the top; Source-specific setup problems show on that Source's row.
+  const elsewhere = setup?.problem?.place === 'deployment' || setup?.problem?.place === 'execution' ? setup.problem : undefined
   return <div className="dt-form">
     <StatusHead hint={t('sourceStatusIntro')} settings="source" />
     {elsewhere && <p className="dt-error">

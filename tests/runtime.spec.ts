@@ -3,12 +3,12 @@ import { bindScopeParent } from '@deepseek-ai/dsh-scope'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { DatabaseSync } from 'node:sqlite'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest'
 import type { UserMessage } from '@deepseek-ai/dsh-llm'
 import { renderPrompt } from '@deepseek-ai/dsh-system-prompt'
 import { Runtime } from '../src/app/runtime.ts'
-import { jobRegistry } from './fixtures/host.ts'
+import { PRESET_TABLE, jobRegistry, permissionPresets } from './fixtures/host.ts'
 import { evalsHealth } from '../src/app/views/overview.ts'
 import { mandateInstructions } from '../src/executor/dsh.ts'
 import { masterPrompt } from '../src/app/context.ts'
@@ -204,7 +204,7 @@ beforeEach(async () => {
     inspect: vi.fn(async () => ({ events: [] })),
   }
   jobs = jobRegistry()
-  services = { agents, llm: { resolveCallConfig: vi.fn(async value => value) }, sessionController: controller, sessionPersistence: { flush: vi.fn(async () => {}), open: vi.fn(async () => ({ read: async () => ({ events: [] }), [Symbol.asyncDispose]: async () => {} })) }, workspaceRegistry: { create: async (cwd: string) => ({ id: cwd }) }, permissionPresets: { set: () => {} }, subprocess, webServer: { host: '127.0.0.1', port: 3082, register: (route: { handler: HttpHandler }) => { http = route.handler; return () => {} } }, connection: fakeConnection(), jobs: jobs.service }
+  services = { agents, llm: { resolveCallConfig: vi.fn(async value => value) }, sessionController: controller, sessionPersistence: { flush: vi.fn(async () => {}), open: vi.fn(async () => ({ read: async () => ({ events: [] }), [Symbol.asyncDispose]: async () => {} })) }, workspaceRegistry: { create: async (cwd: string) => ({ id: cwd }) }, permissionPresets: permissionPresets(), subprocess, webServer: { host: '127.0.0.1', port: 3082, register: (route: { handler: HttpHandler }) => { http = route.handler; return () => {} } }, connection: fakeConnection(), jobs: jobs.service }
   for (const [name, service] of Object.entries(services)) ctx.reflect.provide(name, service)
   for (const cli of [AGENT(), OTHER(), BOT()]) writeFileSync(cli, '#!/bin/sh\n', { mode: 0o755 })
   const store = new Store(join(directory, 'orchestrator.sqlite')); seed(store); store.close()
@@ -239,6 +239,53 @@ it('relays an explicit member mention as a candidate and creates the ticket, ack
     thread: `feishu:${CHAT}:om_1`, text: trigger.text }) })
   expect(first.trigger).not.toHaveProperty('read')
   expect(await route({ kind: 'accept', trigger_id: trigger.id, title: 'again', worktree_name: worktreeName, acknowledgement: 'x' })).toMatchObject({ ticket: { ticket_id: ticket.id } })
+})
+
+it('runs the main Session read-only and each worker writing only its Ticket directory, neither asking for approval, and changes that only from the panel', async () => {
+  const presets = services.permissionPresets as ReturnType<typeof permissionPresets>
+  const { ticket, sessionId } = await acceptedTicket()
+  expect(presets.selected.get(runtime.masterId)).toBe('superagent-router')
+  expect(presets.selected.get(sessionId)).toBe('superagent-worker')
+  // A worker's workspace, the one directory workspace-write lets it write besides the temporary areas, is its Ticket directory.
+  expect(controller.create).toHaveBeenCalledWith(expect.objectContaining({ sessionId, workspaceId: ticket.execution!.directory }))
+  const executor = runtime.store.settings().executor
+  const save = (value: Partial<typeof executor>, origin: SettingsOrigin = 'panel') =>
+    runtime.settings.save('executor', { ...executor, ...value }, runtime.store.blockRevision('executor'), origin)
+  // The main Session's tools cannot widen the sandbox or add a writable root.
+  await expect(save({ sandbox: 'full' }, 'tool')).rejects.toMatchObject({ code: 'panelOnlyEnvironment' })
+  await expect(save({ writableRoots: ['/opt/cache'] }, 'tool')).rejects.toMatchObject({ code: 'panelOnlyEnvironment' })
+  // A root that contains the state directory is refused as setup refuses it; so is one this DSH's sandbox does not grant.
+  await expect(save({ writableRoots: [dirname(directory)] })).rejects.toMatchObject({ code: 'writableRootProtected',
+    values: { root: dirname(directory), protected: directory } })
+  await expect(save({ writableRoots: [join(directory, 'worker-bin')] })).rejects.toMatchObject({ code: 'writableRootProtected' })
+  await expect(save({ writableRoots: ['/opt/cache'] })).rejects.toMatchObject({ code: 'writableRootUngranted', values: { root: '/opt/cache' } })
+  expect(restarts).not.toHaveBeenCalled()
+  // The escape hatch restarts, so every managed Session takes the full-access preset as it is ensured again.
+  expect(await save({ sandbox: 'full' })).toMatchObject({ saved: true, restarting: true })
+  await vi.waitFor(() => expect(restarts).toHaveBeenCalledTimes(1))
+  await runtime.sessions.ensure(sessionId, ticket.execution!.directory, ticket.title, 'worker')
+  await runtime.sessions.ensure(runtime.masterId, directory, 'dsh-superagent orchestrator', 'orchestrator')
+  expect([presets.selected.get(sessionId), presets.selected.get(runtime.masterId)]).toEqual(['danger-full-access', 'danger-full-access'])
+})
+
+it('waits for setup while the profile lacks a permission preset its Sessions need, or a writable root opens the state directory', async () => {
+  const full = services.permissionPresets
+  const { 'superagent-worker': _worker, ...table } = PRESET_TABLE
+  services.permissionPresets = permissionPresets(table)
+  let next = await restart()
+  await next.ready
+  expect(next.setupProblem).toMatchObject({ place: 'deployment', code: 'permissionPresetMissing',
+    values: { preset: 'superagent-worker', sandbox: 'workspace-write', approval: 'never' } })
+  // Under the full sandbox, only DSH's own danger-full-access preset is needed.
+  next.store.saveSettings(SettingsSchema.parse({ ...next.store.settings(), executor: { ...next.store.settings().executor, sandbox: 'full' } }))
+  next = await restart()
+  await next.ready
+  expect(next.setupProblem).toBeUndefined()
+  services.permissionPresets = full
+  next.store.saveSettings(SettingsSchema.parse({ ...next.store.settings(), executor: { ...next.store.settings().executor, writableRoots: ['/'] } }))
+  next = await restart()
+  await next.ready
+  expect(next.setupProblem).toMatchObject({ place: 'execution', code: 'writableRootProtected', values: { root: '/' } })
 })
 
 it('fans a person\'s later thread message out to the live worker as context and tells the orchestrator, without an Eval', async () => {

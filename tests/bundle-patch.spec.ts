@@ -1,13 +1,18 @@
-/** The bundle's patch, read with the entry-list dialect DSH reads bundle patches with, and the agent preset it defines. */
+/** The bundle's patch, read with the entry-list dialect DSH reads bundle patches with, and the agent and permission presets it defines. */
 import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { join } from 'node:path'
 import { expect, it } from 'vitest'
+import { PERMISSION_PRESETS } from '../src/app/permissions.ts'
 import { ROUTER_PRESET, WORKER_PRESET } from '../src/app/sessions.ts'
 
 interface Row { id?: string; name: string; disabled?: unknown; config?: Record<string, unknown> & { plugins?: Row[] } | Row[] }
-/** The patch as DSH reads it: Cordis's include plugin parses `!!js` scalars, and applies the inserts to an entry list. */
-async function patched(): Promise<Row[]> {
+/** DSH's base bundle layer, which composes before this one: its permission row, whose preset table this layer replaces. */
+const BASE: Row[] = [{ id: 'permission', name: '@deepseek-ai/dsh-permission-presets', config: { presets: {
+  'read-only': { sandbox: 'read-only', approval: 'ask' }, 'workspace-write': { sandbox: 'workspace-write', approval: 'ask' },
+  'danger-full-access': { sandbox: 'danger-full-access', approval: 'never' } } } }]
+/** The patch as DSH reads it over DSH's base layer: Cordis's include plugin parses `!!js` scalars, and applies the patches to an entry list. */
+async function patched(base: Row[] = BASE): Promise<Row[]> {
   const cordis = createRequire(createRequire(import.meta.url).resolve('@deepseek-ai/cordis/package.json'))
   const include = cordis.resolve('@deepseek-ai/cordis-plugin-include')
   const { entryListSchema, applyEntryPatches } = await import(include) as {
@@ -15,7 +20,7 @@ async function patched(): Promise<Row[]> {
   const yaml = await import(createRequire(include).resolve('js-yaml')) as { load(text: string, options: { schema: unknown }): unknown }
   const patches = yaml.load(readFileSync(join(import.meta.dirname, '..', 'cordis.patch.yml'), 'utf8'), { schema: entryListSchema }) as unknown[]
   const warnings: string[] = []
-  const rows = applyEntryPatches([], patches, message => { warnings.push(message) })
+  const rows = applyEntryPatches(base, patches, message => { warnings.push(message) })
   expect(warnings).toEqual([])
   return rows
 }
@@ -28,7 +33,7 @@ const presetOf = (rows: readonly Row[], id: string) => rows.map(row => row.confi
 
 it('defines the worker preset Executor Sessions run under, with a shell that moves long commands to the background', async () => {
   const rows = await patched()
-  expect(rows.map(row => row.id)).toEqual(['dsh-superagent', 'dsh-superagent-github', 'dsh-superagent-feishu', 'dsh-superagent-worker-preset',
+  expect(rows.map(row => row.id)).toEqual(['permission', 'dsh-superagent', 'dsh-superagent-github', 'dsh-superagent-feishu', 'dsh-superagent-worker-preset',
     'dsh-superagent-router-preset'])
   const preset = presetOf(rows, WORKER_PRESET)
   expect(preset.id).toBe(WORKER_PRESET)
@@ -70,4 +75,19 @@ it('defines the router preset the main Session runs under: the worker\'s 5-secon
     '@deepseek-ai/dsh-tool-todo', '@deepseek-ai/dsh-tool-ask-user', '@deepseek-ai/dsh-tool-present', '@deepseek-ai/dsh-plan-mode',
     '@deepseek-ai/dsh-plugin-manager/tools', '@deepseek-ai/dsh-plugin-market/tools', '@deepseek-ai/dsh-tool-schedule', '@deepseek-ai/dsh-tool-goal',
     '@deepseek-ai/dsh-command-goal', '@deepseek-ai/dsh-tool-workflow', '@deepseek-ai/dsh-workflow-ptc']) expect(names, name).not.toContain(name)
+})
+
+it('adds the permission presets of managed Sessions to the profile\'s table, keeping DSH\'s base presets', async () => {
+  const rows = await patched()
+  const presets = (rows.find(row => row.id === 'permission')!.config as { presets: Record<string, { sandbox: string; approval: string }> }).presets
+  // The table is replaced whole, so DSH's base presets stay as they were, and each of the bundle's names a bundle no other preset has.
+  const base = (BASE[0]!.config as { presets: Record<string, unknown> }).presets
+  expect(presets).toMatchObject(base)
+  for (const [name, spec] of Object.entries(PERMISSION_PRESETS)) expect(presets[name], name).toMatchObject(spec)
+  expect(presets['superagent-router']).toMatchObject({ sandbox: 'read-only', approval: 'never' })
+  expect(presets['superagent-worker']).toMatchObject({ sandbox: 'workspace-write', approval: 'never' })
+  const bundles = Object.values(presets).map(spec => `${spec.sandbox}/${spec.approval}`)
+  expect(new Set(bundles).size).toBe(bundles.length)
+  // Without DSH's permission row the patch has nothing to replace, which DSH's loader warns about and setup then refuses.
+  await expect(patched([])).rejects.toThrow()
 })

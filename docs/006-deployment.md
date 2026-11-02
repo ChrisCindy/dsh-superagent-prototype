@@ -16,7 +16,24 @@ The bundle defines `dsh-superagent-worker` for Executors and `dsh-superagent-rou
 
 Opening a blank managed Session in the Web UI can select the profile's default preset. dsh-superagent restores its role-specific preset before the first turn.
 
-Both presets run with `danger-full-access` as the operator's OS user and read messages from subscribed Threads. Account wrappers choose the agent's credentials by default; they do not isolate the process. A worker can execute programs by path and read the operator's home directory. For isolation, use a dedicated OS account containing only the agent's credentials.
+The bundle also adds two permission presets to DeepSeek Harness's preset table, which DeepSeek Harness's file sandbox enforces on shell and file tools:
+
+| Preset | Session | Files it may write | Approval |
+| --- | --- | --- | --- |
+| `superagent-router` | Main Session | None | `never` |
+| `superagent-worker` | Executor Sessions and their subagents | Its Ticket directory, the temporary areas and the writable roots | `never` |
+
+With approval `never`, a write the sandbox denies fails at once and a request for a wider sandbox is rejected; nothing waits for a person. Workers therefore cannot rewrite `<stateDir>/orchestrator.sqlite`, the shims in `worker-bin`, `worker-gitconfig`, the profile or `$DSH_HOME`. The bundle's `permission` row replaces the profile's preset table and restates DeepSeek Harness's own presets; if a profile layer replaces it again, it must keep both presets, or setup stops with `The profile has no permission preset …`.
+
+The sandbox covers files only. Sessions still run as the operator's OS user, reach the network, and read the operator's home directory, and a worker can execute programs by path. Account wrappers choose the agent's credentials by default; they do not isolate the process. For isolation, use a dedicated OS account containing only the agent's credentials.
+
+#### Writable roots and the full-access fallback
+
+A git worktree keeps its objects and refs in the main clone's `.git`, outside the Ticket directory, so under the sandbox a worker cannot commit in one. Either give each Ticket a checkout whose git data lies inside its directory, as the prepare command under Settings does, or list the main clone's `.git` under **Writable roots** in the Execution settings, with any cache a toolchain writes outside the Ticket directory, such as a package manager's store.
+
+The sandbox must grant each writable root too. DeepSeek Harness 0.2.1 cannot grant extra roots, so on it setup stops with `The DeepSeek Harness sandbox does not grant the writable root …` while any is listed. On a DeepSeek Harness whose sandbox-policy row takes `additionalWritableRoots`, add the same paths there in the profile's `cordis.patch.yml`; that grant applies to every Session of the profile, and the main Session, read-only, still writes nothing. A root that contains or lies inside the state directory, `$DSH_HOME` or the profile directory stops setup, whether it is listed in the panel or granted in the profile.
+
+If a toolchain cannot run in the sandbox, set **Sandbox** to **Full access** in the Execution settings. Both Sessions then use DeepSeek Harness's `danger-full-access` preset: a worker, or anything that steers it through a Thread it reads, can rewrite the database, the shims, the agent's git configuration and the profile, and the main Session can write too. Use it only until the toolchain works under the sandbox. Changing the sandbox or the writable roots restarts dsh-superagent, so every managed Session takes its preset; only the panel can change them.
 
 ## Prerequisites
 
@@ -152,10 +169,15 @@ Setup must succeed before polling or work starts. Overview lists missing require
 
    ```sh
    git -C /home/me/src/widgets fetch --no-tags "https://github.com/$DSH_SUPERAGENT_GITHUB_REPOSITORY.git" "${DSH_SUPERAGENT_GITHUB_PR_HEAD:-HEAD}:refs/dsh-superagent/$DSH_SUPERAGENT_TICKET" &&
-   git -C /home/me/src/widgets worktree add -b "agent/$DSH_SUPERAGENT_NAME" "$DSH_SUPERAGENT_DIR" "refs/dsh-superagent/$DSH_SUPERAGENT_TICKET"
+   git clone --shared --no-checkout /home/me/src/widgets "$DSH_SUPERAGENT_DIR" && cd "$DSH_SUPERAGENT_DIR" &&
+   git fetch --no-tags /home/me/src/widgets "refs/dsh-superagent/$DSH_SUPERAGENT_TICKET" &&
+   git checkout -b "agent/$DSH_SUPERAGENT_NAME" FETCH_HEAD &&
+   git remote set-url origin "https://github.com/$DSH_SUPERAGENT_GITHUB_REPOSITORY.git"
    ```
 
-   List personal CLIs, such as one signed in to your own account, as blocked commands.
+   `--shared` borrows the local clone's objects and keeps the Ticket's own commits and refs in its directory, which the sandbox lets the worker write. The `refs/dsh-superagent/*` refs keep the borrowed objects alive: do not delete them, or prune the local clone, while a Ticket uses them. The prepare command itself runs unconfined, as the operator's command, so it can write the local clone. With the full-access sandbox, or with the clone's `.git` as a granted writable root, `git -C /home/me/src/widgets worktree add -b "agent/$DSH_SUPERAGENT_NAME" "$DSH_SUPERAGENT_DIR" "refs/dsh-superagent/$DSH_SUPERAGENT_TICKET"` in place of the last four lines also works.
+
+   List personal CLIs, such as one signed in to your own account, as blocked commands. **Sandbox** and **Writable roots** confine Executor Sessions; see Permissions and isolation above.
 4. **Prompts.** Set the team sections: the GitHub disclosure line, review bots, the commit author and the auto-merge condition.
 
 ### Management API
@@ -217,7 +239,7 @@ The blocks:
 - `source:github`, `source:feishu`: `{"enabled": true, "config": {…}}`. GitHub's config has `repository` and `cli`, and the switches `observeIssues`, `observePulls`, `observeComments` and `observeCi`, off by default, which receive every new Issue, new pull request and comment in the repository and the default branch's CI; Feishu's has `cli`, `chats` as `[{"chatId": "oc_…", "name": "…", "listen": "mentions"}]` (or `"all"`), `directMessages`, and `otherChats` as `"none"` or `"mentions"`.
 - `policy`: `{"rules": […], "sources": {"github": {"allowed": [{"id": "<login>"}], "bots": [{"id": "dependabot[bot]"}]}, "feishu": {"allowed": [{"id": "ou_…", "name": "…"}], "syncChat": "oc_…", "admission": {"oc_…": {"unlistedAddressed": "explicit"}}}}}`. `bots` lists the bots whose messages may become inferred candidates. An `admission` row is keyed by chat id, `other` or `direct` for Feishu, and by `issues`, `pulls`, `comments` or `ci` for GitHub; an unset cell takes its default (see [002 Authorization](002-authorization.md)).
 - `eval`: `mode`, `timeoutSeconds` and `model`.
-- `executor`: `model`, `maxWorkers`, `directory`, `prepare` and `blockedCommands`. The processing pause is a setting of its own, `paused`, which `POST executor/pause` sets.
+- `executor`: `model`, `maxWorkers`, `directory`, `prepare`, `blockedCommands`, `sandbox` (`workspace`, the default, or `full`) and `writableRoots`, absolute paths. Saves that change `sandbox` or `writableRoots` are checked as setup checks them, and restart. The processing pause is a setting of its own, `paused`, which `POST executor/pause` sets.
 
 Changing a repository or CLI runs the corresponding setup check first. A failed check returns 400 with details in `setup`. A successful account change, or any save while setup is pending, returns `restarting: true`. The API is temporarily unavailable while the application restarts.
 
@@ -231,7 +253,9 @@ curl -s -X PUT -b "$jar" -H 'x-orchestrator-request: 1' -H 'content-type: applic
 
 ## Setup checks
 
-Setup uses the DeepSeek Harness subprocess service, as worker shells do. It removes environment variables whose names contain KEY, PASSWORD, SECRET or TOKEN.
+Setup uses the DeepSeek Harness subprocess service, as worker shells do. It removes environment variables whose names contain KEY, PASSWORD, SECRET or TOKEN. Neither setup's probes nor the prepare command run inside the file sandbox.
+
+Setup first checks how Sessions are confined: the profile must hold the permission presets the sandbox setting uses, and no writable root may contain or lie inside the state directory, `$DSH_HOME` or the profile directory, or, under the workspace sandbox, lack the sandbox's grant.
 
 Setup verifies the GitHub repository and the agent's push access, writes the worker environment, and checks that git uses only the agent credentials for github.com. A Feishu setup failure disables only the Feishu Source.
 
@@ -261,6 +285,10 @@ A database migrated by a newer version cannot be opened by an older one. Rollbac
 
 The worker and router presets move shell commands to the background after 5 seconds. A Session cannot load without its preset. Keep the `dsh-superagent-worker` and `dsh-superagent-router` rows in `cordis.patch.yml` while their Sessions are in use; otherwise resume fails with `agent-preset/not-found`.
 
+### Permission presets
+
+Versions before the file sandbox ran every managed Session with `danger-full-access`. After the upgrade, the main Session and each Executor Session take their sandboxed preset when dsh-superagent next ensures or loads them, at the restart or at their next launch. A worker whose checkout is a git worktree can then no longer commit; change the prepare command for new Tickets, and for running ones add the local clone's `.git` as a writable root where the sandbox can grant it, or set the sandbox to Full access until they end.
+
 ## Troubleshooting
 
 Setup problems appear on the overview with a link to the fix, in the panel's language; the log and the API show the English text below.
@@ -275,6 +303,10 @@ Setup problems appear on the overview with a link to the fix, in the panel's lan
 | A Ticket fails with `The prepare command failed: …` | The output names the cause, such as a wrong clone path; fix the command, then retry the Ticket |
 | `git does not read the github.com credential configuration dsh-superagent writes` | Install git 2.32 or later |
 | A Ticket fails with `The git configuration of the repository in … sets …` | Remove the named credential or `http.*.extraheader` settings from the clone's `.git/config` |
+| `The profile has no permission preset …` | A profile layer replaced the bundle's `permission` row; keep `superagent-router` and `superagent-worker` in it, as in the bundle's `cordis.patch.yml` |
+| `The writable root … would let workers write …` | Remove that root from the Execution settings, or from the profile's sandbox-policy row, or name a narrower directory |
+| `The DeepSeek Harness sandbox does not grant the writable root …` | Remove it, or grant it in the profile's sandbox-policy row where DeepSeek Harness supports `additionalWritableRoots`; or set the sandbox to Full access, with the risk described under Permissions and isolation |
+| A worker's command or file write fails with `[sandbox: file access denied under workspace-write mode]` | It wrote outside its Ticket directory. Point the tool's cache into the Ticket directory or a temporary area, add the directory as a writable root where the sandbox can grant it, or set the sandbox to Full access |
 | `… was not written by dsh-superagent` | Move the named file out of `<stateDir>/worker-bin` or `<stateDir>/worker-gitconfig`, or choose another `stateDir` |
 | `The bot lark-cli allows user identities` | Point the Feishu Source at a bot-only configuration, as in Feishu bot above |
 | `The bot lark-cli does not work.` or `The bot identity of app … is …` | Check the configuration's app id and secret |

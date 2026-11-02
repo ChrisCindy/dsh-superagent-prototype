@@ -19,6 +19,30 @@ import type { Trigger } from '../../src/core/index.ts'
 import { fakeConnection, PANEL_HEADERS } from './connection.ts'
 import { testMachine } from './deployment.ts'
 
+/**
+ * DSH's permission-presets service as the bundle's patch composes it: DSH's base presets and the bundle's own, with the preset
+ * each Session was last set to in `selected`.
+ */
+export function permissionPresets(table: Record<string, { sandbox: string; approval: string }> = PRESET_TABLE) {
+  const selected = new Map<string, string>()
+  return {
+    selected,
+    get names() { return Object.keys(table) },
+    resolve: (name: string) => {
+      const spec = table[name]
+      if (!spec) throw new Error(`permission: unknown preset "${name}"`)
+      return spec
+    },
+    set: vi.fn((session: { id: string }, name: string) => { if (!table[name]) throw new Error(`permission: unknown preset "${name}"`); selected.set(session.id, name) }),
+  }
+}
+/** The preset table the bundle's patch gives the profile. */
+export const PRESET_TABLE: Record<string, { sandbox: string; approval: string }> = {
+  'read-only': { sandbox: 'read-only', approval: 'ask' }, 'workspace-write': { sandbox: 'workspace-write', approval: 'ask' },
+  'danger-full-access': { sandbox: 'danger-full-access', approval: 'never' }, 'superagent-router': { sandbox: 'read-only', approval: 'never' },
+  'superagent-worker': { sandbox: 'workspace-write', approval: 'never' },
+}
+
 export const MEMBER = 'ou_alice'
 export const CHAT = 'oc_team'
 
@@ -240,7 +264,7 @@ export async function startRuntime(seed?: (store: Store) => void) {
   const jobs = jobRegistry(id => agents.get(id))
   const subagents = subagentRuntime(agents)
   const services = { agents, llm: { resolveCallConfig: vi.fn(async (value: unknown) => value) }, sessionController: controller,
-    sessionPersistence: persistence, workspaceRegistry: { create: async (cwd: string) => ({ id: cwd }) }, permissionPresets: { set: () => {} }, subprocess, webServer,
+    sessionPersistence: persistence, workspaceRegistry: { create: async (cwd: string) => ({ id: cwd }) }, permissionPresets: permissionPresets(), subprocess, webServer,
     connection: fakeConnection(), jobs: jobs.service, subagents: subagents.service }
   const ctx = new Context()
   for (const [name, service] of Object.entries(services)) ctx.reflect.provide(name, service)

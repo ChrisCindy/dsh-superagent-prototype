@@ -1,6 +1,34 @@
-# dsh-superagent bundle layer: inserts the plugins without configuration, and the agent presets its Sessions run under. The
-# profile supplies the `dsh-superagent` entry's stateDir (see docs/006-deployment.md and examples/profile.cordis.patch.yml); the plugin
-# refuses to start without stateDir.
+# dsh-superagent bundle layer: inserts the plugins without configuration and the agent presets its Sessions run under, and adds
+# the permission presets they run under to DSH's preset table. The profile supplies the `dsh-superagent` entry's stateDir (see
+# docs/006-deployment.md and examples/profile.cordis.patch.yml); the plugin refuses to start without stateDir.
+# The permission presets of managed Sessions (PERMISSION_PRESETS in src/app/permissions.ts): the main Session reads only, an
+# Executor Session writes only its Ticket directory and the temporary areas, and neither asks for approval, so a denied write or
+# a request for a wider sandbox fails at once instead of waiting for a person. DSH composes bundle layers over each other, and a
+# patch of an existing row replaces its `config` whole, so this row restates the presets of DSH's base bundle beside its own; a
+# profile layer that replaces the row again must keep superagent-router and superagent-worker, which setup checks.
+- id: permission
+  name: '@deepseek-ai/dsh-permission-presets'
+  config:
+    presets:
+      read-only:
+        sandbox: read-only
+        approval: ask
+      workspace-write:
+        sandbox: workspace-write
+        approval: ask
+      danger-full-access:
+        sandbox: danger-full-access
+        approval: never
+      superagent-router:
+        sandbox: read-only
+        approval: never
+        name: dsh-superagent 主 Session
+        description: dsh-superagent 的主 Session 专用，不供手动选择。只读，不弹出审批。
+      superagent-worker:
+        sandbox: workspace-write
+        approval: never
+        name: dsh-superagent 执行器
+        description: dsh-superagent 的执行器 Session 专用，不供手动选择。只能写工单目录和临时目录，不弹出审批。
 - insert:
     - id: dsh-superagent
       name: dsh-superagent

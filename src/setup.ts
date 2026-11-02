@@ -1,11 +1,14 @@
 /** Structured startup and configuration errors with the settings location where the operator can fix them. */
 import { fill } from './infra/text.ts'
 
-export type SetupPlace = 'deployment' | 'github' | 'feishu'
+export type SetupPlace = 'deployment' | 'execution' | 'github' | 'feishu'
 export const SETUP_PROBLEMS = {
   foreignFile: ['deployment', '{file} was not written by dsh-superagent; move it, or choose another state directory.'],
   gitTooOld: ['deployment', 'git does not read the github.com credential configuration dsh-superagent writes; dsh-superagent needs git 2.32 or later.'],
   environmentFailed: ['deployment', 'Preparing the agent environment failed.'],
+  permissionPresetMissing: ['deployment', 'The profile has no permission preset {preset} with sandbox {sandbox} and approval {approval}; keep the permission row of dsh-superagent\'s cordis.patch.yml, or restore the preset in the profile\'s cordis.patch.yml.'],
+  writableRootProtected: ['execution', 'The writable root {root} would let workers write {protected}; remove it, or name a directory that neither contains nor lies inside it.'],
+  writableRootUngranted: ['execution', 'The DeepSeek Harness sandbox does not grant the writable root {root}; remove it, add it to the additionalWritableRoots of the profile\'s sandbox-policy row where DeepSeek Harness supports that, or set the sandbox to full.'],
   repositoryUnset: ['github', 'The GitHub Source names no repository.'],
   agentCliUnset: ['github', 'The agent GitHub CLI is not set.'],
   agentCliMissing: ['github', 'The agent GitHub CLI was not found.'],

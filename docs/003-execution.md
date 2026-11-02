@@ -28,6 +28,8 @@ Executor Sessions run commands without approval as the operator's OS user. Their
 
 The main Session uses `dsh-superagent-router`, with the same 5-second shell and job-wait limits and a smaller tool set for routing. Sessions retain the preset selected at creation. Worker subagents use DeepSeek Harness's `standard` preset.
 
+DeepSeek Harness's file sandbox confines both. The main Session reads only. An Executor Session writes only its Ticket directory, the temporary areas and the Executor's writable roots. Neither asks for approval: a denied write fails, and the Executor reads the failure like any other. The Executor setting **Sandbox** set to **Full access** lifts this for both; 006 Deployment describes the presets, the writable roots and the risk.
+
 ### Background work and worker slots
 
 When a turn ends with shell jobs or subagents still running, the Ticket keeps its worker slot and stays working. It is not reported as waiting, and the main Session receives no waiting report. A completed job or subagent wakes the Executor with its result in the same slot. Once a turn ends with no background work, the Executor reports waiting normally.
@@ -48,9 +50,9 @@ Worker subagents, including nested ones, use DeepSeek Harness's `standard` prese
 
 ### Preparing a Ticket directory
 
-Before the first Assignment, if the Ticket directory does not exist, the prepare command runs once with `sh` in the execution root. It has ten minutes to finish. Without a prepare command, the worker starts in an empty directory.
+Before the first Assignment, if the Ticket directory does not exist, the prepare command runs once with `sh` in the execution root. It has ten minutes to finish. Without a prepare command, the worker starts in an empty directory. The prepare command runs outside the file sandbox: it is the operator's own command, only the panel can change it, and creating a checkout writes the local clone the Ticket's checkout comes from.
 
-A failed command fails the Ticket and records its output. A retry or a person's message on one of the Ticket's Threads tries preparation again. A typical command uses `git worktree` to create a checkout. A pull request belongs to the Ticket when its branch's last path segment matches the Ticket's short name.
+A failed command fails the Ticket and records its output. A retry or a person's message on one of the Ticket's Threads tries preparation again. A typical command creates a checkout whose git data lies inside the Ticket directory, which the sandbox lets the worker commit in; a `git worktree` keeps its git data in the local clone, which a worker can write only as a writable root or under full access. A pull request belongs to the Ticket when its branch's last path segment matches the Ticket's short name.
 
 ### Concurrency
 
@@ -77,7 +79,7 @@ Ticket-specific values come from its directory and originating Trigger. Other va
 
 Workers reach GitHub through the agent account's `gh` and Feishu through the bot's `lark-cli`. Blocked commands fail when invoked by name.
 
-These wrappers and directories establish defaults, not a security boundary. A worker can still execute a program by absolute path.
+These wrappers establish defaults, not a security boundary: a worker can still execute a program by absolute path. The file sandbox is the boundary for writes; it does not restrict reads, the network or which programs run.
 
 ## Merging
 

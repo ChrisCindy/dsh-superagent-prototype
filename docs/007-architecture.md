@@ -36,7 +36,7 @@ Shutdown cancels turns, waits for passes, effects and agents, restores the proce
 
 | Part | Module | Does |
 | --- | --- | --- |
-| Setup | `src/app/setup.ts` | Resolves the repository and the accounts by probing their CLIs the way worker shells run them, writes and applies the workers' environment and command shims, and keeps the setup problems; Settings checks a changed account through it, and restarts through it, which runs setup again |
+| Setup | `src/app/setup.ts` | Checks the permission presets and extra writable roots of managed Sessions, resolves the repository and the accounts by probing their CLIs the way worker shells run them, writes and applies the workers' environment and command shims, and keeps the setup problems; Settings checks a changed account, sandbox or writable root through it, and restarts through it, which runs setup again |
 | Passes | `src/app/passes.ts` | One pass at a time, every two seconds and whenever a command asks: the due effects, then `Engine.evaluateDue`; a Source's Trigger reaches the Engine through it |
 | Outbox | `src/app/outbox.ts` | The Engine's `Outbox` port, and the only writer of the receipts: `send` keeps a message's receipt and queues its `reply` effect in one transaction, and the effect's handler sends it through `SourceRegistry.send`; a message waits while its Source is off, and is dropped when the conversation is gone or not listened to |
 | Notices | `src/app/notices.ts` | Converts domain events and worker activity into main-Session messages. `eventNotice` handles domain notices; `reportRelay` forwards questions immediately, keeps ordinary progress on its Ticket, and relays other reports; `followupRelay` names the Tickets that own a human follow-up. Relays arriving during a turn are delivered together at its next step through the DeepSeek Harness inbox |
@@ -236,6 +236,8 @@ Validation inherits an omitted base from the saved override, drops removed parts
 
 `Sessions` (`src/app/sessions.ts`) manages DeepSeek Harness Sessions for both roles. `ensure` creates a Session with its role's model. `install` follows agent events and registers prompts, skills and tools for managed Sessions.
 
+`ensure`, and the decoration of a managed Session DeepSeek Harness loads by itself, set its role's permission preset through DeepSeek Harness's permission-presets service (`src/app/permissions.ts`): `superagent-router` (read-only, approval `never`) for the main Session and `superagent-worker` (workspace-write, approval `never`) for a worker, whose workspace is its immutable cwd, the Ticket directory. The Executor setting `sandbox: full` selects DeepSeek Harness's `danger-full-access` for both instead. Selecting the preset a Session already has records nothing, so every `ensure` applies the current setting.
+
 `prompt` delivers once per request id. `relay` and `notify` enqueue main-Session messages handled by the `relay` and `notice` effects. `src/app/notices.ts` defines their content; `delivery` checks whether a message arrived.
 
 Each model request binds the Session to the current prompt revision. The revisions it used are stored durably: `promptVersion` identifies the active one and `mayRead` restricts which versions a worker can inspect. Registrations are tracked in one map per agent.
@@ -332,6 +334,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/app/context.ts` | The built-in prompt text, read from `prompts/`, and the transcript entries Sessions read |
 | `src/app/skill-files.ts` | Packaged text: `promptFile`, which joins a file's one-sentence lines into paragraphs, and the bundled skills |
 | `src/app/sessions.ts` | Sessions |
+| `src/app/permissions.ts` | The permission preset of each role by the `sandbox` setting, and the setup checks of the presets and the extra writable roots |
 | `src/app/delivery.ts` | `AgentDelivery`: delivers a message to a DeepSeek Harness agent once per request id, also across a restored Session |
 | `src/app/retry-health.ts` | `RetryHealth`: which Sessions wait on a model budget retry, for the `models` health entry |
 | `src/app/role-models.ts` | Resolves the Eval and Executor models, and seeds a new Session with its role's model |
@@ -415,7 +418,8 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `tests/admission-context.spec.ts`, `tests/feishu-image.spec.ts` | The Thread window of assessments, and Feishu image reads |
 | `tests/assessment.spec.ts` | What the MasterAssessor keeps per Eval, and when it lets go |
 | `tests/background.spec.ts` | Waiting for a worker's shell jobs and subagents: an end that woke it, and a host that stops |
-| `tests/bundle-patch.spec.ts` | The bundle's patch, read as DeepSeek Harness reads it, and the agent preset of Executor Sessions it defines |
+| `tests/bundle-patch.spec.ts` | The bundle's patch, read as DeepSeek Harness reads it over its base layer, the agent presets it defines and the permission presets it adds |
+| `tests/permissions.spec.ts` | The permission preset of each role, the preset check, and the writable roots: their form, the protected directories and the grant |
 | `tests/effects.spec.ts` | The effect queue: coalescing, limits, retries with backoff, health and shutdown |
 | `tests/passes.spec.ts` | Passes: one at a time, the ones asked for during a pass run as one after it, and the runtime health a failed pass reports |
 | `tests/outbox.spec.ts` | The Outbox on a running Runtime: messages wait while processing is paused or their Source is not installed |
@@ -517,6 +521,16 @@ The `noWait` guard in `src/app/sessions.ts` refuses main-Session shell commands 
 
 Existing main Sessions on `standard` also need explicit timeouts for foreground commands and job waits; otherwise that preset's defaults hold the step for 60 and 30 seconds respectively. The host determines the current preset through `presetForSession`, falls back to the Session projection or header, and assumes `standard` if it cannot read the value.
 
+### Permission presets and the file sandbox
+
+DeepSeek Harness composes a profile from each bundle's patch list in order over an empty entry list, then the profile's own patch (`app-boot/src/profile.ts` in DeepSeek Harness). A patch of an existing row replaces the keys it names whole (`applyEntryPatches` in `@deepseek-ai/cordis-plugin-include`), so the bundle's `permission` row restates the base bundle's `read-only`, `workspace-write` and `danger-full-access` presets beside `superagent-router` and `superagent-worker`. Setup refuses a profile whose table lacks the presets the current `sandbox` setting uses, with `permissionPresetMissing`.
+
+Approval `never` makes a denied write fail instead of waiting: `ApprovalService.decide` in `@deepseek-ai/dsh-user-approval` answers `rejected` before it asks any answerer when the Session's policy is `never`, and `approveEscalation` in `@deepseek-ai/dsh-sandbox` turns that into an error for a retry that asks for a wider sandbox. A write the sandbox refuses without such a retry fails in the shell or the file tool, with no approval involved.
+
+The sandbox confines files only, not the network or which processes run. DeepSeek Harness's sandbox policy resolves one workspace root per call, the Session's cwd; the installed version has no extra writable roots (`SandboxExecutionPolicy` is `{mode, workspaceRoot, sessionId}`), and newer versions add `additionalWritableRoots` to the sandbox-policy row, deployment-wide. `writableRoots` therefore names what the profile must grant: setup refuses, with `writableRootUngranted`, a root the composed sandbox policy does not list, and, with `writableRootProtected`, any configured or granted root that contains or lies inside the state directory, `$DSH_HOME` or the profile directory, read from the base URL DeepSeek Harness boots the profile with.
+
+The prepare command runs through the subprocess service, which does not confine, as setup's probes do: it is the operator's own command, set only in the panel, and creating a checkout, with `git worktree add` or the fetch of the documented `git clone --shared`, writes the main clone's `.git`.
+
 ### Executor tools
 
 Each Executor has six application tools:
@@ -532,7 +546,7 @@ Each Executor has six application tools:
 
 A hand-back returns `queued: false` if another Ticket still owns the message, or this Ticket never owned it. For example, a bot message went to Eval independently.
 
-The worker preset is defined in `cordis.patch.yml` and selected through `WORKER_PRESET`. `WORK_TOOLS` in `src/app/sessions.ts` retains available file, search, shell, job, web, skill, todo and subagent tools. Workers do not receive tools for asking or presenting to a person, changing the profile, scheduling work outside worker slots, starting or messaging other Sessions, or editing external documents. Tool calls are refused after the Ticket ends.
+The worker preset is defined in `cordis.patch.yml` and selected through `WORKER_PRESET`. Its shell and file tools run under the `superagent-worker` permission preset, above; the tool restrictions here are separate from that file sandbox. `WORK_TOOLS` in `src/app/sessions.ts` retains available file, search, shell, job, web, skill, todo and subagent tools. Workers do not receive tools for asking or presenting to a person, changing the profile, scheduling work outside worker slots, starting or messaging other Sessions, or editing external documents. Tool calls are refused after the Ticket ends.
 
 ### Result shapes and assessment context
 
@@ -608,7 +622,7 @@ Most built-in instructions live in `prompts/*.md`, with one sentence per line jo
 
 Every plugin configuration key except `stateDir` is volatile. The panel's Deployment settings and DeepSeek Harness's Plugin Manager edit them through DeepSeek Harness's configuration form; the host writes `cordis.patch.yml` and updates the values in place, and dsh-superagent reads each limit when it uses it, so a change applies without a restart.
 
-A settings save that changes a Source field setup reads, such as an account's CLI, and any save while setup waits, restarts dsh-superagent. DeepSeek Harness's settings service does not serve the entry during that restart, so after its own restart dsh-superagent asks it to read the entry again, and an open form becomes editable again.
+A settings save that changes a Source field setup reads, such as an account's CLI, or the Executor's `sandbox` or `writableRoots`, and any save while setup waits, restarts dsh-superagent; the restart runs setup again and gives every managed Session its preset as it is ensured. DeepSeek Harness's settings service does not serve the entry during that restart, so after its own restart dsh-superagent asks it to read the entry again, and an open form becomes editable again.
 
 ## Reviewing a change against real data
 

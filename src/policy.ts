@@ -87,13 +87,30 @@ export const EvalConfigSchema = z.object({
 }).strict()
 const CommandNameSchema = z.string().regex(/^[A-Za-z0-9._-]+$/).refine(name => name !== '.' && name !== '..', 'Not a command name')
   .refine(name => !WORKER_COMMANDS.includes(name), `${WORKER_COMMANDS.join(', ')} cannot be blocked`)
-/** Executor settings: worker model, concurrency, ticket directory root (empty defaults to `<stateDir>/work`), `prepare` command, and blocked commands. */
+/** An absolute path without `.` or `..` segments, written without a trailing slash (except `/` itself). */
+const WritableRootSchema = z.string().trim().max(LIMITS.writableRoots.chars)
+  .refine(path => path.startsWith('/') && !path.split('/').some(part => part === '.' || part === '..'), 'An absolute path without . or ..')
+  .transform(path => path.replace(/(.)\/+$/, '$1'))
+/**
+ * How Executor Sessions are confined: `workspace` (the default) lets their shell and file tools write only their Ticket directory,
+ * the platform temporary areas and `writableRoots`; `full`, the escape hatch for a toolchain the sandbox breaks, lets every
+ * managed Session, the main Session too, write anywhere the operator's OS user can.
+ */
+export const SANDBOXES = ['workspace', 'full'] as const
+export type Sandbox = typeof SANDBOXES[number]
+/**
+ * Executor settings: worker model, concurrency, ticket directory root (empty defaults to `<stateDir>/work`), `prepare` command,
+ * blocked commands, the `sandbox` of managed Sessions, and the extra `writableRoots` of an Executor Session.
+ */
 export const ExecutorConfigSchema = z.object({
   model: RoleModelSchema.nullable().default(null),
   maxWorkers: z.number().int().min(LIMITS.maxWorkers.min).max(LIMITS.maxWorkers.max).default(3),
   directory: z.string().trim().refine(path => path === '' || path.startsWith('/'), 'An absolute path, or empty for <stateDir>/work').default(''),
   prepare: z.string().max(LIMITS.prepareCommand).default(''),
   blockedCommands: z.array(CommandNameSchema).default([]),
+  sandbox: z.enum(SANDBOXES).default('workspace'),
+  writableRoots: z.array(WritableRootSchema).max(LIMITS.writableRoots.count)
+    .refine(roots => new Set(roots).size === roots.length, 'Duplicate writable roots').default([]),
 }).strict()
 export const SourceInstanceSchema = z.object({ enabled: z.boolean().default(true), config: z.record(z.string(), z.unknown()).default({}) }).strict()
 export const SettingsSchema = z.object({

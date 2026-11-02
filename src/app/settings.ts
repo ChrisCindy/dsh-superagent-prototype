@@ -20,8 +20,11 @@ import { KV } from '../kv.ts'
  */
 export class SettingsConflict extends Error {}
 const now = (): string => new Date().toISOString()
-/** Executor settings that control shell execution paths, prepare commands, and command shims. */
-const environment = ({ executor }: SettingsValue) => JSON.stringify([executor.directory, executor.prepare, executor.blockedCommands])
+/** Executor settings that control shell execution paths, prepare commands, command shims, and how managed Sessions are confined. */
+const environment = ({ executor }: SettingsValue) => JSON.stringify([executor.directory, executor.prepare, executor.blockedCommands,
+  executor.sandbox, executor.writableRoots])
+/** Executor settings that decide the permission preset of every managed Session, which a restart applies to them all. */
+const confinement = ({ executor }: SettingsValue) => JSON.stringify([executor.sandbox, executor.writableRoots])
 
 /** Settings that decide who may originate work and what is accepted: the whole Policy and the accept mode. */
 const authorization = (settings: SettingsValue) => [settings.policy, settings.eval.mode]
@@ -88,7 +91,7 @@ export interface SettingsHost {
   /** Source host passed to source kinds' policy syncs and label refreshes. */
   readonly sourceHost: SourceHost
   /** Setup state, account/command checks, and restart trigger when setup-read fields change. */
-  readonly setup: Pick<Setup, 'configured' | 'checkAccounts' | 'blockCommands' | 'restart'>
+  readonly setup: Pick<Setup, 'configured' | 'checkAccounts' | 'checkConfinement' | 'blockCommands' | 'restart'>
   /** Triggers an immediate pass so work newly allowed by a settings save runs right away. */
   requestPass(): void
 }
@@ -158,7 +161,8 @@ export class Settings {
   }
   /**
    * Validates and saves one settings block against its `revision`; a no-op save records no new revision, a changed policy
-   * version notifies affected open tickets, and changing a setup-read field (`SETUP_FIELDS`, such as an account CLI) or any
+   * version notifies affected open tickets, and changing a setup-read field (`SETUP_FIELDS`, such as an account CLI), the Executor's
+   * `sandbox` or `writableRoots` (checked first, as setup checks them), or any
    * change saved while waiting for setup (`!this.host.setup.configured()`) restarts `dsh-superagent` so setup runs again.
    * @param origin - Caller origin; refuses Policy and accept-mode changes from `'tool'`, and restricts execution-environment and account-CLI changes to `'panel'` (a guardrail against prompt-injected tool calls, not an OS security boundary, since agents run shell commands; `origin` has no default so no caller receives panel privileges implicitly).
    * @returns Save outcome with the block's current `revision`, whether `policy_changed`, whether `restarting`, and `context_delivery` status (`'injected'` or `'pending'`).
@@ -185,6 +189,7 @@ export class Settings {
     }
     rules.guard?.(current, candidate, origin)
     if (setupChanged(current, candidate)) await this.host.setup.checkAccounts(block, candidate)
+    if (confinement(current) !== confinement(candidate)) this.host.setup.checkConfinement(candidate)
     if (stale()) throw new SettingsConflict('Settings changed during the checks. Reload before saving.')
     // Re-read current settings after async checks in case unrelated blocks were saved concurrently.
     const old = store.settings()
@@ -193,7 +198,8 @@ export class Settings {
       const delivery = await sessions.delivery(`settings:${block}`)
       return { saved: true, revision: store.blockRevision(block), policy_changed: false, restarting: false, context_delivery: delivery }
     }
-    const restarting = setupChanged(old, settings) || !this.host.setup.configured()
+    // A changed sandbox or writable root restarts too, so setup checks it and every managed Session takes its new preset.
+    const restarting = setupChanged(old, settings) || confinement(old) !== confinement(settings) || !this.host.setup.configured()
     const before = policyVersion(old), after = policyVersion(settings)
     const scope = (version: SettingsValue) => ({
       scope: (input: { source: string; meta: Record<string, unknown> }) => this.host.sources.scope(input, version) })

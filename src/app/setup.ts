@@ -5,6 +5,7 @@ import { SETUP_FIELDS, resolveDeployment, resolveFeishuBot, workerProbe, type De
 import { agentVariables, applyEnvironment, verifyEnvironment, withoutDirectory, workerBin, writeEnvironment } from '../infra/environment.ts'
 import type { Settings, SettingsBlock } from '../policy.ts'
 import { SetupError, type SetupProblem } from '../setup.ts'
+import { checkPresets, checkWritableRoots, protectedDirectories } from './permissions.ts'
 
 export interface SetupHost {
   readonly context: Context
@@ -64,6 +65,20 @@ export class Setup {
       : resolveDeployment(machine, settings.sources.github?.config, this.probe())
     await check.catch((error: unknown) => { if (!(error instanceof SetupError) || error.place === block.slice(7)) throw error })
   }
+  /**
+   * Check how `settings` confine managed Sessions: the profile holds the permission presets they run under, and no extra
+   * writable root, configured or granted by DSH's sandbox policy, opens the state directory, DSH's home or the profile.
+   * @throws SetupError when a preset is missing or a writable root is refused.
+   */
+  checkConfinement(settings: Settings): void {
+    const { context, machine } = this.host
+    const { sandbox, writableRoots } = settings.executor
+    checkPresets(context.permissionPresets, sandbox)
+    // DSH's sandbox policy grants extra roots only where its version has them, deployment-wide, from the profile's configuration.
+    const policy = context.get('sandboxPolicy') as { additionalWritableRoots?: readonly string[] } | undefined
+    checkWritableRoots(writableRoots, sandbox, protectedDirectories(machine.stateDir, (context as { baseUrl?: unknown }).baseUrl),
+      policy?.additionalWritableRoots)
+  }
   async blockCommands(blocked: readonly string[]): Promise<void> {
     if (this.resolved) await writeEnvironment(this.resolved, blocked)
   }
@@ -75,6 +90,7 @@ export class Setup {
   }
   private async resolve(settings: Settings): Promise<Deployment> {
     const { context, machine, lifetime } = this.host
+    this.checkConfinement(settings)
     const probe = this.probe()
     const deployment = await resolveDeployment(machine, settings.sources.github?.config, probe)
     const feishu = await resolveFeishuBot(machine, settings.sources.feishu?.config, probe).catch((error: unknown) => {
