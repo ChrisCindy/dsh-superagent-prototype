@@ -632,5 +632,4 @@ Point `DSH_HOME` at a temporary directory and create a new profile there. Copy t
 
 ## Open questions
 
-- Trust: which Trigger fields are trusted, such as the Source's actor and Thread membership, and which are not, such as the body and quotes.
 - Deployment isolation: the agent's profile on its own pinned DeepSeek Harness installation, so upgrading DeepSeek Harness elsewhere does not break it.
