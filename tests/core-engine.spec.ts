@@ -71,6 +71,40 @@ function accepted(h: ReturnType<typeof harness>, id = '1', thread = 't1') {
   return decision
 }
 
+describe('proactive limit', () => {
+  const inferred = (t: Trigger) => t.actor.id === 'alice' ? { admissible: true as const, strength: 'explicit' as const, basis: { via: 'listed' as const } }
+    : { admissible: true as const, strength: 'inferred' as const, basis: { via: 'admission' as const, cell: 'unlistedUnaddressed' as const,
+      observation: { mode: 'observe' as const } } }
+  const at = (thread: string, id: string, overrides: Partial<Trigger> = {}) => trigger(id, { actor: guest, threads: [{ source: 'chat', id: thread }], ...overrides })
+  it('records an inferred candidate over its Source\'s hourly limit as rate limited without asking the assessor', () => {
+    const h = harness({ maxInferredPerHour: 2, gate: inferred })
+    h.engine.receive(at('t1', '1')); h.engine.receive(at('t2', '2')); h.pump()
+    expect(h.requests).toHaveLength(2)
+    // A decided Eval still counts for an hour, and one in progress counts too.
+    h.decide(h.requests[0]!, { kind: 'ignore', reason: 'chatter', audit: {} })
+    expect(h.repo.decisions.byThread('chat:t1')).toEqual([expect.objectContaining({ assessed: true, strength: 'inferred' })])
+    h.engine.receive(at('t3', '3')); h.pump()
+    expect(h.assessor.request).toHaveBeenCalledTimes(2)
+    expect(h.repo.decisions.byThread('chat:t3')).toEqual([expect.objectContaining({ kind: 'ignore', triggerIds: ['3'],
+      reason: [{ code: 'rateLimited', values: { limit: '2' } }] })])
+    expect(h.repo.decisions.byThread('chat:t3')[0]).not.toHaveProperty('assessed')
+    expect(h.repo.threads.get('chat:t3')).toMatchObject({ pending: [] })
+    // Explicit requests are never limited, and another Source counts its own.
+    h.engine.receive(at('t4', '4', { actor: member })); h.pump()
+    h.engine.receive(at('t5', '5', { source: 'other', threads: [{ source: 'other', id: 't5' }], actor: { source: 'other', id: 'bob' } })); h.pump()
+    expect(h.requests.map(candidate => candidate.thread.key)).toEqual(['chat:t1', 'chat:t2', 'chat:t4', 'other:t5'])
+    // Rate-limited Decisions count nothing, and an hour later the decided Eval no longer counts.
+    h.tick(3601)
+    h.engine.receive(at('t3', '6')); h.pump()
+    expect(h.requests.at(-1)!.thread.key).toBe('chat:t3')
+  })
+  it('limits nothing without a limit', () => {
+    const h = harness({ gate: inferred })
+    for (const id of ['1', '2', '3']) h.engine.receive(at(`t${id}`, id))
+    h.pump()
+    expect(h.requests).toHaveLength(3)
+  })
+})
 describe('intake', () => {
   it('stores a trigger once and records source filtering', () => {
     const h = harness()

@@ -56,12 +56,16 @@ export function storeReads(db: DatabaseSync) {
     return db.prepare("SELECT value FROM trigger WHERE id = ? OR json_extract(value, '$.url') LIKE ? ESCAPE '\\' OR json_extract(value, '$.meta.messageId') = ? OR json_extract(value, '$.text') LIKE ? ESCAPE '\\' ORDER BY at DESC LIMIT ?").all(query, `${query.replace(/[\\%_]/g, match => `\\${match}`)}%`, query, pattern, limit).map(row => JSON.parse(String(row.value)) as Trigger)
   },
   recentDecisions: (offset = 0, limit = 50): Decision[] => db.prepare('SELECT value FROM decision ORDER BY rowid DESC LIMIT ? OFFSET ?').all(limit, offset).map(row => JSON.parse(String(row.value)) as Decision),
-  /** Decisions matching `kinds` whose triggers arrived at or after `since`, aligned with `flow` window counts. */
-  decisions: (options: { kinds: string[]; since: string }, offset: number, limit: number): { items: Decision[]; more: boolean } => {
+  /**
+   * Decisions matching `kinds`, with a reason of code `reason` when given, whose triggers arrived at or after `since`, aligned
+   * with `flow` window counts.
+   */
+  decisions: (options: { kinds: string[]; reason?: string; since: string }, offset: number, limit: number): { items: Decision[]; more: boolean } => {
     const where = [...(options.kinds.length ? [`json_extract(d.value, '$.kind') IN (${options.kinds.map(() => '?').join(',')})`] : []),
+      ...(options.reason ? ["EXISTS (SELECT 1 FROM json_each(json_extract(d.value, '$.reason')) r WHERE json_extract(r.value, '$.code') = ?)"] : []),
       ...(options.since ? ["EXISTS (SELECT 1 FROM json_each(json_extract(d.value, '$.triggerIds')) j JOIN trigger t ON t.id = j.value WHERE t.at >= ?)"] : [])]
     const rows = db.prepare(`SELECT d.value FROM decision d ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY d.rowid DESC LIMIT ? OFFSET ?`)
-      .all(...options.kinds, ...(options.since ? [options.since] : []), limit + 1, offset)
+      .all(...options.kinds, ...(options.reason ? [options.reason] : []), ...(options.since ? [options.since] : []), limit + 1, offset)
     return { items: rows.slice(0, limit).map(row => JSON.parse(String(row.value)) as Decision), more: rows.length > limit }
   },
   /** Newest decisions of the given kinds, for surfaces that must surface rare outcomes among many ignores. */

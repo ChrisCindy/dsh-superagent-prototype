@@ -26,8 +26,11 @@ const environment = ({ executor }: SettingsValue) => JSON.stringify([executor.di
 /** Executor settings that decide the permission preset of every managed Session, which a restart applies to them all. */
 const confinement = ({ executor }: SettingsValue) => JSON.stringify([executor.sandbox, executor.writableRoots])
 
-/** Settings that decide who may originate work and what is accepted: the whole Policy and the accept mode. */
-const authorization = (settings: SettingsValue) => [settings.policy, settings.eval.mode]
+/**
+ * Settings that decide who may originate work and what is accepted: the whole Policy, the accept mode, and how many proactive
+ * candidates an hour are assessed.
+ */
+const authorization = (settings: SettingsValue) => [settings.policy, settings.eval.mode, settings.eval.maxInferredPerHour]
 /**
  * Refuses a main-Session tool save that changes authorization, compared by path so that a key a Source's schema reorders changes
  * nothing; a sync of a Source's list (`'sync'`) and the panel may.
@@ -58,7 +61,7 @@ const BLOCKS: Record<'policy' | 'eval' | 'executor' | 'source', Block> = {
     // The main Session reads untrusted text, so its Policy changes are proposals a person accepts (`Settings.propose`).
     guard: panelOnlyPolicy,
   },
-  // The eval time limit and model stay open to tools; the accept mode is part of authorization.
+  // The eval time limit and model stay open to tools; the accept mode and the proactive limit are part of authorization.
   eval: { parse: value => EvalConfigSchema.parse(value), merge: (settings, value) => ({ ...settings, eval: value as SettingsValue['eval'] }),
     guard: panelOnlyPolicy },
   executor: {

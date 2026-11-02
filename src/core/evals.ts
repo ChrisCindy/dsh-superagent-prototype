@@ -11,17 +11,18 @@ import type { Tickets } from './tickets.ts'
 /** An outcome for the Eval that holds a Trigger; `evalId` names the Eval it was judged for, so a later Eval refuses it. */
 export type Outcome = AssessmentOutcome & { evalId?: string }
 /** What an Eval ends with, as its Decision records it. */
-interface Finished { kind: DecisionKind; reason: Reason[]; audit?: Record<string, unknown>; ticketId?: string; mandate?: Mandate }
+interface Finished { kind: DecisionKind; reason: Reason[]; audit?: Record<string, unknown>; ticketId?: string; mandate?: Mandate; assessed?: true }
 /** An outcome's reason: a code it carries, else the words its assessor or person wrote. */
 const reasonOf = (reason: string | Reason): Reason[] => [typeof reason === 'string' ? said(reason) : reason]
 const stronger = (a: Strength, b: Strength): Strength => a === 'explicit' || b === 'explicit' ? 'explicit' : 'inferred'
 /** How many times in a row an expired Eval queues its Triggers again before it is recorded unavailable. */
 const REQUEUES = 2
+const HOUR = 3_600_000
 
 /**
  * Evals runs the Evals of Threads: it batches a Thread's queued Triggers into one Eval, takes its strength, actor, and basis
- * from the gate, asks the assessor, keeps its deadline through a pause, and records the Decision it ends with: accept, stop,
- * ignore, or unavailable. It depends on Tickets to create the ticket an accept decides and to end the one a stop names; the
+ * from the gate, asks the assessor unless an inferred one is over its Source's hourly limit, keeps its deadline through a pause,
+ * and records the Decision it ends with: accept, stop, ignore, or unavailable. It depends on Tickets to create the ticket an accept decides and to end the one a stop names; the
  * Engine routes the main Session's decisions, people's replays, worker handbacks, and the pass's Eval work here.
  */
 export class Evals extends EnginePart {
@@ -104,6 +105,12 @@ export class Evals extends EnginePart {
       this.repo.threads.save(thread)
       return
     }
+    // A proactive candidate over its Source's hourly limit is recorded without asking the assessor; explicit requests are never limited.
+    if (strongest.strength === 'inferred' && this.overLimit(thread.ref.source, policy, at)) {
+      this.ignore(thread, [...thread.pending], [{ code: 'rateLimited', values: { limit: String(policy.maxInferredPerHour) } }], policy, at)
+      this.repo.threads.save(thread)
+      return
+    }
     const evalId = key('eval', thread.key, policy.version, at, ...thread.pending)
     const deadline = new Date(Date.parse(at) + policy.evalTimeoutMs).toISOString()
     const { strength, trigger: { actor }, basis } = strongest
@@ -116,6 +123,16 @@ export class Evals extends EnginePart {
     }
     this.emit('eval.started', { evalId, threadKey: thread.key, triggerIds: thread.evaluating.triggerIds, strength: strongest.strength })
     this.options.assessor.request(this.candidateOf(thread))
+  }
+  /**
+   * Whether a Source started its hourly limit of inferred Evals: those whose Decision in the last hour says they asked the
+   * assessor, and those still in progress.
+   */
+  private overLimit(source: string, policy: Policy, at: string): boolean {
+    const limit = policy.maxInferredPerHour
+    if (limit === undefined) return false
+    const running = this.repo.threads.active().filter(item => item.ref.source === source && item.evaluating?.strength === 'inferred').length
+    return running + this.repo.decisions.inferredSince(source, new Date(Date.parse(at) - HOUR).toISOString()) >= limit
   }
   /** The candidate of the Eval that holds `triggerId`, or undefined while no Eval holds it. */
   candidate(triggerId: string): Candidate | undefined {
@@ -316,9 +333,10 @@ export class Evals extends EnginePart {
   }
   /** Record an Eval's Decision; the Thread's own Eval ends with it, while a gate-only one leaves the Thread's Eval going. */
   private finish(thread: Thread, evaluation: Evaluation, outcome: Finished): Decision {
-    const decision = this.record(thread, evaluation, outcome)
-    // Direct (gate-only) evaluations do not clear the thread's active evaluation.
-    if (thread.evaluating?.id !== evaluation.id) return decision
+    // Only the Thread's own Eval asked the assessor; direct (gate-only) evaluations do not clear it.
+    const own = thread.evaluating?.id === evaluation.id
+    const decision = this.record(thread, evaluation, own ? { ...outcome, assessed: true } : outcome)
+    if (!own) return decision
     delete thread.evaluating; delete thread.expired
     this.repo.threads.save(thread)
     this.options.assessor.release?.(evaluation.id)
@@ -328,7 +346,8 @@ export class Evals extends EnginePart {
     const at = this.now()
     const decision: Decision = { id: key('decision', evaluation.id), evalId: evaluation.id, threadKey: thread.key, triggerIds: evaluation.triggerIds,
       policyVersion: evaluation.policyVersion, at, kind: outcome.kind, reason: outcome.reason, strength: evaluation.strength,
-      ...(outcome.ticketId ? { ticketId: outcome.ticketId } : {}), ...(outcome.mandate ? { mandate: outcome.mandate } : {}), ...(outcome.audit ? { audit: outcome.audit } : {}) }
+      ...(outcome.ticketId ? { ticketId: outcome.ticketId } : {}), ...(outcome.mandate ? { mandate: outcome.mandate } : {}), ...(outcome.audit ? { audit: outcome.audit } : {}),
+      ...(outcome.assessed ? { assessed: true } : {}) }
     this.repo.decisions.save(decision)
     for (const id of evaluation.triggerIds) {
       const disposition = this.repo.triggers.disposition(id) ?? { fanout: [], at }

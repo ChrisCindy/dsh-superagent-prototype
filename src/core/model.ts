@@ -88,10 +88,10 @@ export function followupOwners(trigger: Pick<Trigger, 'id' | 'human' | 'threads'
 }
 /**
  * Whether a Decision settled what a person's message asks for: a stop on it, taken or refused, decides only that ticket's
- * work, routing it to a ticket leaves it to that ticket's worker, and an unavailable one decided nothing.
+ * work, routing it to a ticket leaves it to that ticket's worker, and an unavailable or rate-limited one decided nothing.
  */
 export const settled = (decision: Pick<Decision, 'kind' | 'reason'>): boolean => !['stop', 'unavailable'].includes(decision.kind)
-  && !decision.reason.some(reason => ['stopNotExplicit', 'stopUnknown', 'routed'].includes(reason.code))
+  && !decision.reason.some(reason => ['stopNotExplicit', 'stopUnknown', 'routed', 'rateLimited'].includes(reason.code))
 
 export type Strength = 'explicit' | 'inferred'
 /** The cells of a receiving scope's row in the admission table, by whether the sender is listed and addresses the agent. */
@@ -206,6 +206,8 @@ export interface Decision {
   audit?: Record<string, unknown>
   /** A person dismissed the problem an unavailable Decision shows. */
   dismissed?: true
+  /** Its Eval asked the assessor; an inferred one counts toward its Source's hourly limit (see `Policy.maxInferredPerHour`). */
+  assessed?: true
 }
 
 export type AssignmentState = 'pending' | 'running' | 'ended'

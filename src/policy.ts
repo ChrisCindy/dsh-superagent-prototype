@@ -83,6 +83,8 @@ export const PolicyConfigSchema = z.object({
 export const EvalConfigSchema = z.object({
   mode: z.enum(['off', 'observe', 'auto']).default('observe'),
   timeoutSeconds: z.number().int().min(LIMITS.evalTimeoutSeconds.min).max(LIMITS.evalTimeoutSeconds.max).default(120),
+  /** Inferred Evals per Source and hour; one over it is recorded `rateLimited` without the assessor. */
+  maxInferredPerHour: z.number().int().min(LIMITS.maxInferredPerHour.min).max(LIMITS.maxInferredPerHour.max).default(20),
   model: RoleModelSchema.nullable().default(null),
 }).strict()
 const CommandNameSchema = z.string().regex(/^[A-Za-z0-9._-]+$/).refine(name => name !== '.' && name !== '..', 'Not a command name')
@@ -218,7 +220,7 @@ export function settingsPolicy(settings: Settings, sources: SourceScope): Policy
     return { admissible: true, strength: 'inferred', basis: { ...recorded, via: 'admission', cell, observation: { mode } } }
   }
   return {
-    version, paused: settings.paused, evalTimeoutMs: settings.eval.timeoutSeconds * 1000,
+    version, paused: settings.paused, evalTimeoutMs: settings.eval.timeoutSeconds * 1000, maxInferredPerHour: settings.eval.maxInferredPerHour,
     gate(trigger: Trigger, thread, tickets) {
       if (!trigger.human) return machineGate(trigger)
       const allowed = allowedSender(settings, trigger.actor)

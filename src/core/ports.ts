@@ -24,6 +24,11 @@ export interface Policy {
   admitsInferred(rules: readonly string[]): boolean
   /** How long an assessor may take before an eval is recorded as unavailable. */
   evalTimeoutMs: number
+  /**
+   * How many inferred Evals the Threads of one Source may start in an hour; one over the limit is ignored as `rateLimited`
+   * without the assessor. Explicit requests are never limited; none sets no limit.
+   */
+  maxInferredPerHour?: number
 }
 
 /** What the assessor receives: bounded facts, never authority. */
@@ -130,5 +135,7 @@ export interface Repositories {
     get(id: string): Decision | undefined
     save(decision: Decision): void
     byThread(key: string): Decision[]
+    /** How many Decisions of inferred Evals that asked the assessor were recorded on a Source's Threads at or after `since`. */
+    inferredSince(source: string, since: string): number
   }
 }

@@ -33,6 +33,7 @@ import { policyHistory } from '../src/app/settings-history.ts'
 import { overview } from '../src/app/views/overview.ts'
 import { preview, readable } from '../src/app/views/text.ts'
 import { decisionList, search, threadDetail, threadList } from '../src/app/views/threads.ts'
+import { snapshot, triggerView } from '../src/app/views/records.ts'
 import { executorLoad, ticketDetail, ticketList } from '../src/app/views/tickets.ts'
 import { fakeConnection, PANEL_HEADERS } from './fixtures/connection.ts'
 
@@ -344,6 +345,27 @@ it('assesses a proactive observation in the orchestrator Session and creates the
   expect(ticket.mandate).toMatchObject({ strength: 'inferred', basis: expect.objectContaining({ via: 'admission', rules: ['copy'], observation: { mode: 'auto' } }) })
   expect(runtime.store.replyStatus(key('ack', again.id))).toBeDefined()
   expect(await runTool(`worker-${ticket.id}`, 'orchestrator_read', { resource: `ticket/${ticket.id}/assignment` })).toMatchObject({ text: expect.stringContaining('Proactively accepted under copy') })
+})
+
+it('records a proactive candidate over the Source\'s hourly limit as rate limited without a candidate for the main Session, and lists it', async () => {
+  await runtime.settings.save('eval', { ...runtime.store.settings().eval, maxInferredPerHour: 1 }, runtime.store.blockRevision('eval'), 'panel')
+  // A main-Session tool may not raise the limit.
+  await expect(runtime.settings.save('eval', { ...runtime.store.settings().eval, maxInferredPerHour: 50 }, runtime.store.blockRevision('eval'), 'tool'))
+    .rejects.toThrow('proactive Eval limit')
+  await receive(feishu('3', '这个文案好奇怪', { mentions: [] }))
+  const candidates = () => relays(runtime.masterId).filter(item => item.kind === 'candidate')
+  expect(candidates()).toHaveLength(1)
+  const over = feishu('4', '这个按钮也歪了', { mentions: [] })
+  await receive(over)
+  expect(candidates()).toHaveLength(1)
+  expect(runtime.store.decisions.byThread(`feishu:${CHAT}:om_4`)).toEqual([expect.objectContaining({ kind: 'ignore',
+    reason: [{ code: 'rateLimited', values: { limit: '1' } }] })])
+  expect(decisionList(viewsOf(runtime), ['ignore'], 0, 10, '', 'rateLimited').items.map(item => item.triggerIds)).toEqual([[over.id]])
+  // Nothing judged the message, so a person may send it to Eval again.
+  expect(triggerView(snapshot(viewsOf(runtime)), runtime.store.triggers.get(over.id)!).actions.requeue).toBe(true)
+  // An explicit request is never limited.
+  await receive(feishu('5', '@bot 修一下回归'))
+  expect(candidates()).toHaveLength(2)
 })
 
 it('accepts silently under a rule that says so, gives the worker the rule procedure, and closes it as dropped when nothing is left for a human', async () => {

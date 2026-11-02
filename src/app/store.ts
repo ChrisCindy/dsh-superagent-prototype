@@ -38,6 +38,8 @@ const SETS: Record<string, Record<string, string>> = {
     active: "INTEGER AS (CASE WHEN json_array_length(value, '$.pending') > 0 OR value -> '$.evaluating' IS NOT NULL THEN 1 END)",
     subscribed: "TEXT AS (CASE WHEN json_array_length(value, '$.subscriptions') > 0 THEN value ->> '$.ref.source' END)",
   },
+  // When an inferred Eval that asked the assessor was decided, which a Source's hourly limit counts.
+  decision: { inferred: "TEXT AS (CASE WHEN value ->> '$.assessed' AND value ->> '$.strength' = 'inferred' THEN value ->> '$.at' END)" },
   // Composite key (ticketId + thread) used to preserve per-conversation reply order.
   outbox: { dropped: "TEXT AS (value ->> '$.dropped.at')", pending: `TEXT AS (CASE WHEN value ->> '$.status' = 'pending'
     AND value ->> '$.ticketId' IS NOT NULL THEN (value ->> '$.ticketId') || ' ' || (value ->> '$.channel.thread') END)` },
@@ -244,6 +246,8 @@ export class Store implements Repositories {
     get: (id: string): Decision | undefined => { const row = this.db.prepare('SELECT value FROM decision WHERE id=?').get(id); return row ? JSON.parse(String(row.value)) as Decision : undefined },
     save: (decision: Decision): void => { this.db.prepare('INSERT INTO decision VALUES (?,?,?) ON CONFLICT(id) DO UPDATE SET value=excluded.value, thread=excluded.thread').run(decision.id, decision.threadKey, JSON.stringify(decision)) },
     byThread: (threadKeyValue: string): Decision[] => this.db.prepare('SELECT value FROM decision WHERE thread=? ORDER BY rowid').all(threadKeyValue).map(row => JSON.parse(String(row.value)) as Decision),
+    inferredSince: (source: string, since: string): number => Number(this.db.prepare(`SELECT COUNT(*) AS n FROM decision
+      WHERE inferred >= ? AND substr(thread, 1, ?) = ?`).get(since, source.length + 1, `${source}:`)?.n ?? 0),
   }
   /** Read-only queries for management views, orchestrator tools, and source polling (see `storeReads`). */
   readonly read: ReturnType<typeof storeReads>

@@ -100,6 +100,10 @@ The accept mode is part of the Policy:
 
 Explicit requests work in every mode. Start in `observe` and switch to `auto` after reviewing the recorded Decisions. Each assessment judges every enabled rule exactly once, whether it matches or not. A proactive accept requires at least one matching rule.
 
+### Proactive limit
+
+`eval.maxInferredPerHour` (default 20) caps how many inferred Evals one Source starts in an hour. The host counts the Decisions of the last hour whose Eval asked the main Session for an inferred candidate on that Source's Threads, plus the inferred Evals still running there. A candidate over the limit is recorded as ignore with reason `rateLimited`, and the main Session never sees it. Explicit requests are never limited. The panel's Eval page has a filter for these Decisions, and a person can send such a message to Eval again. Only the panel changes the limit, as with the accept mode.
+
 Each rule describes a kind of proactive work. The Ticket's Mandate records the matched rules, and its Executor receives their names and instructions.
 
 For that Ticket, a rule's process and communication requirements override the defaults. A silence rule can suppress an acknowledgement; a review rule can name the required reviewer and approval before merge. Requirements that apply to every Ticket belong in team prompt sections instead.
@@ -118,7 +122,7 @@ Unaffected Tickets receive no notice. The change does not immediately revoke liv
 
 ### Who changes the Policy
 
-Only a person on the panel changes the Policy version, apart from a Source's sync of its own allowed list. The main Session reads untrusted text, so `Settings.save` refuses its saves (origin `tool`) that change the `policy` block or the accept mode (`panelOnlyPolicy`); it may still change the Eval time limit and model. On a person's request, the main Session calls `orchestrator_policy_propose` with the whole block and its revision instead. The proposal changes nothing. One proposal is kept, the latest, with the request it carries out and the settings paths it changes. The panel's overview shows it to a person, who accepts it, which saves it as a panel save against the revision it was made from, or dismisses it. If the block was saved after the proposal, the proposal is stale and accepting it is refused.
+Only a person on the panel changes the Policy version, apart from a Source's sync of its own allowed list. The main Session reads untrusted text, so `Settings.save` refuses its saves (origin `tool`) that change the `policy` block, the accept mode or the proactive limit (`panelOnlyPolicy`); it may still change the Eval time limit and model. On a person's request, the main Session calls `orchestrator_policy_propose` with the whole block and its revision instead. The proposal changes nothing. One proposal is kept, the latest, with the request it carries out and the settings paths it changes. The panel's overview shows it to a person, who accepts it, which saves it as a panel save against the revision it was made from, or dismisses it. If the block was saved after the proposal, the proposal is stale and accepting it is refused.
 
 Source configuration is separate from Policy. It controls what enters the system: which chats are read and whether a scope receives all messages or only mentions. A Mandate records its Source and receiving scope. Resuming needs the Source to still listen to the Thread, but does not require it to still receive every message there.
 

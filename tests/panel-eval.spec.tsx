@@ -22,6 +22,9 @@ it('opens the Decisions under Policy from the flow line with their reasons, Deci
   expect(text()).toContain(zh.none)
   await click(zh.lastDayOnly)
   expect(server.requests.some(request => request.path === 'decisions?limit=30&kind=ignore')).toBe(true)
+  // Candidates over a Source's proactive limit have a filter of their own.
+  await click(zh['decisionFilter.rateLimited'])
+  expect(server.requests.some(request => request.path === 'decisions?limit=30&kind=ignore&reason=rateLimited')).toBe(true)
 })
 
 it('keeps a Policy draft across remounts, and merges another save into it sender by sender and rule by rule', async () => {

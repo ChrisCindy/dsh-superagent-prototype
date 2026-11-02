@@ -37,7 +37,7 @@ export const USER_ERRORS = {
   noChannel: ['refused', 'No reply channel for this ticket or trigger'],
   panelOnlyEnvironment: ['refused', 'The execution environment (ticket directory, prepare command, blocked commands) and merging can only be changed in the management panel'],
   panelOnlyAccounts: ['refused', 'Source fields that setup reads, such as account CLIs, can only be changed in the management panel'],
-  panelOnlyPolicy: ['refused', 'The Policy and the accept mode change only when a person accepts them on the management panel; propose the change with orchestrator_policy_propose'],
+  panelOnlyPolicy: ['refused', 'The Policy, the accept mode and the proactive Eval limit change only when a person accepts them on the management panel; propose the change with orchestrator_policy_propose'],
   setupComplete: ['refused', 'Setup is complete'],
   mergeCliFailed: ['refused', 'The merge CLI {cli} cannot read its account: {error}'],
   mergeCliAgent: ['refused', 'The merge CLI {cli} is signed in to the agent account @{account}; sign it in to another account that may merge'],

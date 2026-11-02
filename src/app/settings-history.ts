@@ -1,7 +1,7 @@
 /** Computes structured settings diffs across saved revisions for display in the management panel. */
 import type { FieldSpec } from '../sources/kind.ts'
 import type { SourceRegistry } from '../sources/registry.ts'
-import { MergeConfigSchema } from '../policy.ts'
+import { EvalConfigSchema, MergeConfigSchema } from '../policy.ts'
 import { KV } from '../kv.ts'
 import type { Store, SettingsVersion } from './store.ts'
 
@@ -9,7 +9,7 @@ type SourceSettings = SettingsVersion['settings']['sources'][string]
 /** Change codes localized by the web panel as `change.<code>`. */
 export type SettingsChangeCode = 'ruleAdded' | 'ruleRenamed' | 'ruleInstruction' | 'ruleEnabled' | 'ruleDisabled' | 'ruleRemoved'
   | 'sourceEnabled' | 'sourceDisabled' | 'sourceField' | 'sourceRowsAdded' | 'sourceRowsRemoved' | 'sourceRowsChanged' | 'sourceAdmission'
-  | 'mode' | 'timeout' | 'evalModel' | 'executorModel' | 'maxWorkers' | 'paused' | 'resumed' | 'executionDirectory' | 'prepareCommand'
+  | 'mode' | 'timeout' | 'proactiveLimit' | 'evalModel' | 'executorModel' | 'maxWorkers' | 'paused' | 'resumed' | 'executionDirectory' | 'prepareCommand'
   | 'blockedCommands' | 'sandbox' | 'writableRoots' | 'mergeCli' | 'mergeMethod' | 'mergeMaxLines' | 'mergeApprovals'
 /** A single settings diff entry rendered by the panel using `change.<code>` and field labels from the Source listing. */
 export interface SettingsChange {
@@ -65,6 +65,9 @@ function settingsChanges(before: SettingsVersion['settings'], after: SettingsVer
   }
   if (before.eval.mode !== after.eval.mode) changes.push({ code: 'mode', from: before.eval.mode, to: after.eval.mode })
   if (before.eval.timeoutSeconds !== after.eval.timeoutSeconds) changes.push({ code: 'timeout', from: before.eval.timeoutSeconds, to: after.eval.timeoutSeconds })
+  // Revisions saved before the proactive limit was a setting hold none, which reads as its default.
+  const proactive = [before, after].map(version => version.eval.maxInferredPerHour ?? EvalConfigSchema.parse({}).maxInferredPerHour)
+  if (proactive[0] !== proactive[1]) changes.push({ code: 'proactiveLimit', from: proactive[0]!, to: proactive[1]! })
   if (!same(before.eval.model, after.eval.model)) changes.push({ code: 'evalModel' })
   if (!same(before.executor.model, after.executor.model)) changes.push({ code: 'executorModel' })
   if (before.executor.maxWorkers !== after.executor.maxWorkers) changes.push({ code: 'maxWorkers', from: before.executor.maxWorkers, to: after.executor.maxWorkers })
