@@ -81,14 +81,19 @@ export function ExecutionSettings() {
   const executor = blocks.executor.value
   const saved = { ...executor, maxWorkers: String(executor.maxWorkers), blockedCommands: executor.blockedCommands.join(' '),
     writableRoots: executor.writableRoots.join('\n'),
-    merge: { ...executor.merge, maxLines: String(executor.merge.maxLines), requireApprovals: String(executor.merge.requireApprovals) } }
+    merge: { ...executor.merge, maxLines: String(executor.merge.maxLines), requireApprovals: String(executor.merge.requireApprovals) },
+    budget: { turns: String(executor.budget.turns ?? ''), minutes: String(executor.budget.minutes ?? ''),
+      tokens: String(executor.budget.tokens ?? '') } }
   const draft = useBlockDraft('executor', saved, blocks.executor.revision,
     value => ({ ...value, maxWorkers: numberOf(value.maxWorkers), blockedCommands: value.blockedCommands.split(/[\s,]+/).filter(Boolean),
       writableRoots: value.writableRoots.split('\n').map(root => root.trim()).filter(Boolean),
-      merge: { ...value.merge, maxLines: numberOf(value.merge.maxLines), requireApprovals: numberOf(value.merge.requireApprovals) } }))
+      merge: { ...value.merge, maxLines: numberOf(value.merge.maxLines), requireApprovals: numberOf(value.merge.requireApprovals) },
+      // An empty field sets no limit.
+      budget: { turns: numberOf(value.budget.turns), minutes: numberOf(value.budget.minutes), tokens: numberOf(value.budget.tokens) } }))
   const value = draft.value
   const edit = (next: Partial<typeof value>) => draft.edit({ ...value, ...next })
   const merge = (next: Partial<typeof value.merge>) => edit({ merge: { ...value.merge, ...next } })
+  const budget = (next: Partial<typeof value.budget>) => edit({ budget: { ...value.budget, ...next } })
   const prepare = useRef<HTMLTextAreaElement>(null)
   const insert = (key: string) => {
     const field = prepare.current
@@ -151,6 +156,21 @@ export function ExecutionSettings() {
           <Field label={t('mergeApprovals')} hint={t('mergeApprovalsHint')}>
             <Input type="number" min={LIMITS.mergeApprovals.min} max={LIMITS.mergeApprovals.max} required value={value.merge.requireApprovals}
               onChange={event => merge({ requireApprovals: event.target.value })} />
+          </Field>
+        </div>
+        <div className="dt-form dt-block">
+          <h2 className="dt-block-title">{t('budgetTitle')}<InfoTip text={t('budgetIntro')} /></h2>
+          <Field label={t('budgetTurns')} hint={t('budgetTurnsHint')}>
+            <Input type="number" min={LIMITS.budgetTurns.min} max={LIMITS.budgetTurns.max} value={value.budget.turns}
+              placeholder={t('budgetNoLimit')} onChange={event => budget({ turns: event.target.value })} />
+          </Field>
+          <Field label={t('budgetMinutes')} hint={t('budgetMinutesHint')}>
+            <Input type="number" min={LIMITS.budgetMinutes.min} max={LIMITS.budgetMinutes.max} value={value.budget.minutes}
+              placeholder={t('budgetNoLimit')} onChange={event => budget({ minutes: event.target.value })} />
+          </Field>
+          <Field label={t('budgetTokens')} hint={t('budgetTokensHint')}>
+            <Input type="number" min={LIMITS.budgetTokens.min} max={LIMITS.budgetTokens.max} value={value.budget.tokens}
+              placeholder={t('budgetNoLimit')} onChange={event => budget({ tokens: event.target.value })} />
           </Field>
         </div>
       </Fields>

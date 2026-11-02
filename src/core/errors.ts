@@ -35,7 +35,7 @@ export const USER_ERRORS = {
   notQuestion: ['refused', 'An answer must target the original human question, not a worker report or automated trigger'],
   noAnswer: ['refused', 'No worker answer is ready for this human trigger. Wait for the worker\'s report, or request one with orchestrator_ticket_request_status, which acts only on a worker that reported waiting; ordinary progress cannot be relabelled as an answer.'],
   noChannel: ['refused', 'No reply channel for this ticket or trigger'],
-  panelOnlyEnvironment: ['refused', 'The execution environment (ticket directory, prepare command, blocked commands) and merging can only be changed in the management panel'],
+  panelOnlyEnvironment: ['refused', 'The execution environment (ticket directory, prepare command, blocked commands), merging and the Assignment budget can only be changed in the management panel'],
   panelOnlyAccounts: ['refused', 'Source fields that setup reads, such as account CLIs, can only be changed in the management panel'],
   panelOnlyPolicy: ['refused', 'The Policy, the accept mode and the proactive Eval limit change only when a person accepts them on the management panel; propose the change with orchestrator_policy_propose'],
   setupComplete: ['refused', 'Setup is complete'],

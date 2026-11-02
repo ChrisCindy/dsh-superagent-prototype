@@ -63,10 +63,43 @@ const DEFAULT_RULES = [
   { id: 'copy', name: 'Copy fixes', enabled: true, instruction: 'Explicit requests to correct a typo, wording, punctuation or existing translation. Preserve product promises and business meaning.' },
   { id: 'visual', name: 'Visual fixes', enabled: true, instruction: 'Explicit implementation requests for local spacing, alignment, overflow or styling, with a specified target or an objectively established existing standard/correct state to restore. Locating an element or calling it inconsistent, unattractive or hard to understand does not establish a target. Do not invent visual style, information hierarchy, rendering or interaction decisions. No redesign, new interaction or behavior. A known spacing defect does not authorize adjacent undefined restyling; assess only a clearly separable authorized scope. If direction or scope is unsettled, observe only: no acknowledgement, worker or unsolicited question.' },
 ]
-/** An assessment rule; its instruction may also specify PR reviewers and whether to wait for their approval. */
+const limit = (bounds: { min: number; max: number }) => z.number().int().min(bounds.min).max(bounds.max).nullable()
+/**
+ * What one Assignment of a ticket may use before its Executor stops it and asks a person whether to go on: `turns`, the
+ * responses of its worker's model; `minutes`, the time its worker's turns run, not the time it waits; and `tokens`, what those
+ * responses used as the model reported it. `null` sets no limit.
+ */
+export const BudgetSchema = z.object({
+  turns: limit(LIMITS.budgetTurns).default(300),
+  minutes: limit(LIMITS.budgetMinutes).default(120),
+  tokens: limit(LIMITS.budgetTokens).default(null),
+}).strict()
+export type Budget = z.infer<typeof BudgetSchema>
+/** A rule's budget for the tickets accepted under it: each field it sets replaces the Executor's default. */
+export const RuleBudgetSchema = z.object({ turns: limit(LIMITS.budgetTurns).optional(), minutes: limit(LIMITS.budgetMinutes).optional(),
+  tokens: limit(LIMITS.budgetTokens).optional() }).strict()
+/**
+ * An assessment rule; its instruction may also specify PR reviewers and whether to wait for their approval. Its `budget` sets
+ * what each Assignment of a ticket accepted under it may use, which is no part of authorization.
+ */
 export const RuleSchema = z.object({ id: RuleIdSchema, name: z.string().trim().min(1).max(LIMITS.ruleName), enabled: z.boolean(),
-  instruction: z.string().trim().min(1).max(LIMITS.ruleInstruction) }).strict()
+  instruction: z.string().trim().min(1).max(LIMITS.ruleInstruction), budget: RuleBudgetSchema.optional() }).strict()
 export type Rule = z.infer<typeof RuleSchema>
+/** A rule as it bears on authorization: without its budget. */
+const authorizing = ({ budget: _budget, ...rule }: Rule) => rule
+/**
+ * The budget of each Assignment of a ticket: the Executor's default, where each rule the ticket was accepted under that sets a
+ * field replaces it; of several such rules, the largest wins, and no limit is the largest.
+ */
+export function ticketBudget(ticket: Pick<Ticket, 'mandate'>, settings: Pick<Settings, 'policy' | 'executor'>): Budget {
+  const rules = settings.policy.rules.filter(rule => ticket.mandate.basis.rules?.includes(rule.id) && rule.budget)
+  const field = (name: keyof Budget): number | null => {
+    const set = rules.flatMap((rule): (number | null)[] => rule.budget![name] === undefined ? [] : [rule.budget![name] ?? null])
+    if (!set.length) return settings.executor.budget[name]
+    return set.includes(null) ? null : Math.max(...set as number[])
+  }
+  return { turns: field('turns'), minutes: field('minutes'), tokens: field('tokens') }
+}
 export const RoleModelSchema = z.object({ provider: z.string().trim().min(1), model: z.string().trim().min(1), reasoningEffort: z.string().trim().min(1).optional() }).strict()
 export type RoleModel = z.infer<typeof RoleModelSchema>
 
@@ -115,7 +148,8 @@ export const SANDBOXES = ['workspace', 'full'] as const
 export type Sandbox = typeof SANDBOXES[number]
 /**
  * Executor settings: worker model, concurrency, ticket directory root (empty defaults to `<stateDir>/work`), `prepare` command,
- * blocked commands, the `sandbox` of managed Sessions, the extra `writableRoots` of an Executor Session, and merging.
+ * blocked commands, the `sandbox` of managed Sessions, the extra `writableRoots` of an Executor Session, merging, and the
+ * default `budget` of an Assignment.
  */
 export const ExecutorConfigSchema = z.object({
   model: RoleModelSchema.nullable().default(null),
@@ -127,6 +161,7 @@ export const ExecutorConfigSchema = z.object({
   writableRoots: z.array(WritableRootSchema).max(LIMITS.writableRoots.count)
     .refine(roots => new Set(roots).size === roots.length, 'Duplicate writable roots').default([]),
   merge: MergeConfigSchema.default(() => MergeConfigSchema.parse({})),
+  budget: BudgetSchema.default(() => BudgetSchema.parse({})),
 }).strict()
 export const SourceInstanceSchema = z.object({ enabled: z.boolean().default(true), config: z.record(z.string(), z.unknown()).default({}) }).strict()
 export const SettingsSchema = z.object({
@@ -147,7 +182,7 @@ export const POLICY_REVISION = 'mandate-v3'
  * Changes to models, concurrency, pause state, or polling intervals do not invalidate existing decisions.
  */
 export function policyVersion(settings: Settings): string {
-  return key(POLICY_REVISION, JSON.stringify({ rules: settings.policy.rules, mode: settings.eval.mode, sources: settings.policy.sources }))
+  return key(POLICY_REVISION, JSON.stringify({ rules: settings.policy.rules.map(authorizing), mode: settings.eval.mode, sources: settings.policy.sources }))
 }
 export function allowedSender(settings: Settings, actor: ActorRef): z.infer<typeof AllowedSchema> | undefined {
   return settings.policy.sources[actor.source]?.allowed.find(entry => sameName(entry.id, actor.id))
@@ -182,7 +217,8 @@ export function policyEffects(tickets: readonly Ticket[], old: Settings, now: Se
     const rules = (ticket.mandate.basis.rules ?? []).flatMap((id): NonNullable<PolicyEffect['rules']> => {
       const was = old.policy.rules.find(rule => rule.id === id), is = now.policy.rules.find(rule => rule.id === id)
       if (!is?.enabled) return was?.enabled ? [{ id, name: was.name, change: 'disabled' }] : []
-      return JSON.stringify(was) === JSON.stringify(is) ? [] : [{ id, name: is.name, change: 'changed', instruction: is.instruction }]
+      return JSON.stringify(was && authorizing(was)) === JSON.stringify(authorizing(is)) ? []
+        : [{ id, name: is.name, change: 'changed', instruction: is.instruction }]
     })
     const effect: PolicyEffect = rules.length ? { rules } : {}
     if (before.revalidate(ticket.mandate) && !after.revalidate(ticket.mandate)) {

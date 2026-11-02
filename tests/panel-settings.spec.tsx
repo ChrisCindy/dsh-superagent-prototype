@@ -59,6 +59,11 @@ it('saves the Eval block on the Policy settings and the Executor with its execut
   await click(zh['mergeMethod.merge'])
   await type(field<HTMLInputElement>(zh.mergeMaxLines), '120')
   await type(field<HTMLInputElement>(zh.mergeApprovals), '2')
+  // The budget of an Assignment: an empty field sets no limit.
+  expect(field<HTMLInputElement>(zh.budgetTurns).value).toBe('300')
+  expect(field<HTMLInputElement>(zh.budgetTokens).placeholder).toBe(zh.budgetNoLimit)
+  await type(field<HTMLInputElement>(zh.budgetTurns), '')
+  await type(field<HTMLInputElement>(zh.budgetTokens), '500000')
   const [workerProvider, workerModel, effort] = all('.dt-model input')
   await type(workerProvider as HTMLInputElement, 'worker-provider'); await type(workerModel as HTMLInputElement,
     'worker-model'); await type(effort as HTMLInputElement, 'high')
@@ -67,7 +72,8 @@ it('saves the Eval block on the Policy settings and the Executor with its execut
   expect(server.settings.executor).toEqual({ maxWorkers: 5, directory: '/srv/work',
     prepare: 'git worktree add "$DSH_SUPERAGENT_DIR"', blockedCommands: ['gh-personal', 'gh.other'], sandbox: 'full',
     writableRoots: ['/home/me/src/widgets/.git', '/home/me/.cache/pnpm'],
-    merge: { cli: '/usr/local/bin/gh-merge', method: 'merge', maxLines: 120, requireApprovals: 2 }, model: { provider: 'worker-provider',
+    merge: { cli: '/usr/local/bin/gh-merge', method: 'merge', maxLines: 120, requireApprovals: 2 },
+    budget: { turns: null, minutes: 120, tokens: 500000 }, model: { provider: 'worker-provider',
       model: 'worker-model', reasoningEffort: 'high' } })
   expect(server.requests.filter(request => request.method === 'PUT').map(request => request.path)).toEqual(['settings/eval',
     'settings/executor'])

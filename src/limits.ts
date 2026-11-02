@@ -11,6 +11,10 @@ export const LIMITS = {
   writableRoots: { count: 16, chars: 1000 },
   mergeMaxLines: { min: 1, max: 100_000 },
   mergeApprovals: { min: 1, max: 10 },
+  /** The budget of one Assignment: its worker's model turns, the minutes its turns run, and the tokens they use. */
+  budgetTurns: { min: 1, max: 100_000 },
+  budgetMinutes: { min: 1, max: 10_080 },
+  budgetTokens: { min: 1000, max: 10_000_000_000 },
   promptMaxChars: { min: 1000, max: 1_000_000 },
   admissionContextMaxPages: { min: 1, max: 100 },
   admissionContextTimeoutMs: { min: 1, max: 90_000 },

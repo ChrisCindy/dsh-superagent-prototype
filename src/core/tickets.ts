@@ -163,20 +163,33 @@ export class Tickets extends EnginePart {
   }
   /**
    * Ends the stalled assignment of a retryable open ticket (`failed`, `blocked`, or failed input delivery) and starts a new one.
+   * An Assignment that ended already, such as one that used up its budget, keeps why it ended.
    * @throws UserError when the ticket is unknown or not retryable.
    */
   retry(ticketId: string): Ticket {
     const ticket = this.require(ticketId)
     const latest = latestAssignment(ticket)
     if (!canRetry(ticket) || !latest) throw new UserError('notRetryable')
-    this.endAssignment(ticket, latest, 'retried')
+    const stopping = latest.state !== 'ended'
+    if (stopping) this.endAssignment(ticket, latest, 'retried')
     this.requeueUntaken(ticket, latest)
-    const assignment = this.newAssignment(ticket)
+    const assignment = this.continued(ticket, latest)
     ticket.updatedAt = this.now()
     this.repo.tickets.save(ticket)
-    this.options.executor.stop(ticket, latest, 'retried')
+    if (stopping) this.options.executor.stop(ticket, latest, 'retried')
     this.options.executor.start(ticket, assignment)
     return ticket
+  }
+  /**
+   * End the Assignment that runs a ticket, or waits to, for `reason`, with no new one: the ticket stays open, and its worker's
+   * turn and background work stop. A person's message or a retry starts a new Assignment (see `addInput`).
+   */
+  suspend(ticket: Ticket, assignment: Assignment, reason: string): void {
+    this.endAssignment(ticket, assignment, reason)
+    this.requeueUntaken(ticket, assignment)
+    ticket.updatedAt = this.now()
+    this.repo.tickets.save(ticket)
+    this.options.executor.stop(ticket, assignment, reason)
   }
   /**
    * Drops a ticket's Subscription to a Thread its worker found unrelated, and hands back, with `reason`, the person's messages there that the ticket decides.
@@ -229,7 +242,8 @@ export class Tickets extends EnginePart {
   }
   /**
    * Add an Input once (idempotently) and ask the Executor to deliver it, or to launch again a pending Assignment whose launch
-   * failed once no person is waited for: a Policy change alone does not launch it again.
+   * failed once no person is waited for: a Policy change alone does not launch it again. A person's message starts a new
+   * Assignment for a ticket whose last one ended without a new one (see `suspend`), once no person is waited for.
    */
   addInput(ticket: Ticket, input: TicketInput): void {
     if (ticket.inputs.some(existing => existing.id === input.id)) return
@@ -240,8 +254,14 @@ export class Tickets extends EnginePart {
     this.repo.tickets.save(ticket)
     if (!liveTicket(ticket) || held) return
     const running = runningAssignment(ticket), latest = latestAssignment(ticket)
+    const person = input.kind === 'trigger' && !!input.human && !input.context
     if (running) this.options.executor.deliver(ticket, running)
     else if (latest?.state === 'pending' && !waitsForPerson(ticket)) this.options.executor.start(ticket, latest)
+    else if (latest?.state === 'ended' && person && !waitsForPerson(ticket)) {
+      const assignment = this.continued(ticket, latest)
+      this.repo.tickets.save(ticket)
+      this.options.executor.start(ticket, assignment)
+    }
   }
   /**
    * Resume an ended ticket under its unchanged Mandate when a person's message on one of its Threads waits for it: no Eval
@@ -376,6 +396,14 @@ export class Tickets extends EnginePart {
     const report = latest?.report
     const later = ticket.inputs.some(input => input.kind !== 'policy-changed' && Date.parse(input.at) > Date.parse(report?.at ?? ''))
     return report?.state !== 'ready' || ticket.undelivered.length > 0 || later
+  }
+  /** A new Assignment after `ended`: one that used up its budget asked a person whether to go on, which now has its answer. */
+  private continued(ticket: Ticket, ended: Assignment): Assignment {
+    if (ended.endedReason === 'budgetSpent' && ticket.attention) {
+      this.replies.withdrawAttention(ticket.attention.id)
+      delete ticket.attention
+    }
+    return this.newAssignment(ticket)
   }
   /** Add a pending Assignment; a failed delivery to the one before it no longer concerns the ticket. */
   private newAssignment(ticket: Ticket): Assignment {

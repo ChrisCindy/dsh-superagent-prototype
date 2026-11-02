@@ -20,9 +20,12 @@ import { KV } from '../kv.ts'
  */
 export class SettingsConflict extends Error {}
 const now = (): string => new Date().toISOString()
-/** Executor settings that control shell execution paths, prepare commands, command shims, how managed Sessions are confined, and who merges and when. */
+/**
+ * Executor settings that control shell execution paths, prepare commands, command shims, how managed Sessions are confined, who
+ * merges and when, and how much an Assignment may use.
+ */
 const environment = ({ executor }: SettingsValue) => JSON.stringify([executor.directory, executor.prepare, executor.blockedCommands,
-  executor.sandbox, executor.writableRoots, executor.merge])
+  executor.sandbox, executor.writableRoots, executor.merge, executor.budget])
 /** Executor settings that decide the permission preset of every managed Session, which a restart applies to them all. */
 const confinement = ({ executor }: SettingsValue) => JSON.stringify([executor.sandbox, executor.writableRoots])
 
@@ -67,7 +70,7 @@ const BLOCKS: Record<'policy' | 'eval' | 'executor' | 'source', Block> = {
   executor: {
     parse: value => ExecutorConfigSchema.parse(value),
     merge: (settings, value) => ({ ...settings, executor: value as SettingsValue['executor'] }),
-    // Only the management panel may modify shell execution paths or commands, or the merge account and its conditions.
+    // Only the management panel may modify shell execution paths or commands, the merge account and its conditions, or the budget.
     guard: (current, candidate, origin) => { if (origin !== 'panel' && environment(current) !== environment(candidate)) throw new UserError('panelOnlyEnvironment') },
   },
   source: {

@@ -185,6 +185,8 @@ export function TicketPage({ id }: { id: string }) {
       <Details icon="hash" title={t('identifiers')}>
         <KeyValues rows={[[t('ticketId'), <span className="dt-mono">{data.id}</span>], [t('executionDirectory'), <span
           className="dt-mono">{data.directory ?? t('empty')}</span>],
+          [t('ticketBudget'), t('ticketBudgetValue', { turns: String(data.budget.turns ?? t('budgetNoLimit')),
+            minutes: String(data.budget.minutes ?? t('budgetNoLimit')), tokens: String(data.budget.tokens ?? t('budgetNoLimit')) })],
           ...legacy && data.mandate.scope ? [[t('legacyAssignment'), <span
             className="dt-mono dt-clamp">{data.mandate.scope}</span>] as [string, ReactNode]] : []]} />
       </Details>

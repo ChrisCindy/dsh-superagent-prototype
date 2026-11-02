@@ -155,6 +155,21 @@ A launch that failed is not tried again on its own.
 A person's message, a later Report that is neither `blocked` nor `failed`, or a retry ends the hold.
 
 It is worked out from the stored Reports and Inputs, so a restart keeps it.
+
+### Budget
+
+Each Assignment has a budget, `executor.budget`, which only the panel changes:
+
+| Field | Counts | Default |
+| --- | --- | --- |
+| `turns` | Responses of the worker's model | 300 |
+| `minutes` | Time the worker's turns run, not time it waits for a Trigger | 120 |
+| `tokens` | Tokens those responses used, as the model reported them | no limit |
+
+`null` sets no limit. A rule can set its own `budget` for the Tickets accepted under it: each field it sets replaces the default, and of several matched rules the largest wins. A rule's budget is not part of the Policy version.
+
+The Executor reads the counts from the worker Session's log, which records each response with its `usage` and when each turn started and ended, so a restart keeps them. It checks after each response and each tool result. Once the budget is used up, it reports `blocked` for the worker with the Attention "Budget used up, continue?", which the main Session sends once. The Assignment ends with reason `budgetSpent` and the worker's turn and background work stop. The Ticket waits for a person as after any `blocked` Report. A person's message or a retry starts a new Assignment with a fresh budget, withdraws the question if it was not sent, and tells the worker why it goes on.
+
 ### Retry
 
 Available while an open Ticket is in `person / delivery`, `person / blocked` or `person / failed`: a new Assignment, which starts its worker again and takes the Inputs that wait, is the remedy for each.

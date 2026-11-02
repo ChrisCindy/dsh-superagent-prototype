@@ -16,6 +16,7 @@ export const REASONS = {
   forwarded: 'Forwarded to the worker of the Ticket already on this Thread',
   senderNotMember: 'The sender is not on the Source\'s list',
   retried: 'Retried by a person',
+  budgetSpent: 'The Assignment used up its budget',
   hostRestarted: 'dsh-superagent restarted',
   stopUnknown: 'Stop target is unknown or already ended',
   stopNotExplicit: 'A stop needs an explicit request from a sender on the list',

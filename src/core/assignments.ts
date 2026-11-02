@@ -1,7 +1,7 @@
 /** What the Executor and its workers report about the Assignments that run tickets. */
 import { key } from './ids.ts'
 import { UserError } from './errors.ts'
-import { latestAssignment, liveTicket, runningAssignment } from './model.ts'
+import { latestAssignment, liveTicket, runningAssignment, waitsForPerson } from './model.ts'
 import type { ReportState, Ticket } from './model.ts'
 import { EnginePart, type EngineOptions } from './part.ts'
 import type { Replies } from './replies.ts'
@@ -130,6 +130,20 @@ export class Assignments extends EnginePart {
     // A dropped report after a close the ticket deferred ends it as the close did, which its final notice tells.
     const outcome = report.state === 'dropped' ? this.tickets.followsDone(ticket)?.outcome ?? 'dropped' : report.state === 'ready' ? ready : undefined
     if (outcome) this.tickets.end(ticketId, 'executor', outcome, at)
+    return this.require(ticketId)
+  }
+  /**
+   * The Executor's fact that the Assignment that runs a ticket used up its budget: it reports blocked, on its worker's behalf,
+   * with `question` for a person, and ends without a new one, which stops its worker. A person's message or a retry starts a
+   * new Assignment with a fresh budget and withdraws the question. A fact about an Assignment that no longer runs, or whose
+   * ticket waits for a person, changes nothing.
+   */
+  budgetSpent(ticketId: string, assignmentId: string, question: string): Ticket {
+    const ticket = this.running(ticketId, assignmentId)
+    if (!ticket || waitsForPerson(ticket)) return this.require(ticketId)
+    this.report(ticketId, { state: 'blocked', summary: question, question })
+    const current = this.require(ticketId)
+    this.tickets.suspend(current, runningAssignment(current)!, 'budgetSpent')
     return this.require(ticketId)
   }
   /** The ticket, while it is open and `assignmentId` runs it. */

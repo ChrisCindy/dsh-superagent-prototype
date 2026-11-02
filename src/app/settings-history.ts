@@ -1,7 +1,7 @@
 /** Computes structured settings diffs across saved revisions for display in the management panel. */
 import type { FieldSpec } from '../sources/kind.ts'
 import type { SourceRegistry } from '../sources/registry.ts'
-import { EvalConfigSchema, MergeConfigSchema } from '../policy.ts'
+import { BudgetSchema, EvalConfigSchema, MergeConfigSchema } from '../policy.ts'
 import { KV } from '../kv.ts'
 import type { Store, SettingsVersion } from './store.ts'
 
@@ -11,6 +11,7 @@ export type SettingsChangeCode = 'ruleAdded' | 'ruleRenamed' | 'ruleInstruction'
   | 'sourceEnabled' | 'sourceDisabled' | 'sourceField' | 'sourceRowsAdded' | 'sourceRowsRemoved' | 'sourceRowsChanged' | 'sourceAdmission'
   | 'mode' | 'timeout' | 'proactiveLimit' | 'evalModel' | 'executorModel' | 'maxWorkers' | 'paused' | 'resumed' | 'executionDirectory' | 'prepareCommand'
   | 'blockedCommands' | 'sandbox' | 'writableRoots' | 'mergeCli' | 'mergeMethod' | 'mergeMaxLines' | 'mergeApprovals'
+  | 'budgetTurns' | 'budgetMinutes' | 'budgetTokens' | 'ruleBudget'
 /** A single settings diff entry rendered by the panel using `change.<code>` and field labels from the Source listing. */
 export interface SettingsChange {
   code: SettingsChangeCode; items?: string[]; from?: string | number | boolean; to?: string | number | boolean; name?: string; source?: string
@@ -53,6 +54,7 @@ function settingsChanges(before: SettingsVersion['settings'], after: SettingsVer
     if (old.name !== rule.name) changes.push({ code: 'ruleRenamed', from: old.name, to: rule.name })
     if (old.instruction !== rule.instruction) changes.push({ code: 'ruleInstruction', name: rule.name })
     if (old.enabled !== rule.enabled) changes.push({ code: rule.enabled ? 'ruleEnabled' : 'ruleDisabled', name: rule.name })
+    if (!same(old.budget ?? {}, rule.budget ?? {})) changes.push({ code: 'ruleBudget', name: rule.name })
   }
   for (const rule of before.policy.rules) if (!after.policy.rules.some(item => item.id === rule.id)) changes.push({ code: 'ruleRemoved', name: rule.name })
   for (const id of new Set([...Object.keys(before.policy.sources), ...Object.keys(after.policy.sources)])) {
@@ -86,6 +88,12 @@ function settingsChanges(before: SettingsVersion['settings'], after: SettingsVer
   if (merge[0]!.method !== merge[1]!.method) changes.push({ code: 'mergeMethod', from: merge[0]!.method, to: merge[1]!.method })
   if (merge[0]!.maxLines !== merge[1]!.maxLines) changes.push({ code: 'mergeMaxLines', from: merge[0]!.maxLines, to: merge[1]!.maxLines })
   if (merge[0]!.requireApprovals !== merge[1]!.requireApprovals) changes.push({ code: 'mergeApprovals', from: merge[0]!.requireApprovals, to: merge[1]!.requireApprovals })
+  // Revisions saved before the budget was a setting hold none, which reads as its defaults; no limit reads as a dash.
+  const budget = [before, after].map(version => BudgetSchema.parse(version.executor.budget ?? {}))
+  const amount = (value: number | null) => value === null ? '—' : value
+  for (const [field, code] of [['turns', 'budgetTurns'], ['minutes', 'budgetMinutes'], ['tokens', 'budgetTokens']] as const) {
+    if (budget[0]![field] !== budget[1]![field]) changes.push({ code, from: amount(budget[0]![field]), to: amount(budget[1]![field]) })
+  }
   for (const id of new Set([...Object.keys(before.sources), ...Object.keys(after.sources)])) changes.push(...sourceChanges(id, before.sources[id], after.sources[id], sources))
   return changes
 }

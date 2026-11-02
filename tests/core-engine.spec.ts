@@ -1164,6 +1164,29 @@ describe('ticket commands', () => {
     expect(h.executor.stop).toHaveBeenCalledOnce()
     expect(h.executor.start).toHaveBeenLastCalledWith(expect.objectContaining({ id: ticketId }), retried.assignments[1])
   })
+  it('ends an Assignment that used up its budget with a question, holds automatic Inputs, and goes on fresh on a person\'s message', () => {
+    const h = harness()
+    const ticketId = accepted(h).ticketId!
+    const ticket = () => h.repo.tickets.get(ticketId)!
+    const first = runningAssignment(ticket())!
+    h.tick(1)
+    h.engine.budgetSpent(ticketId, first.id, 'Budget used up, continue?')
+    expect(ticket().assignments).toEqual([expect.objectContaining({ state: 'ended', endedReason: 'budgetSpent', report: expect.objectContaining({ state: 'blocked' }) })])
+    expect(ticket().attention).toMatchObject({ question: 'Budget used up, continue?' })
+    expect(ticketStage(ticket())).toEqual({ stage: 'person', action: 'answer' })
+    expect(waitsForPerson(ticket())).toBe(true)
+    expect(h.executor.stop).toHaveBeenCalledWith(expect.objectContaining({ id: ticketId }), expect.objectContaining({ id: first.id }), 'budgetSpent')
+    // A second fact about it changes nothing.
+    h.engine.budgetSpent(ticketId, first.id, 'again')
+    expect(ticket().attention).toMatchObject({ question: 'Budget used up, continue?' })
+    // An automatic message waits for the person; theirs starts a new Assignment, and the question is withdrawn.
+    h.tick(1); h.engine.receive(trigger('5', { human: false, actor: { source: 'chat', id: 'ci' } })); h.settle()
+    expect(ticket().assignments).toHaveLength(1)
+    h.tick(1); h.engine.receive(trigger('6', { actor: guest })); h.settle()
+    expect(ticket().assignments).toEqual([expect.objectContaining({ endedReason: 'budgetSpent' }), expect.objectContaining({ state: 'running' })])
+    expect(ticket()).not.toHaveProperty('attention')
+    expect(h.withdrawn).toHaveLength(1)
+  })
 })
 describe('failed deliveries', () => {
   it('forgets a failed delivery once a new Assignment takes over or the ticket ends', () => {
