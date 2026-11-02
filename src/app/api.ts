@@ -3,6 +3,7 @@ import type { ModelCatalog } from '@deepseek-ai/dsh-api-session-controller/types
 import type { PromptConfig, Prompts } from './prompts.ts'
 import type { PromptsView, StateView, TicketPageView } from './http.ts'
 import type { HistoryView } from './settings-history.ts'
+import type { Settings } from './settings.ts'
 import type { OverviewView } from './views/overview.ts'
 import type { SettingsView } from './views/settings.ts'
 import type { SourceStatusView } from './views/sources.ts'
@@ -37,6 +38,9 @@ export interface Api {
   'POST executor/pause': { body: { paused: boolean }; response: { paused: boolean } }
   'PUT settings/:block': { body: { value: unknown; revision: number }; response: { revision: number; restarting: boolean } }
   'GET policy/history': { response: HistoryView }
+  'GET policy-proposal': { response: { proposal: ReturnType<Settings['proposal']> } }
+  'POST policy-proposal/accept': { response: { revision: number; restarting: boolean } }
+  'POST policy-proposal/dismiss': { response: { dismissed: boolean } }
   'POST policy-sync/:id': { response: { policy: unknown } }
   'POST setup/check': { response: { restarting: true } }
   'GET models': { response: ModelCatalog }

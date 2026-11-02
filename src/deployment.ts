@@ -1,13 +1,15 @@
 /** Plugin configuration and startup verification for repository access and agent CLI identities. */
 import { LIMITS } from './limits.ts'
 import { accessSync, constants, statSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { delimiter, isAbsolute, join } from 'node:path'
 import type { Volatile } from '@deepseek-ai/cordis'
 import s from '@deepseek-ai/schemastery'
 import { z } from 'zod'
 import type { SubprocessRuntime } from '@deepseek-ai/dsh-subprocess'
 import { runAsWorker, sameDirectory, withoutDirectory, workerBin } from './infra/environment.ts'
-import { SetupError } from './setup.ts'
+import { sameName } from './infra/text.ts'
+import { SetupError, setupWarning, type SetupWarning } from './setup.ts'
 
 const reason = (error: unknown): string => error instanceof Error ? error.message : String(error)
 const absolute = (description: string) => s.string().pattern(/^\//).description(`${description} Absolute path.`)
@@ -27,6 +29,8 @@ export interface Machine {
   promptMaxChars: Volatile<number>
   admissionContextMaxPages: Volatile<number>
   admissionContextTimeoutMs: Volatile<number>
+  /** The temporary areas DSH's `workspace-write` sandbox lets every confined command write: `/tmp` and the user's temporary directory. */
+  temporaryAreas: readonly string[]
 }
 const MOVED: Record<string, string> = {
   repository: 'on the GitHub Source', branchPrefix: 'in the prepare command of the Execution settings', github: 'on the GitHub Source',
@@ -39,7 +43,7 @@ export function machineOf(config: DeploymentConfig): Machine {
   const unknown = Object.keys(config).filter(key => !(key in (Config.dict ?? {})))
   if (unknown.length) throw new Error(`dsh-superagent configuration has keys it does not use: ${unknown.map(key => MOVED[key] ? `${key} (now ${MOVED[key]})` : key).join(', ')}; docs/006-deployment.md lists the keys`)
   const { stateDir, promptMaxChars, admissionContextMaxPages, admissionContextTimeoutMs } = config
-  return { stateDir, promptMaxChars, admissionContextMaxPages, admissionContextTimeoutMs }
+  return { stateDir, promptMaxChars, admissionContextMaxPages, admissionContextTimeoutMs, temporaryAreas: [...new Set(['/tmp', tmpdir()])] }
 }
 
 export const GithubAccountsSchema = z.object({
@@ -103,6 +107,61 @@ export async function resolveDeployment(machine: Machine, github: unknown, probe
   const repository = access.name
   if (access.push !== true) throw new SetupError('repositoryReadOnly', { account: agent.login, repository })
   return { ...machine, repository, github: { cli, login: agent.login, noreply: `${agent.id}+${agent.login}@users.noreply.github.com` } }
+}
+
+const DefaultBranch = z.object({ branch: z.string().min(1), admin: z.boolean().nullish() })
+const BranchRules = z.array(z.looseObject({ type: z.string(), ruleset_id: z.number().optional(),
+  parameters: z.looseObject({ required_approving_review_count: z.number().optional(), dismiss_stale_reviews_on_push: z.boolean().optional() }).optional() }))
+const Ruleset = z.looseObject({ current_user_can_bypass: z.string().optional() })
+const Protection = z.looseObject({
+  required_pull_request_reviews: z.looseObject({ required_approving_review_count: z.number().optional(), dismiss_stale_reviews: z.boolean().optional(),
+    bypass_pull_request_allowances: z.looseObject({ users: z.array(z.looseObject({ login: z.string() })).optional() }).optional() }).optional(),
+  enforce_admins: z.looseObject({ enabled: z.boolean() }).nullish(),
+})
+/**
+ * Checks, as the agent account, that GitHub itself keeps unreviewed commits off the default branch: a ruleset or branch protection
+ * rule requires at least one approving review, dismisses stale approvals on a push, and the agent account cannot bypass it.
+ * It never fails setup: it returns the warnings to show, and one that it cannot verify when the account may not read the rules,
+ * as an account without admin rights may not read branch protection.
+ */
+export async function checkMerging(deployment: Pick<Deployment, 'repository' | 'github'>, probe: Probe): Promise<SetupWarning[]> {
+  const { repository, github: { cli, login } } = deployment
+  const read = async <T>(schema: z.ZodType<T>, path: string, ...flags: string[]): Promise<T> => {
+    const value = parsed(schema, await probe([cli, 'api', path, ...flags]))
+    if (value === undefined) throw new Error(`${path} returned an unexpected answer`)
+    return value
+  }
+  let branch = 'the default branch'
+  const unverified = () => [setupWarning('mergeUnverified', { account: login, branch })]
+  try {
+    const repo = await read(DefaultBranch, `repos/${repository}`, '--jq', '{branch: .default_branch, admin: .permissions.admin}')
+    branch = repo.branch
+    const values = { account: login, branch, repository }
+    // Rulesets that apply to the branch can be read with read access; only active ones are listed.
+    const rules = await read(BranchRules, `repos/${repository}/rules/branches/${encodeURIComponent(branch)}`).catch(() => undefined)
+    const reviewed = (rules ?? []).filter(rule => rule.type === 'pull_request' && (rule.parameters?.required_approving_review_count ?? 0) >= 1
+      && rule.parameters?.dismiss_stale_reviews_on_push === true)
+    const bypass = await Promise.all([...new Set(reviewed.flatMap(rule => rule.ruleset_id ?? []))].map(async id =>
+      (await read(Ruleset, `repos/${repository}/rulesets/${id}`)).current_user_can_bypass ?? 'never'))
+    if (bypass.includes('never')) return []
+    const rulesetBypass = bypass.length > 0
+    // Classic branch protection; reading it needs admin rights, and GitHub answers 404 Branch not protected for none.
+    let protection: z.infer<typeof Protection> | undefined
+    try { protection = await read(Protection, `repos/${repository}/branches/${encodeURIComponent(branch)}/protection`) }
+    catch (error) {
+      if (rulesetBypass) return [setupWarning('mergeBypass', values)]
+      if (rules && /Branch not protected/i.test(reason(error))) return [setupWarning('mergeUnprotected', values)]
+      return unverified()
+    }
+    const reviews = protection.required_pull_request_reviews
+    const required = (reviews?.required_approving_review_count ?? 0) >= 1 && reviews?.dismiss_stale_reviews === true
+    const allowed = (reviews?.bypass_pull_request_allowances?.users ?? []).some(user => sameName(user.login, login))
+    const bypasses = allowed || (repo.admin === true && protection.enforce_admins?.enabled !== true)
+    if (required && !bypasses) return []
+    return [setupWarning(required || rulesetBypass ? 'mergeBypass' : 'mergeUnprotected', values)]
+  } catch {
+    return unverified()
+  }
 }
 
 const AuthStatus = z.object({ appId: z.string().regex(/^cli_[A-Za-z0-9]+$/), brand: z.enum(['feishu', 'lark']).default('feishu'), identities: z.object({ bot: z.object({ status: z.string() }) }) })

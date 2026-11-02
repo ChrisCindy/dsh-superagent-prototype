@@ -4,7 +4,7 @@ import type { Deployment } from '../../deployment.ts'
 import type { Health } from '../../sources/host.ts'
 import type { SourceInstance } from '../../sources/kind.ts'
 import type { SourceRegistry } from '../../sources/registry.ts'
-import type { SetupProblem } from '../../setup.ts'
+import type { SetupProblem, SetupWarning } from '../../setup.ts'
 import { dayAgo, snapshot, type ViewHost } from './records.ts'
 import { preview } from './text.ts'
 
@@ -26,6 +26,8 @@ export interface SetupState {
   problem?: SetupProblem | undefined
   /** Feishu bot check failure that pauses only the Feishu Source. */
   feishuProblem?: SetupProblem | undefined
+  /** Setup findings that leave the Sources running, each shown on the Source it names. */
+  warnings?: readonly SetupWarning[] | undefined
 }
 export const problemOf = (id: string, setup: SetupState) => [setup.problem, setup.feishuProblem].find(problem => problem?.place === id)
 /** Source lifecycle state in priority order: missing kind, disabled, setup/part error, blocked on global setup, starting, paused, or ready. */
@@ -50,8 +52,9 @@ export function sourcesStatus(host: ViewHost, health: HealthMap, setup: SetupSta
   return sources.instances().map(instance => {
     const { health: parts, ...named } = sourceHealth(sources, instance, health)
     const problem = problemOf(instance.id, setup)
+    const warnings = (setup.warnings ?? []).filter(warning => warning.place === instance.id)
     return { ...named, installed: instance.installed, enabled: instance.enabled, state: sourceState(instance, parts, setup), health: parts,
-      ...problem ? { problem } : {}, stats: stats[instance.id] ?? { received: 0, filtered: 0, lastAt: '' }, filtered: filtered(instance.id),
+      ...problem ? { problem } : {}, ...warnings.length ? { warnings } : {}, stats: stats[instance.id] ?? { received: 0, filtered: 0, lastAt: '' }, filtered: filtered(instance.id),
       dropped: dropped.filter(item => item.channel.source === instance.id) }
   })
 }

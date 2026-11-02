@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SENSITIVE_ENV_PATTERN, type SubprocessRuntime } from '@deepseek-ai/dsh-subprocess'
-import { GIT_LOCATION, agentVariables, credentialHelper, runAsWorker, verifyDirectory, withoutDirectory, workerBin, workerGitConfig, writeEnvironment }
+import { GIT_LOCATION, MERGE_REFUSED, agentVariables, credentialHelper, runAsWorker, verifyDirectory, withoutDirectory, workerBin, workerGitConfig, writeEnvironment }
   from '../src/infra/environment.ts'
 import { CliError } from '../src/infra/commands.ts'
 import { testDeployment } from './fixtures/deployment.ts'
@@ -45,6 +45,23 @@ describe('worker shims', () => {
     const bin = workerBin(dir)
     expect([(await exec(join(bin, 'gh'), ['api', 'user'])).stdout, (await exec(join(bin, 'lark-cli'), ['im'])).stdout]).toEqual(['gh api user\n', 'lark im\n'])
     expect(readdirSync(bin)).not.toContain('git')
+  })
+  it('make `gh` refuse to merge or enable auto-merge as the agent, and pass everything else, withdrawing auto-merge too', async () => {
+    const gh = program(join(dir, 'gh-agent'), 'echo gh "$@"')
+    await writeEnvironment(testDeployment({ stateDir: dir, github: { ...testDeployment().github, cli: gh }, feishu: undefined }), [])
+    const shim = join(workerBin(dir), 'gh')
+    const refused = { code: 1, stderr: `${MERGE_REFUSED}\n` }
+    for (const args of [['pr', 'merge', '7', '--auto', '--squash'], ['pr', '-R', 'acme/widgets', 'merge', '7'], ['--repo', 'acme/widgets', 'pr', 'merge'],
+      ['api', 'graphql', '-f', 'query=mutation { enablePullRequestAutoMerge(input: {pullRequestId: "x"}) { clientMutationId } }'],
+      ['api', 'graphql', '-f', 'query=mutation { mergePullRequest(input: {pullRequestId: "x"}) { clientMutationId } }'],
+      ['api', '-X', 'PUT', 'repos/acme/widgets/pulls/7/merge'], ['api', 'repos/{owner}/{repo}/pulls/7/merge?x=1']]) {
+      await expect(exec(shim, args), args.join(' ')).rejects.toMatchObject(refused)
+    }
+    for (const args of [['pr', 'merge', '7', '--disable-auto'], ['pr', 'view', '7', '--json', 'mergeStateStatus'], ['pr', 'comment', '7', '--body', 'merge'],
+      ['api', 'graphql', '-f', 'query=mutation { disablePullRequestAutoMerge(input: {pullRequestId: "x"}) { clientMutationId } }'],
+      ['api', 'repos/acme/widgets/pulls/7'], ['-R', 'merge', 'pr', 'list']]) {
+      expect((await exec(shim, args)).stdout, args.join(' ')).toBe(`gh ${args.join(' ')}\n`)
+    }
   })
   it('replace only what dsh-superagent wrote and refuse anything else in its places', async () => {
     await writeEnvironment(testDeployment({ stateDir: dir }), ['old-cli'])

@@ -1,6 +1,7 @@
 /** Computes structured settings diffs across saved revisions for display in the management panel. */
 import type { FieldSpec } from '../sources/kind.ts'
 import type { SourceRegistry } from '../sources/registry.ts'
+import { MergeConfigSchema } from '../policy.ts'
 import { KV } from '../kv.ts'
 import type { Store, SettingsVersion } from './store.ts'
 
@@ -9,7 +10,7 @@ type SourceSettings = SettingsVersion['settings']['sources'][string]
 export type SettingsChangeCode = 'ruleAdded' | 'ruleRenamed' | 'ruleInstruction' | 'ruleEnabled' | 'ruleDisabled' | 'ruleRemoved'
   | 'sourceEnabled' | 'sourceDisabled' | 'sourceField' | 'sourceRowsAdded' | 'sourceRowsRemoved' | 'sourceRowsChanged' | 'sourceAdmission'
   | 'mode' | 'timeout' | 'evalModel' | 'executorModel' | 'maxWorkers' | 'paused' | 'resumed' | 'executionDirectory' | 'prepareCommand'
-  | 'blockedCommands'
+  | 'blockedCommands' | 'sandbox' | 'writableRoots' | 'mergeCli' | 'mergeMethod' | 'mergeMaxLines' | 'mergeApprovals'
 /** A single settings diff entry rendered by the panel using `change.<code>` and field labels from the Source listing. */
 export interface SettingsChange {
   code: SettingsChangeCode; items?: string[]; from?: string | number | boolean; to?: string | number | boolean; name?: string; source?: string
@@ -71,6 +72,17 @@ function settingsChanges(before: SettingsVersion['settings'], after: SettingsVer
   if (before.executor.directory !== after.executor.directory) changes.push({ code: 'executionDirectory', from: before.executor.directory, to: after.executor.directory })
   if (before.executor.prepare !== after.executor.prepare) changes.push({ code: 'prepareCommand' })
   if (!same(before.executor.blockedCommands, after.executor.blockedCommands)) changes.push({ code: 'blockedCommands', from: before.executor.blockedCommands.join(' '), to: after.executor.blockedCommands.join(' ') })
+  // Revisions saved before these settings existed hold neither, which reads as their defaults.
+  const sandbox = (version: typeof before) => version.executor.sandbox ?? 'workspace'
+  const roots = (version: typeof before) => (version.executor.writableRoots ?? []).join(' ')
+  if (sandbox(before) !== sandbox(after)) changes.push({ code: 'sandbox', from: sandbox(before), to: sandbox(after) })
+  if (roots(before) !== roots(after)) changes.push({ code: 'writableRoots', from: roots(before), to: roots(after) })
+  // Revisions saved before merging was a setting hold none, which reads as its defaults.
+  const merge = [before, after].map(version => MergeConfigSchema.parse(version.executor.merge ?? {}))
+  if (merge[0]!.cli !== merge[1]!.cli) changes.push({ code: 'mergeCli', from: merge[0]!.cli, to: merge[1]!.cli })
+  if (merge[0]!.method !== merge[1]!.method) changes.push({ code: 'mergeMethod', from: merge[0]!.method, to: merge[1]!.method })
+  if (merge[0]!.maxLines !== merge[1]!.maxLines) changes.push({ code: 'mergeMaxLines', from: merge[0]!.maxLines, to: merge[1]!.maxLines })
+  if (merge[0]!.requireApprovals !== merge[1]!.requireApprovals) changes.push({ code: 'mergeApprovals', from: merge[0]!.requireApprovals, to: merge[1]!.requireApprovals })
   for (const id of new Set([...Object.keys(before.sources), ...Object.keys(after.sources)])) changes.push(...sourceChanges(id, before.sources[id], after.sources[id], sources))
   return changes
 }

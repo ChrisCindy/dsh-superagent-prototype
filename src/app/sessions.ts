@@ -13,6 +13,7 @@ import { AgentDelivery, messageId } from './delivery.ts'
 import type { Effects } from './effects.ts'
 import type { Variable } from './execution-environment.ts'
 import { RetryHealth } from './retry-health.ts'
+import { permissionPreset } from './permissions.ts'
 import { initializeRoleModel } from './role-models.ts'
 import { bundledSkills } from './skill-files.ts'
 import { SKILL_PREFIX, type PromptVersion, type Prompts } from './prompts.ts'
@@ -134,7 +135,10 @@ export class Sessions {
       if (status === 'idle' && !this.host.closing()) { this.retryHealth.clear(agent.id); this.updateModelHealth() }
     })
   }
-  /** Resolves or creates session `id` in workspace `cwd`, initializes its role model, decorates it with prompts/skills/tools, sets `danger-full-access` permissions, and renames it to `title`. */
+  /**
+   * Resolves or creates session `id` in workspace `cwd`, initializes its role model, decorates it with prompts/skills/tools, sets
+   * its role's permission preset (see `confine`), and renames it to `title`.
+   */
   async ensure(id: string, cwd: string, title: string, role: 'orchestrator' | 'worker'): Promise<Agent> {
     const ctx = this.ctx
     let result = await ctx.sessionController.resolveAgent(id as SessionId)
@@ -149,9 +153,17 @@ export class Sessions {
     const settings = this.host.store.settings()
     await initializeRoleModel(ctx, result.agent, role === 'orchestrator' ? settings.eval.model : settings.executor.model)
     await this.decorate(result.agent)
-    ctx.permissionPresets.set(result.agent.session, 'danger-full-access')
+    this.confine(result.agent, role)
     await ctx.sessionController.rename({ sessionId: id as SessionId, title })
     return result.agent
+  }
+  /**
+   * Sets a managed Session's permission preset by the Executor's `sandbox` setting: the main Session reads only, a worker writes
+   * only under its Ticket directory, the Session's immutable cwd, and the temporary areas, both without approval prompts; `full`
+   * lets both write anywhere. Selecting the preset a Session already has records nothing.
+   */
+  private confine(agent: Agent, role: 'orchestrator' | 'worker'): void {
+    this.ctx.permissionPresets.set(agent.session, permissionPreset(role, this.host.store.settings().executor.sandbox))
   }
   /** Returns whether `sessionId` already holds the message delivered under `requestId`, or `false` if the session does not exist. */
   async holds(sessionId: string, requestId: string): Promise<boolean> {
@@ -163,6 +175,9 @@ export class Sessions {
     accepted?: () => void): Promise<void> {
     const result = await this.ctx.sessionController.resolveAgent(sessionId as SessionId)
     if ('error' in result) throw result.error
+    // A Session loaded before a restart that changed the sandbox setting takes its current preset before the message wakes it.
+    const role = sessionId === this.host.masterId ? 'orchestrator' : this.ticketOf(result.agent) ? 'worker' : undefined
+    if (role) this.confine(result.agent, role)
     await this.agentDelivery.send(result.agent, key(requestId), text, mode, this.host.lifetime, authorize, accepted)
   }
   /** The id of the message `prompt` delivers under `requestId`, which DSH's inbox events name it by. */
@@ -237,6 +252,8 @@ export class Sessions {
     if (!master && !ticket) { this.limitSubagent(agent); return }
     const binding: SessionBinding = { disposers: [] }
     this.bindings.set(agent, binding)
+    // A managed Session DSH loads by itself, such as one a person opens, takes its preset before a turn can run.
+    this.confine(agent, master ? 'orchestrator' : 'worker')
     this.retryHealth.restore(agent.id, agent.session.snapshotEvents())
     if (agent.status === 'idle') this.retryHealth.clear(agent.id)
     this.updateModelHealth()

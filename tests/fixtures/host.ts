@@ -16,7 +16,32 @@ import { githubKind } from '../../src/sources/github.ts'
 import { Commands } from '../../src/infra/commands.ts'
 import { credentialHelper, workerGitConfig } from '../../src/infra/environment.ts'
 import type { Trigger } from '../../src/core/index.ts'
-import { testMachine } from './deployment.ts'
+import { fakeConnection, PANEL_HEADERS } from './connection.ts'
+import { reviewedBranch, testMachine } from './deployment.ts'
+
+/**
+ * DSH's permission-presets service as the bundle's patch composes it: DSH's base presets and the bundle's own, with the preset
+ * each Session was last set to in `selected`.
+ */
+export function permissionPresets(table: Record<string, { sandbox: string; approval: string }> = PRESET_TABLE) {
+  const selected = new Map<string, string>()
+  return {
+    selected,
+    get names() { return Object.keys(table) },
+    resolve: (name: string) => {
+      const spec = table[name]
+      if (!spec) throw new Error(`permission: unknown preset "${name}"`)
+      return spec
+    },
+    set: vi.fn((session: { id: string }, name: string) => { if (!table[name]) throw new Error(`permission: unknown preset "${name}"`); selected.set(session.id, name) }),
+  }
+}
+/** The preset table the bundle's patch gives the profile. */
+export const PRESET_TABLE: Record<string, { sandbox: string; approval: string }> = {
+  'read-only': { sandbox: 'read-only', approval: 'ask' }, 'workspace-write': { sandbox: 'workspace-write', approval: 'ask' },
+  'danger-full-access': { sandbox: 'danger-full-access', approval: 'never' }, 'superagent-router': { sandbox: 'read-only', approval: 'never' },
+  'superagent-worker': { sandbox: 'workspace-write', approval: 'never' },
+}
 
 export const MEMBER = 'ou_alice'
 export const CHAT = 'oc_team'
@@ -144,6 +169,7 @@ export async function startRuntime(seed?: (store: Store) => void) {
   const answers: Record<string, string> = {
     [`${AGENT} api user`]: '{"login":"agent-bot","id":7}',
     [`${AGENT} api repos/acme/widgets --jq {name: .full_name, push: .permissions.push}`]: '{"name":"acme/widgets","push":true}\n',
+    ...reviewedBranch(AGENT),
     [`${BOT} auth status`]: JSON.stringify({ appId: 'cli_bot', brand: 'feishu', identities: { bot: { status: 'ready' } } }),
     [`${BOT} config strict-mode`]: 'strict-mode: bot (source: profile)',
     [`${BOT} api GET /open-apis/bot/v3/info --as bot --format ndjson`]: '{"bot":{"open_id":"ou_bot"},"code":0,"msg":"ok"}',
@@ -239,8 +265,8 @@ export async function startRuntime(seed?: (store: Store) => void) {
   const jobs = jobRegistry(id => agents.get(id))
   const subagents = subagentRuntime(agents)
   const services = { agents, llm: { resolveCallConfig: vi.fn(async (value: unknown) => value) }, sessionController: controller,
-    sessionPersistence: persistence, workspaceRegistry: { create: async (cwd: string) => ({ id: cwd }) }, permissionPresets: { set: () => {} }, subprocess, webServer,
-    jobs: jobs.service, subagents: subagents.service }
+    sessionPersistence: persistence, workspaceRegistry: { create: async (cwd: string) => ({ id: cwd }) }, permissionPresets: permissionPresets(), subprocess, webServer,
+    connection: fakeConnection(), jobs: jobs.service, subagents: subagents.service }
   const ctx = new Context()
   for (const [name, service] of Object.entries(services)) ctx.reflect.provide(name, service)
   for (const cli of [AGENT, BOT]) writeFileSync(cli, '#!/bin/sh\n', { mode: 0o755 })
@@ -284,7 +310,7 @@ export async function startRuntime(seed?: (store: Store) => void) {
   async function api(method: string, path: string, json?: unknown) {
     let status = 0, text = ''
     const chunks = json === undefined ? [] : [Buffer.from(JSON.stringify(json))]
-    const req = { method, url: `/orchestrator/api/${path}`, headers: { host: '127.0.0.1:3082', 'x-orchestrator-request': '1' }, async *[Symbol.asyncIterator]() { yield* chunks } }
+    const req = { method, url: `/orchestrator/api/${path}`, headers: PANEL_HEADERS, async *[Symbol.asyncIterator]() { yield* chunks } }
     await http(req, { writeHead: (code: number) => { status = code }, end: (data: string) => { text = data } })
     return { status, body: JSON.parse(text) as Record<string, unknown> }
   }
@@ -293,7 +319,7 @@ export async function startRuntime(seed?: (store: Store) => void) {
   const step = (sessionId: string) => { steps.get(sessionId)!() }
   /** A step of the worker claims what waits for it, and is cut off before the Session took it. */
   const claim = (sessionId: string) => { claims.get(sessionId)!() }
-  return { runtime, ctx, directory, agents, tools, deliveries, relays, candidates, runTool, route, acceptedTicket, api, controller, subprocess, hooks, resolveDefault, stop,
+  return { runtime, ctx, directory, agents, tools, deliveries, relays, candidates, runTool, route, acceptedTicket, api, controller, subprocess, answers, hooks, resolveDefault, stop,
     jobs, subagents, step, claim }
 }
 export type Host = Awaited<ReturnType<typeof startRuntime>>

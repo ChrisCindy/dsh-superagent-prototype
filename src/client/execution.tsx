@@ -1,9 +1,10 @@
 /** Execution status view (active Tickets and pause control) and Execution settings group (Executor capacity and workspace environment). */
 import { useRef, useState } from 'react'
 import { TICKET_FILTERS, type TicketFilter } from '../app/api.ts'
+import type { Sandbox } from '../policy.ts'
 import { LIMITS } from '../limits.ts'
 import { usePoll, type SettingsView, type SourceView, type StateView } from './api.ts'
-import { DisclosureRow, Icon, InfoTip, Input, Pill } from './controls.tsx'
+import { DisclosureRow, Icon, InfoTip, Input, Pill, SegmentedControl } from './controls.tsx'
 import { SaveBar } from './draft.tsx'
 import { usePanel } from './provider.tsx'
 import { TicketLine } from './rows.tsx'
@@ -72,16 +73,22 @@ function EnvironmentVariables({ groups, sources,
     </div>
   </DisclosureRow>
 }
+const MERGE_METHODS = ['squash', 'merge', 'rebase'] as const
 export function ExecutionSettings() {
   const { t } = usePanel()
   const { blocks, environment, sources } = useSettings().settings
   // Keep raw user text (such as separators between blocked commands) in the draft and parse only on save.
   const executor = blocks.executor.value
-  const saved = { ...executor, maxWorkers: String(executor.maxWorkers), blockedCommands: executor.blockedCommands.join(' ') }
+  const saved = { ...executor, maxWorkers: String(executor.maxWorkers), blockedCommands: executor.blockedCommands.join(' '),
+    writableRoots: executor.writableRoots.join('\n'),
+    merge: { ...executor.merge, maxLines: String(executor.merge.maxLines), requireApprovals: String(executor.merge.requireApprovals) } }
   const draft = useBlockDraft('executor', saved, blocks.executor.revision,
-    value => ({ ...value, maxWorkers: numberOf(value.maxWorkers), blockedCommands: value.blockedCommands.split(/[\s,]+/).filter(Boolean) }))
+    value => ({ ...value, maxWorkers: numberOf(value.maxWorkers), blockedCommands: value.blockedCommands.split(/[\s,]+/).filter(Boolean),
+      writableRoots: value.writableRoots.split('\n').map(root => root.trim()).filter(Boolean),
+      merge: { ...value.merge, maxLines: numberOf(value.merge.maxLines), requireApprovals: numberOf(value.merge.requireApprovals) } }))
   const value = draft.value
   const edit = (next: Partial<typeof value>) => draft.edit({ ...value, ...next })
+  const merge = (next: Partial<typeof value.merge>) => edit({ merge: { ...value.merge, ...next } })
   const prepare = useRef<HTMLTextAreaElement>(null)
   const insert = (key: string) => {
     const field = prepare.current
@@ -117,6 +124,33 @@ export function ExecutionSettings() {
           <Field label={t('blockedCommands')} hint={t('blockedCommandsHint')}>
             <Input className="dt-mono" value={value.blockedCommands} placeholder={t('blockedCommandsNone')} spellCheck={false}
               onChange={event => edit({ blockedCommands: event.target.value })} />
+          </Field>
+          <Section title={t('sandbox')} hint={t('sandboxHint')}>
+            <SegmentedControl className="dt-segmented" label={t('sandbox')} value={value.sandbox} onChange={sandbox => edit({ sandbox })}
+              options={(['workspace', 'full'] as const satisfies readonly Sandbox[]).map(sandbox => ({ value: sandbox, label: t(`sandbox.${sandbox}`) }))} />
+          </Section>
+          <Field label={t('writableRoots')} hint={t('writableRootsHint')}>
+            <textarea className="dt-textarea dt-mono" rows={2} spellCheck={false} placeholder={t('writableRootsNone')}
+              value={value.writableRoots} onChange={event => edit({ writableRoots: event.target.value })} />
+          </Field>
+        </div>
+        <div className="dt-form dt-block">
+          <h2 className="dt-block-title">{t('mergeTitle')}<InfoTip text={t('mergeIntro')} /></h2>
+          <Field label={t('mergeCli')} hint={t('mergeCliHint')}>
+            <Input className="dt-mono" value={value.merge.cli} placeholder={t('mergeCliEmpty')} spellCheck={false}
+              onChange={event => merge({ cli: event.target.value })} />
+          </Field>
+          <Field label={t('mergeMethod')}>
+            <SegmentedControl label={t('mergeMethod')} value={value.merge.method} onChange={method => merge({ method })}
+              options={MERGE_METHODS.map(method => ({ value: method, label: t(`mergeMethod.${method}`) }))} />
+          </Field>
+          <Field label={t('mergeMaxLines')} hint={t('mergeMaxLinesHint')}>
+            <Input type="number" min={LIMITS.mergeMaxLines.min} max={LIMITS.mergeMaxLines.max} required value={value.merge.maxLines}
+              onChange={event => merge({ maxLines: event.target.value })} />
+          </Field>
+          <Field label={t('mergeApprovals')} hint={t('mergeApprovalsHint')}>
+            <Input type="number" min={LIMITS.mergeApprovals.min} max={LIMITS.mergeApprovals.max} required value={value.merge.requireApprovals}
+              onChange={event => merge({ requireApprovals: event.target.value })} />
           </Field>
         </div>
       </Fields>

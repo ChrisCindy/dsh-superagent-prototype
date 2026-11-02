@@ -108,6 +108,8 @@ export interface PanelServer {
   opened: string[]
   dropped: DroppedReply[]
   failing: Extract<Problem, { kind: 'outgoing' }>['outgoing'][]
+  /** The main Session's pending Policy proposal, if any. */
+  proposal?: Extract<Problem, { kind: 'policy-proposal' }>['proposal'] | undefined
 }
 export let server: PanelServer
 
@@ -150,7 +152,9 @@ function sourceStatuses(): SourceStatusRow[] {
     const state = !enabled ? 'off' : problem || health.some(item => item.state === 'error') ? 'error' : server.setup.problem ? 'setup'
       : health.some(item => item.state === 'starting') ? 'starting' : health.some(item => item.state === 'paused') ? 'paused' : 'ready'
     const feishu = kind.kind === 'feishu'
+    const warnings = server.setup.warnings.filter(warning => warning.place === kind.kind)
     return { id: kind.kind, title: kind.title, installed: true, enabled, state, health, ...problem ? { problem } : {},
+      ...warnings.length ? { warnings } : {},
       stats: { received: feishu ? 12 : 0, filtered: feishu ? 2 : 0, lastAt: '2026-09-23T00:00:00Z' },
       filtered: feishu ? [] : [{ id: 'e9', at: '2026-09-23T00:02:00Z', actor: actor('github', 'someone'), preview: 'looks wrong',
         reason: { code: 'source_disabled' } }],
@@ -181,6 +185,8 @@ const overviewView = (): ApiResponse<'GET overview'> => {
   const setup = problem ?? feishuProblem
   return {
     problems: [...setup ? [{ kind: 'setup' as const, ...setup }] : [],
+      ...server.proposal ? [{ kind: 'policy-proposal' as const, proposal: server.proposal }] : [],
+      ...server.setup.warnings.map(warning => ({ kind: 'setup-warning' as const, ...warning })),
       ...KINDS.some(kind => server.settings.sources[kind.kind]?.enabled !== false) ? [] : [{ kind: 'no-source' as const }],
       ...feishuProblem || server.settings.sources.feishu?.enabled === false ? [] : [{ kind: 'source-error' as const, source: { id: 'feishu',
         title: { zh: '飞书', en: 'Feishu' },
@@ -248,7 +254,7 @@ function initial(): PanelServer {
   const defaults = { revision: 0, previousRevision: null, savedAt: '', source: 'defaults' }
   return {
     health: {}, down: false, pending: 0, opened: [], requests: [], misuse: [], queued: new Set(), dropped: [], failing: [],
-    setup: { machine: MACHINE, problem: null, feishuProblem: null,
+    setup: { machine: MACHINE, problem: null, feishuProblem: null, warnings: [],
       accounts: { repository: 'acme/widgets', agent: 'agent-bot', feishu: { appId: 'cli_bot', brand: 'feishu', botId: 'ou_bot',
         name: 'Widgets Bot' } } },
     settings, revisions: { policy: 3, eval: 1, executor: 0 },
@@ -367,6 +373,14 @@ const ROUTES: { [K in keyof Api]: Route<K> } = {
     return { restarting, revision: server.revisions[block] }
   } },
   'GET policy/history': { answer: () => server.history },
+  'GET policy-proposal': { answer: () => ({ proposal: server.proposal ? { ...server.proposal, value: {}, revision: 0 } : null }) },
+  'POST policy-proposal/accept': { answer: () => {
+    if (!server.proposal) return refuse(404, 'No Policy proposal is waiting', { code: 'noPolicyProposal', values: {} })
+    if (server.proposal.stale) return refuse(409, 'Settings changed. Reload before saving.')
+    server.proposal = undefined
+    return { revision: 4, restarting: false }
+  } },
+  'POST policy-proposal/dismiss': { answer: () => { const dismissed = !!server.proposal; server.proposal = undefined; return { dismissed } } },
   'POST policy-sync/:id': { answer: ({ params }) => ({ policy: server.settings.policy.sources[params.id] }) },
   'POST setup/check': { answer: () => ({ restarting: true }) },
   'GET models': { answer: () => ({ default: { provider: 'host', model: 'default' }, routableProviders: [], failures: [],
@@ -440,6 +454,9 @@ export function usePanelServer(cleanup: () => void) {
       const method = init?.method ?? 'GET'
       const body: unknown = init?.body ? JSON.parse(String(init.body)) : undefined
       server.requests.push({ path: decodeURIComponent(`${path}${address.search}`), method, ...body === undefined ? {} : { body } })
+      // The management API signs a request in by the DeepSeek Harness session cookie, which only a request that sends
+      // same-origin credentials carries.
+      if (init?.credentials !== 'same-origin') { server.misuse.push(`${method} ${path} sent no session cookie`); return new Reply({ error: 'DeepSeek Harness sign-in required' }, 401) }
       const route = match(method, path.split('/'))
       if (!route) return new Reply({ error: 'Unknown operation' }, 404)
       const answer = await run(route.key, route.params, address.searchParams, body)

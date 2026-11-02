@@ -19,7 +19,7 @@ export const HOME: Route = { page: 'overview' }
 export const settingsRoute = (group: SettingsGroup, query: { source?: string; version?: string } = {}): Route =>
   ({ page: 'settings', query: { group, ...query } })
 export const setupPage = (place: SetupPlace): Route =>
-  place === 'deployment' ? settingsRoute('deployment') : settingsRoute('source', { source: place })
+  place === 'deployment' || place === 'execution' ? settingsRoute(place) : settingsRoute('source', { source: place })
 export const routeLabel = (t: T, route: Route): string =>
   route.id ? t(route.page === 'trigger' ? 'term.thread' : 'term.ticket') : t(`tab.${route.page}`)
 

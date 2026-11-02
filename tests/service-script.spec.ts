@@ -1,6 +1,6 @@
 /** Tests for scripts/dsh-superagent using a temporary checkout path with spaces and stubbed ps, tmux, and dsh binaries. */
 import { execFile, spawn, type ChildProcess } from 'node:child_process'
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, utimesSync, writeFileSync }
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, utimesSync, writeFileSync }
   from 'node:fs'
 import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
@@ -231,4 +231,47 @@ it('does not signal a process that took the recorded service PID, and keeps a st
   processes(service(sleeper(true)))
   expect(await run('stop', '--stop-timeout', '1')).toMatchObject({ code: 1, stderr: expect.stringContaining('Graceful stop timed out') })
   expect(existsSync(join(control('superagent'), 'manually-stopped'))).toBe(true)
+}, 20_000)
+/** Start a fake DSH Web server that, like its Connection, exchanges launch token `secret` on `GET /` for a session cookie. */
+async function signingIn(): Promise<{ url: string; requests: { url: string; host: string }[] }> {
+  const requests: { url: string; host: string }[] = []
+  server = createServer((request, response) => {
+    requests.push({ url: request.url ?? '', host: request.headers.host ?? '' })
+    if (request.url === '/?token=secret') {
+      response.writeHead(303, { location: './', 'set-cookie': 'dsh_session_127=signed; Path=/; Max-Age=2592000; HttpOnly; SameSite=Strict' }).end()
+    } else response.writeHead(401).end('Unauthorized')
+  })
+  await new Promise<void>(resolve => server!.listen(0, '127.0.0.1', resolve))
+  return { url: `http://127.0.0.1:${(server!.address() as AddressInfo).port}`, requests }
+}
+it('signs in with the launch token from the newest log and saves the session cookie as a private curl cookie jar', async () => {
+  const { url, requests } = await signingIn()
+  mkdirSync(join(root, '.artifacts'), { recursive: true })
+  const log = (name: string, token: string, mtime: number) => {
+    const path = join(root, '.artifacts', `dsh-superagent-superagent-${name}-1.log`)
+    writeFileSync(path, `starting\ndsh web: ${url}/?token=${token}\nready\n`)
+    utimesSync(path, mtime, mtime)
+  }
+  log('20260901-000000', 'stale', 1_000)
+  log('20260902-000000', 'secret', 2_000)
+  writeFileSync(join(root, '.artifacts', 'dsh-superagent-other-20260903-000000-1.log'), `dsh web: ${url}/?token=other\n`)
+  const result = await run('login')
+  const jar = join(control('superagent'), 'cookies.txt')
+  expect(result).toMatchObject({ code: 0, stdout: `${jar}\n` })
+  expect(requests).toEqual([{ url: '/?token=secret', host: url.slice('http://'.length) }])
+  const [header, cookie] = readFileSync(jar, 'utf8').trimEnd().split('\n')
+  expect(header).toBe('# Netscape HTTP Cookie File')
+  const [domain, subdomains, path, secure, expires, name, value] = cookie!.split('\t')
+  expect({ domain, subdomains, path, secure, name, value })
+    .toEqual({ domain: '#HttpOnly_127.0.0.1', subdomains: 'FALSE', path: '/', secure: 'FALSE', name: 'dsh_session_127', value: 'signed' })
+  expect(Number(expires) - Date.now() / 1000).toBeGreaterThan(2_591_000)
+  expect(statSync(jar).mode & 0o777).toBe(0o600)
+}, 20_000)
+it('refuses to sign in without a launch URL or with a token DSH does not accept', async () => {
+  const { url } = await signingIn()
+  expect(await run('login')).toMatchObject({ code: 1, stderr: expect.stringContaining('No DSH launch URL found') })
+  expect(await run('login', '--launch-url', `${url}/?token=wrong`))
+    .toMatchObject({ code: 1, stderr: expect.stringContaining('DSH refused the launch token (HTTP 401)') })
+  expect(existsSync(join(control('superagent'), 'cookies.txt'))).toBe(false)
+  expect(await run('login', '--launch-url', `${url}/?token=secret`)).toMatchObject({ code: 0 })
 }, 20_000)

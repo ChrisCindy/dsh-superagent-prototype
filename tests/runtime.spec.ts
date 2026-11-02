@@ -3,16 +3,16 @@ import { bindScopeParent } from '@deepseek-ai/dsh-scope'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { DatabaseSync } from 'node:sqlite'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest'
 import type { UserMessage } from '@deepseek-ai/dsh-llm'
 import { renderPrompt } from '@deepseek-ai/dsh-system-prompt'
 import { Runtime } from '../src/app/runtime.ts'
-import { jobRegistry } from './fixtures/host.ts'
+import { PRESET_TABLE, jobRegistry, permissionPresets } from './fixtures/host.ts'
 import { evalsHealth } from '../src/app/views/overview.ts'
 import { mandateInstructions } from '../src/executor/dsh.ts'
 import { masterPrompt } from '../src/app/context.ts'
-import { reference, testMachine } from './fixtures/deployment.ts'
+import { reference, reviewedBranch, testMachine } from './fixtures/deployment.ts'
 import type { Machine } from '../src/deployment.ts'
 import { SCHEMA_VERSION, Store } from '../src/app/store.ts'
 import { TextCache } from '../src/app/cache.ts'
@@ -34,10 +34,11 @@ import { overview } from '../src/app/views/overview.ts'
 import { preview, readable } from '../src/app/views/text.ts'
 import { decisionList, search, threadDetail, threadList } from '../src/app/views/threads.ts'
 import { executorLoad, ticketDetail, ticketList } from '../src/app/views/tickets.ts'
+import { fakeConnection, PANEL_HEADERS } from './fixtures/connection.ts'
 
 let runtime: Runtime
 const viewsOf = (value: Runtime) => ({ store: value.store, sources: value.sources, links: value.links() })
-const overviewOf = (value: Runtime) => overview(viewsOf(value), value.health, policyVersion(value.store.settings()), executorLoad(value.store, value.executor.activeCount()), value.setupProblem ?? value.feishuProblem)
+const overviewOf = (value: Runtime) => overview(viewsOf(value), value.health, policyVersion(value.store.settings()), executorLoad(value.store, value.executor.activeCount()), value.setupProblem ?? value.feishuProblem, value.setupWarnings)
 let directory: string
 let controller: { create: ReturnType<typeof vi.fn>; selectModel: ReturnType<typeof vi.fn>; resolveAgent: ReturnType<typeof vi.fn>; rename: ReturnType<typeof vi.fn>; prompt: ReturnType<typeof vi.fn>; inspect: ReturnType<typeof vi.fn> }
 type RegisteredTool = { name: string; output: { render: (args: unknown, result: unknown) => unknown }; execute: (args: unknown, execution: { signal: AbortSignal }) => Promise<unknown> }
@@ -51,7 +52,7 @@ type HttpHandler = (req: unknown, res: unknown) => Promise<void>
 let http: HttpHandler
 async function api(method: string, path: string): Promise<{ status: number; body: unknown }> {
   let status = 0, text = ''
-  const req = { method, url: `/orchestrator/api/${path}`, headers: { host: '127.0.0.1:3082', 'x-orchestrator-request': '1' } }
+  const req = { method, url: `/orchestrator/api/${path}`, headers: PANEL_HEADERS }
   await http(req, { writeHead: (code: number) => { status = code }, end: (data: string) => { text = data } })
   return { status, body: JSON.parse(text) }
 }
@@ -146,6 +147,7 @@ beforeEach(async () => {
     [`git -C ${directory} remote get-url --push origin`]: 'https://github.com/acme/widgets.git\n',
     [`${AGENT()} api user`]: '{"login":"agent-bot","id":7}', [`${AGENT()} api repos/acme/widgets --jq {name: .full_name, push: .permissions.push}`]: '{"name":"acme/widgets","push":true}\n',
     [`${OTHER()} api user`]: '{"login":"agent-bot","id":7}', [`${OTHER()} api repos/acme/widgets --jq {name: .full_name, push: .permissions.push}`]: '{"name":"acme/widgets","push":true}\n',
+    ...reviewedBranch(AGENT()), ...reviewedBranch(OTHER()),
     [`${BOT()} auth status`]: JSON.stringify({ appId: 'cli_bot', brand: 'feishu', identities: { bot: { status: 'ready' } } }),
     [`${BOT()} config strict-mode`]: 'strict-mode: bot (source: profile)',
     [`${BOT()} api GET /open-apis/bot/v3/info --as bot --format ndjson`]: '{"bot":{"open_id":"ou_bot"},"code":0,"msg":"ok"}',
@@ -203,7 +205,7 @@ beforeEach(async () => {
     inspect: vi.fn(async () => ({ events: [] })),
   }
   jobs = jobRegistry()
-  services = { agents, llm: { resolveCallConfig: vi.fn(async value => value) }, sessionController: controller, sessionPersistence: { flush: vi.fn(async () => {}), open: vi.fn(async () => ({ read: async () => ({ events: [] }), [Symbol.asyncDispose]: async () => {} })) }, workspaceRegistry: { create: async (cwd: string) => ({ id: cwd }) }, permissionPresets: { set: () => {} }, subprocess, webServer: { host: '127.0.0.1', port: 3082, register: (route: { handler: HttpHandler }) => { http = route.handler; return () => {} } }, jobs: jobs.service }
+  services = { agents, llm: { resolveCallConfig: vi.fn(async value => value) }, sessionController: controller, sessionPersistence: { flush: vi.fn(async () => {}), open: vi.fn(async () => ({ read: async () => ({ events: [] }), [Symbol.asyncDispose]: async () => {} })) }, workspaceRegistry: { create: async (cwd: string) => ({ id: cwd }) }, permissionPresets: permissionPresets(), subprocess, webServer: { host: '127.0.0.1', port: 3082, register: (route: { handler: HttpHandler }) => { http = route.handler; return () => {} } }, connection: fakeConnection(), jobs: jobs.service }
   for (const [name, service] of Object.entries(services)) ctx.reflect.provide(name, service)
   for (const cli of [AGENT(), OTHER(), BOT()]) writeFileSync(cli, '#!/bin/sh\n', { mode: 0o755 })
   const store = new Store(join(directory, 'orchestrator.sqlite')); seed(store); store.close()
@@ -238,6 +240,58 @@ it('relays an explicit member mention as a candidate and creates the ticket, ack
     thread: `feishu:${CHAT}:om_1`, text: trigger.text }) })
   expect(first.trigger).not.toHaveProperty('read')
   expect(await route({ kind: 'accept', trigger_id: trigger.id, title: 'again', worktree_name: worktreeName, acknowledgement: 'x' })).toMatchObject({ ticket: { ticket_id: ticket.id } })
+})
+
+it('runs the main Session read-only and each worker writing only its Ticket directory, neither asking for approval, and changes that only from the panel', async () => {
+  const presets = services.permissionPresets as ReturnType<typeof permissionPresets>
+  const { ticket, sessionId } = await acceptedTicket()
+  expect(presets.selected.get(runtime.masterId)).toBe('superagent-router')
+  expect(presets.selected.get(sessionId)).toBe('superagent-worker')
+  // A worker's workspace, the one directory workspace-write lets it write besides the temporary areas, is its Ticket directory.
+  expect(controller.create).toHaveBeenCalledWith(expect.objectContaining({ sessionId, workspaceId: ticket.execution!.directory }))
+  const executor = runtime.store.settings().executor
+  const save = (value: Partial<typeof executor>, origin: SettingsOrigin = 'panel') =>
+    runtime.settings.save('executor', { ...executor, ...value }, runtime.store.blockRevision('executor'), origin)
+  // The main Session's tools cannot widen the sandbox or add a writable root.
+  await expect(save({ sandbox: 'full' }, 'tool')).rejects.toMatchObject({ code: 'panelOnlyEnvironment' })
+  await expect(save({ writableRoots: ['/opt/cache'] }, 'tool')).rejects.toMatchObject({ code: 'panelOnlyEnvironment' })
+  // A root that contains the state directory is refused as setup refuses it; so is one this DSH's sandbox does not grant.
+  await expect(save({ writableRoots: [dirname(directory)] })).rejects.toMatchObject({ code: 'writableRootProtected',
+    values: { root: dirname(directory), protected: directory } })
+  await expect(save({ writableRoots: [join(directory, 'worker-bin')] })).rejects.toMatchObject({ code: 'writableRootProtected' })
+  await expect(save({ writableRoots: ['/opt/cache'] })).rejects.toMatchObject({ code: 'writableRootUngranted', values: { root: '/opt/cache' } })
+  expect(restarts).not.toHaveBeenCalled()
+  // The escape hatch restarts, so every managed Session takes the full-access preset as it is ensured again.
+  expect(await save({ sandbox: 'full' })).toMatchObject({ saved: true, restarting: true })
+  await vi.waitFor(() => expect(restarts).toHaveBeenCalledTimes(1))
+  await runtime.sessions.ensure(sessionId, ticket.execution!.directory, ticket.title, 'worker')
+  await runtime.sessions.ensure(runtime.masterId, directory, 'dsh-superagent orchestrator', 'orchestrator')
+  expect([presets.selected.get(sessionId), presets.selected.get(runtime.masterId)]).toEqual(['danger-full-access', 'danger-full-access'])
+})
+
+it('waits for setup while the profile lacks a permission preset its Sessions need, a writable root opens the state directory, or the state directory lies in a temporary area', async () => {
+  const full = services.permissionPresets
+  const { 'superagent-worker': _worker, ...table } = PRESET_TABLE
+  services.permissionPresets = permissionPresets(table)
+  let next = await restart()
+  await next.ready
+  expect(next.setupProblem).toMatchObject({ place: 'deployment', code: 'permissionPresetMissing',
+    values: { preset: 'superagent-worker', sandbox: 'workspace-write', approval: 'never' } })
+  // Under the full sandbox, only DSH's own danger-full-access preset is needed.
+  next.store.saveSettings(SettingsSchema.parse({ ...next.store.settings(), executor: { ...next.store.settings().executor, sandbox: 'full' } }))
+  next = await restart()
+  await next.ready
+  expect(next.setupProblem).toBeUndefined()
+  services.permissionPresets = full
+  next.store.saveSettings(SettingsSchema.parse({ ...next.store.settings(), executor: { ...next.store.settings().executor, writableRoots: ['/'] } }))
+  next = await restart()
+  await next.ready
+  expect(next.setupProblem).toMatchObject({ place: 'execution', code: 'writableRootProtected', values: { root: '/' } })
+  // A state directory in a temporary area, which the workspace sandbox lets every worker write, is refused too.
+  next.store.saveSettings(SettingsSchema.parse({ ...next.store.settings(), executor: { ...next.store.settings().executor, sandbox: 'workspace', writableRoots: [] } }))
+  next = await restart({ temporaryAreas: [dirname(directory)] })
+  await next.ready
+  expect(next.setupProblem).toMatchObject({ place: 'deployment', code: 'protectedInTemporary', values: { directory, temporary: dirname(directory) } })
 })
 
 it('fans a person\'s later thread message out to the live worker as context and tells the orchestrator, without an Eval', async () => {
@@ -840,6 +894,27 @@ it('waits for setup without the agent\'s GitHub CLI: the panel works, and nothin
   await vi.waitFor(() => expect(restarts).toHaveBeenCalledTimes(2))
 })
 
+it('runs with a warning when the agent account may bypass the review rules of the default branch, shown on the overview, the Source and the state', async () => {
+  answers[`${AGENT()} api repos/acme/widgets/rulesets/1`] = '{"current_user_can_bypass":"always"}\n'
+  const next = await restart()
+  await next.ready
+  expect(next.configured()).toBe(true)
+  const warning = { place: 'github', code: 'mergeBypass', values: { account: 'agent-bot', branch: 'master', repository: 'acme/widgets' },
+    detail: expect.stringContaining('@agent-bot may bypass the review rules of master') }
+  expect(next.setupWarnings).toEqual([warning])
+  expect(next.health.runtime).toMatchObject({ state: 'ready' })
+  // Warnings follow a setup problem, of which there is none; no Source kind is registered after this restart.
+  expect(overviewOf(next).problems).toEqual([{ kind: 'setup-warning', ...warning }, { kind: 'no-source' }])
+  expect(((await api('GET', 'overview')).body as { problems: unknown[] }).problems).toEqual([{ kind: 'setup-warning', ...warning }, { kind: 'no-source' }])
+  expect((await api('GET', 'state')).body).toMatchObject({ setup: { problem: null, warnings: [warning] } })
+  const sources = (await api('GET', 'sources')).body as unknown as { id: string; warnings?: unknown[] }[]
+  expect(sources.find(source => source.id === 'github')?.warnings).toEqual([warning])
+  expect(sources.find(source => source.id === 'feishu')).not.toHaveProperty('warnings')
+  // Checking again is allowed while a warning stands, so a fix made on GitHub shows without another change.
+  next.checkSetup()
+  await vi.waitFor(() => expect(restarts).toHaveBeenCalledTimes(1))
+})
+
 it('reports each setup problem where the operator fixes it, and checks the agent CLI the way worker shells run it', async () => {
   const needs = async (place: string, code: string, values: Record<string, string>, accounts: Accounts = {}) => {
     const next = await restart({}, accounts)
@@ -1064,15 +1139,17 @@ it('passes team text with template braces to every Session literally, without re
   }
 })
 
-it('leaves auto-merge to the delivery requirements, with the agent\'s own gh and the line threshold', async () => {
+it('leaves auto-merge to the merge tool the delivery requirements name, whose conditions are settings rather than prompt text', async () => {
   const { ticket } = await acceptedTicket()
   expect(runtime.ticketEnvironment(ticket).map(variable => variable.key)).not.toContain('DSH_SUPERAGENT_GITHUB_MERGE_ACCOUNT')
   expect(ticket.mandate).not.toHaveProperty('autoMergeLineLimit')
   const delivery = runtime.prompts.current().config.delivery
-  expect(delivery).toContain('it changes fewer than 200 lines (additions plus deletions);')
-  // Auto-merge is never enabled as the agent account; only a merge CLI the section names enables it.
-  expect(delivery).toContain('Never enable auto-merge as the agent account')
-  expect(delivery).toContain('<merge CLI> pr merge <number> --auto --merge --match-head-commit <sha>')
+  expect(delivery).not.toContain('200 lines')
+  // Auto-merge is never enabled with the agent's gh; the host enables it as the merge account once its checks pass.
+  expect(delivery).toContain('A worker never merges a PR or enables auto-merge with gh')
+  expect(delivery).toContain('orchestrator_merge_request')
+  expect(delivery).not.toContain('<merge CLI>')
+  expect(runtime.store.settings().executor.merge).toEqual({ cli: '', method: 'squash', maxLines: 200, requireApprovals: 1 })
   expect(runtime.prompts.preview(runtime.prompts.current().config).worker).not.toContain('gh-merge')
 })
 
@@ -1302,7 +1379,7 @@ it('refuses a settings save with an unknown model or a Source kind that is not i
   const request = async (method: string, path: string, body?: unknown) => {
     let status = 0, text = ''
     const chunks = body === undefined ? [] : [Buffer.from(JSON.stringify(body))]
-    const req = { method, url: `/orchestrator/api/${path}`, headers: { host: '127.0.0.1:3082', 'x-orchestrator-request': '1' }, async *[Symbol.asyncIterator]() { yield* chunks } }
+    const req = { method, url: `/orchestrator/api/${path}`, headers: PANEL_HEADERS, async *[Symbol.asyncIterator]() { yield* chunks } }
     await http(req, { writeHead: (code: number) => { status = code }, end: (data: string) => { text = data } })
     return { status, body: JSON.parse(text) as Record<string, unknown> }
   }
@@ -1384,7 +1461,7 @@ it('applies a changed prompt size limit to the next save and request without a r
   const put = async (config: unknown) => {
     let status = 0, text = ''
     const chunks = [Buffer.from(JSON.stringify({ config, baseRevision: next.prompts.current().revision }))]
-    const req = { method: 'PUT', url: '/orchestrator/api/prompts', headers: { host: '127.0.0.1:3082', 'x-orchestrator-request': '1' }, async *[Symbol.asyncIterator]() { yield* chunks } }
+    const req = { method: 'PUT', url: '/orchestrator/api/prompts', headers: PANEL_HEADERS, async *[Symbol.asyncIterator]() { yield* chunks } }
     await http(req, { writeHead: (code: number) => { status = code }, end: (data: string) => { text = data } })
     return { status, body: JSON.parse(text) as Record<string, unknown> }
   }
@@ -1793,4 +1870,30 @@ it('keeps the Policy the main Session judges by in its prompt, after admission a
   await runtime.settings.save('policy', { ...saved.policy, rules: rules.map(rule => ({ ...rule, enabled: false })) }, runtime.store.blockRevision('policy'), 'panel')
   expect(policy()).toContain('No rule is enabled: a proactive candidate can only be ignored.')
   expect(policy()).toContain('The accept mode and the rules decide proactive candidates only')
+})
+
+it('shows the main Session\'s Policy proposal on the overview and applies it only when a person accepts it through the panel API', async () => {
+  const policy = runtime.store.settings().policy
+  const rules = policy.rules.map(rule => ({ ...rule, enabled: false }))
+  const propose = () => runTool(runtime.masterId, 'orchestrator_policy_propose',
+    { block: 'policy', value: { ...policy, rules }, revision: runtime.store.blockRevision('policy'), reason: 'Alice asked to pause the rules' })
+  expect(await propose()).toMatchObject({ proposed: true })
+  expect(runtime.store.settings().policy).toEqual(policy)
+  expect(overviewOf(runtime).problems).toContainEqual({ kind: 'policy-proposal', proposal: { block: 'policy', changed: rules.map((_, index) => `policy.rules.${index}.enabled`),
+    reason: 'Alice asked to pause the rules', at: expect.any(String), stale: false } })
+  expect(await api('GET', 'policy-proposal')).toMatchObject({ status: 200, body: { proposal: { block: 'policy', revision: runtime.store.blockRevision('policy') } } })
+  expect(await api('POST', 'policy-proposal/accept')).toMatchObject({ status: 200, body: { saved: true, policy_changed: true } })
+  expect(runtime.store.settings().policy.rules.every(rule => !rule.enabled)).toBe(true)
+  expect(runtime.store.settingsHistory(1)[0]).toMatchObject({ source: 'panel', block: 'policy' })
+  expect(overviewOf(runtime).problems.some(problem => problem.kind === 'policy-proposal')).toBe(false)
+  expect(await api('POST', 'policy-proposal/accept')).toMatchObject({ status: 404, body: { code: 'noPolicyProposal' } })
+  // A proposal made against a revision the panel saved over since is refused with the stale-settings status, and a person dismisses it.
+  await runTool(runtime.masterId, 'orchestrator_policy_propose',
+    { block: 'policy', value: policy, revision: runtime.store.blockRevision('policy'), reason: 'Alice asked to turn them on again' })
+  await runtime.settings.save('policy', { ...runtime.store.settings().policy, rules: [] }, runtime.store.blockRevision('policy'), 'panel')
+  expect(overviewOf(runtime).problems).toContainEqual(expect.objectContaining({ kind: 'policy-proposal', proposal: expect.objectContaining({ stale: true }) }))
+  expect(await api('POST', 'policy-proposal/accept')).toMatchObject({ status: 409 })
+  expect(runtime.store.settings().policy.rules).toEqual([])
+  expect(await api('POST', 'policy-proposal/dismiss')).toEqual({ status: 200, body: { dismissed: true } })
+  expect(await api('GET', 'policy-proposal')).toEqual({ status: 200, body: { proposal: null } })
 })

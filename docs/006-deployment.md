@@ -16,7 +16,26 @@ The bundle defines `dsh-superagent-worker` for Executors and `dsh-superagent-rou
 
 Opening a blank managed Session in the Web UI can select the profile's default preset. dsh-superagent restores its role-specific preset before the first turn.
 
-Both presets run with `danger-full-access` as the operator's OS user and read messages from subscribed Threads. Account wrappers choose the agent's credentials by default; they do not isolate the process. A worker can execute programs by path and read the operator's home directory. For isolation, use a dedicated OS account containing only the agent's credentials.
+The bundle also adds two permission presets to DeepSeek Harness's preset table, which DeepSeek Harness's file sandbox enforces on shell and file tools:
+
+| Preset | Session | Files it may write | Approval |
+| --- | --- | --- | --- |
+| `superagent-router` | Main Session | None | `never` |
+| `superagent-worker` | Executor Sessions and their subagents | Its Ticket directory, the temporary areas and the writable roots | `never` |
+
+With approval `never`, a write the sandbox denies fails at once and a request for a wider sandbox is rejected; nothing waits for a person. Workers therefore cannot rewrite `<stateDir>/orchestrator.sqlite`, the shims in `worker-bin`, `worker-gitconfig`, the profile or `$DSH_HOME`. The bundle's `permission` row replaces the profile's preset table and restates DeepSeek Harness's own presets; if a profile layer replaces it again, it must keep both presets, or setup stops with `The profile has no permission preset …`.
+
+The temporary areas are `/tmp` and the OS user's temporary directory, and every worker may write them. Keep the state directory, `$DSH_HOME` and the profile outside them; otherwise setup stops with `… lies in …, which the DeepSeek Harness sandbox lets every worker write`.
+
+The sandbox covers files only. Sessions still run as the operator's OS user, reach the network, and read the operator's home directory, and a worker can execute programs by path. Account wrappers choose the agent's credentials by default; they do not isolate the process. For isolation, use a dedicated OS account containing only the agent's credentials.
+
+#### Writable roots and the full-access fallback
+
+A git worktree keeps its objects and refs in the main clone's `.git`, outside the Ticket directory, so under the sandbox a worker cannot commit in one. Either give each Ticket a checkout whose git data lies inside its directory, as the prepare command under Settings does, or list the main clone's `.git` under **Writable roots** in the Execution settings, with any cache a toolchain writes outside the Ticket directory, such as a package manager's store.
+
+The sandbox must grant each writable root too. DeepSeek Harness 0.2.1 cannot grant extra roots, so on it setup stops with `The DeepSeek Harness sandbox does not grant the writable root …` while any is listed. On a DeepSeek Harness whose sandbox-policy row takes `additionalWritableRoots`, add the same paths there in the profile's `cordis.patch.yml`; that grant applies to every Session of the profile, and the main Session, read-only, still writes nothing. A root that contains or lies inside the state directory, `$DSH_HOME` or the profile directory stops setup, whether it is listed in the panel or granted in the profile.
+
+If a toolchain cannot run in the sandbox, set **Sandbox** to **Full access** in the Execution settings. Both Sessions then use DeepSeek Harness's `danger-full-access` preset: a worker, or anything that steers it through a Thread it reads, can rewrite the database, the shims, the agent's git configuration and the profile, and the main Session can write too. Use it only until the toolchain works under the sandbox. Changing the sandbox or the writable roots restarts dsh-superagent, so every managed Session takes its preset; only the panel can change them.
 
 ## Prerequisites
 
@@ -45,6 +64,11 @@ Both presets run with `danger-full-access` as the operator's OS user and read me
    ```
 
    Sign in as the agent account; the last command prints its login. dsh-superagent reads the login the same way.
+3. Protect the default branch on GitHub: in a branch protection rule or ruleset, require at least one approving review, dismiss stale approvals when new commits are pushed, and do not let the agent account bypass it. Setup checks this as the agent account and shows a warning otherwise; an account without admin rights may not read branch protection, and then the warning says it cannot verify.
+
+### Merge account (optional)
+
+For auto-merge, sign another account that may merge in to its own wrapper, such as `gh-merge` with its own `GH_CONFIG_DIR`, and set it as the merge CLI in the Execution settings. GitHub attributes a merge to the account that enabled auto-merge, so it must not be the agent account; the host refuses a merge CLI signed in to it. Without one, people merge every pull request.
 
 ### Feishu bot (optional)
 
@@ -108,6 +132,8 @@ scripts/dsh-superagent status
 
 `stop` and `restart` request graceful shutdown and wait up to five minutes for Executors. They never force-kill the process or touch other tmux sessions.
 
+`login` signs a script in to the Management API, below, and prints the path of the cookie jar it wrote.
+
 `status` prints process ids, health and setup problems. For a different profile or port, use `--profile` and `--url`, or set `DSH_SUPERAGENT_PROFILE` and `DSH_SUPERAGENT_URL`.
 
 `status`, `start` and `restart` exit with one of four codes:
@@ -150,31 +176,49 @@ Setup must succeed before polling or work starts. Overview lists missing require
 
    ```sh
    git -C /home/me/src/widgets fetch --no-tags "https://github.com/$DSH_SUPERAGENT_GITHUB_REPOSITORY.git" "${DSH_SUPERAGENT_GITHUB_PR_HEAD:-HEAD}:refs/dsh-superagent/$DSH_SUPERAGENT_TICKET" &&
-   git -C /home/me/src/widgets worktree add -b "agent/$DSH_SUPERAGENT_NAME" "$DSH_SUPERAGENT_DIR" "refs/dsh-superagent/$DSH_SUPERAGENT_TICKET"
+   git clone --shared --no-checkout /home/me/src/widgets "$DSH_SUPERAGENT_DIR" && cd "$DSH_SUPERAGENT_DIR" &&
+   git fetch --no-tags /home/me/src/widgets "refs/dsh-superagent/$DSH_SUPERAGENT_TICKET" &&
+   git checkout -b "agent/$DSH_SUPERAGENT_NAME" FETCH_HEAD &&
+   git remote set-url origin "https://github.com/$DSH_SUPERAGENT_GITHUB_REPOSITORY.git"
    ```
 
-   List personal CLIs, such as one signed in to your own account, as blocked commands.
-4. **Prompts.** Set the team sections: the GitHub disclosure line, review bots, the commit author and the auto-merge condition.
+   `--shared` borrows the local clone's objects and keeps the Ticket's own commits and refs in its directory, which the sandbox lets the worker write. The `refs/dsh-superagent/*` refs keep the borrowed objects alive: do not delete them, or prune the local clone, while a Ticket uses them. The prepare command itself runs unconfined, as the operator's command, so it can write the local clone. With the full-access sandbox, or with the clone's `.git` as a granted writable root, `git -C /home/me/src/widgets worktree add -b "agent/$DSH_SUPERAGENT_NAME" "$DSH_SUPERAGENT_DIR" "refs/dsh-superagent/$DSH_SUPERAGENT_TICKET"` in place of the last four lines also works.
+
+   List personal CLIs, such as one signed in to your own account, as blocked commands. **Sandbox** and **Writable roots** confine Executor Sessions; see Permissions and isolation above. Under **Merging**, set the merge CLI, the merge method, the line limit and the approvals auto-merge requires ([003 Execution](003-execution.md)); leave the CLI empty for people to merge.
+4. **Prompts.** Set the team sections: the GitHub disclosure line, review bots, the commit author and when to request a merge.
 
 ### Management API
 
 The panel uses a local HTTP API that agents can also call. `SETUP.md` uses it to save settings, and the service script reads `GET state`.
 
-Send requests to `http://127.0.0.1:<port>/orchestrator/api/` with `x-orchestrator-request: 1`. The host must be `127.0.0.1:<port>` or `localhost:<port>`. Missing headers or an `Origin` from another site receive 403.
+Send requests to `http://127.0.0.1:<port>/orchestrator/api/` with `x-orchestrator-request: 1`. The host must be `127.0.0.1:<port>` or `localhost:<port>`. Missing headers or an `Origin` from another site receive 403. These checks stop other websites; they do not say who is asking.
 
-API saves have the panel's permissions. They can change execution environment and setup account fields, unlike saves made through the main Session's tools.
+Every route but `GET state` also requires the DeepSeek Harness sign-in that its Web UI uses: the browser session cookie, which DeepSeek Harness's Connection verifies. Without it the answer is 401, before the request is read; a request Connection refuses at its own Host and Origin check is answered 403. Reads need it too, since settings, prompts and Source status show configuration and message previews. `GET state` stays open so that `scripts/dsh-superagent status` and the hourly check need no credentials. The panel runs in the signed-in DeepSeek Harness page and sends the cookie itself.
+
+A script or an agent signs in once with the launch token DeepSeek Harness prints at startup:
+
+```sh
+jar=$(scripts/dsh-superagent login)
+curl -s -b "$jar" -H 'x-orchestrator-request: 1' http://127.0.0.1:3082/orchestrator/api/settings
+```
+
+`login` reads the tokenized URL (`dsh web: http://127.0.0.1:<port>/?token=…`) from the newest startup log of the profile, or takes it from `--launch-url`, exchanges it on `GET /` for the cookie, and writes the cookie as a curl cookie jar, `.artifacts/control/profiles/<profile>/cookies.txt`, readable only by its owner. It prints the jar's path. The token changes with each process, but the cookie stays valid across restarts until it expires, 30 days by default (`cookieMaxAgeDays` of DeepSeek Harness's Connection), so sign in again only after it expires or after a 401. Use the same host name as the URL DeepSeek Harness printed, since the cookie belongs to that host and port. Treat the jar as a password.
+
+API saves have the panel's permissions. They can change the Policy, the accept mode, the execution environment and setup account fields, unlike saves made through the main Session's tools, which can only propose a Policy or accept-mode change for a person to accept. The sign-in keeps other local users and processes without the cookie out; it is not a boundary against the agent itself, whose shell runs as the operator's user and can read the same log and DeepSeek Harness credentials (see Permissions and isolation).
 
 Agents may rely on these routes and fields. The other routes in `src/app/api.ts` serve the panel and change with it.
 
 | Request | Answer |
 | --- | --- |
-| `GET state` | What every page reads: `setup`, with `problem` and `feishuProblem`, each `null` or a setup problem with `place`, `code`, `values` and `detail`, and `accounts` once setup resolved them; `health`, an entry per part, below, with `state` (`starting`, `ready`, `paused` or `error`), `detail` and `at`; `load`, the Executor Sessions `running`, the Tickets `queued` and `maxWorkers`; `paused`; and `masterId` |
+| `GET state` (no sign-in) | What every page reads: `setup`, with `problem` and `feishuProblem`, each `null` or a setup problem with `place`, `code`, `values` and `detail`, `warnings`, the setup warnings in the same shape, which leave dsh-superagent running, and `accounts` once setup resolved them; `health`, an entry per part, below, with `state` (`starting`, `ready`, `paused` or `error`), `detail` and `at`; `load`, the Executor Sessions `running`, the Tickets `queued` and `maxWorkers`; `paused`; and `masterId` |
 | `GET settings` | `blocks`: `policy`, `eval` and `executor`, each with its `value` and its `revision`; `sources`: the Source instances, each with `id`, `kind`, `installed`, its block's `value`, `{"enabled": …, "config": {…}}`, and `revision`, its kind's form, and its setup `problem` when it has one; `policyVersion`; and `environment`, the execution environment's `root` and `variables` |
-| `GET sources` | Each Source's status: `state` (`missing`, `off`, `error`, `setup`, `starting`, `paused` or `ready`), the `health` of its parts, its setup `problem`, the last day's `stats`, the Triggers it `filtered` in that day, and the messages it `dropped` in that day, newest drop first, each with its `channel`, `preview`, `ticket` (`id` and `title`) when it was for one, its `thread` when the store has it, and `dropped.at` and `dropped.reason`, `channelGone` or `channelIgnored` |
+| `GET sources` | Each Source's status: `state` (`missing`, `off`, `error`, `setup`, `starting`, `paused` or `ready`), the `health` of its parts, its setup `problem`, its setup `warnings` when it has any, the last day's `stats`, the Triggers it `filtered` in that day, and the messages it `dropped` in that day, newest drop first, each with its `channel`, `preview`, `ticket` (`id` and `title`) when it was for one, its `thread` when the store has it, and `dropped.at` and `dropped.reason`, `channelGone` or `channelIgnored` |
 | `PUT settings/<block>` with `{"value": …, "revision": n}` | Saves one block: `saved`, the block's new `revision`, `policy_changed` and `restarting`. `value` is the whole block, as `GET settings` holds it; a missing key takes its default |
 | `POST executor/pause` with `{"paused": true}` or `false` | Pauses or resumes processing: `paused` |
 | `POST setup/check` | Runs setup again by restarting dsh-superagent: `restarting: true`. Refused when setup has nothing to fix |
 | `POST policy-sync/<source id>` | Syncs that Source's allowed list now: `policy`, the Source's part as saved |
+| `GET policy-proposal` | The main Session's pending Policy proposal, or `null`: `proposal`, with its `block` (`policy` or `eval`), `value`, the `revision` it was made from, `reason`, the request it carries out, `changed`, the settings paths it changes, `at`, and `stale`, true once the block was saved since |
+| `POST policy-proposal/accept`, `POST policy-proposal/dismiss` | Accepts the proposal, saving it as `PUT settings/<block>` would against the revision it was made from (409 when stale, 404 when none waits), or discards it: `dismissed`, whether one was waiting |
 | `GET prompts`, `PUT prompts` with `{"config", "baseRevision"}` | Reads the prompt configuration: `current`, with its `revision` and `config`, `defaults`, `sections`, the team sections in the order Sessions read them, `skillName`, the pattern of a team skill's name, `builtin`, the names a team skill cannot take, and `skillPrefix`, which Sessions load a skill's name under. Or saves it: the new `revision` |
 | `POST tickets/<id>/retry`, `POST tickets/<id>/stop` | Retries or stops a Ticket, as the panel does |
 
@@ -202,26 +246,31 @@ The blocks:
 - `source:github`, `source:feishu`: `{"enabled": true, "config": {…}}`. GitHub's config has `repository` and `cli`, and the switches `observeIssues`, `observePulls`, `observeComments` and `observeCi`, off by default, which receive every new Issue, new pull request and comment in the repository and the default branch's CI; Feishu's has `cli`, `chats` as `[{"chatId": "oc_…", "name": "…", "listen": "mentions"}]` (or `"all"`), `directMessages`, and `otherChats` as `"none"` or `"mentions"`.
 - `policy`: `{"rules": […], "sources": {"github": {"allowed": [{"id": "<login>"}], "bots": [{"id": "dependabot[bot]"}]}, "feishu": {"allowed": [{"id": "ou_…", "name": "…"}], "syncChat": "oc_…", "admission": {"oc_…": {"unlistedAddressed": "explicit"}}}}}`. `bots` lists the bots whose messages may become inferred candidates. An `admission` row is keyed by chat id, `other` or `direct` for Feishu, and by `issues`, `pulls`, `comments` or `ci` for GitHub; an unset cell takes its default (see [002 Authorization](002-authorization.md)).
 - `eval`: `mode`, `timeoutSeconds` and `model`.
-- `executor`: `model`, `maxWorkers`, `directory`, `prepare` and `blockedCommands`. The processing pause is a setting of its own, `paused`, which `POST executor/pause` sets.
+- `executor`: `model`, `maxWorkers`, `directory`, `prepare`, `blockedCommands`, `sandbox` (`workspace`, the default, or `full`) and `writableRoots`, absolute paths, and `merge`, `{"cli": "", "method": "squash", "maxLines": 200, "requireApprovals": 1}`. The main Session's tools cannot change `directory`, `prepare`, `blockedCommands`, `sandbox`, `writableRoots` or `merge`. Saves that change `sandbox` or `writableRoots` are checked as setup checks them, and restart. A save that changes `merge.cli` first runs it, as setup probes CLIs, and refuses one that cannot read its account or is signed in to the agent account; merge settings take effect without a restart. The processing pause is a setting of its own, `paused`, which `POST executor/pause` sets.
 
 Changing a repository or CLI runs the corresponding setup check first. A failed check returns 400 with details in `setup`. A successful account change, or any save while setup is pending, returns `restarting: true`. The API is temporarily unavailable while the application restarts.
 
 ```sh
 api=http://127.0.0.1:3082/orchestrator/api
-rev=$(curl -s -H 'x-orchestrator-request: 1' $api/settings | jq '.sources[] | select(.id == "github") | .revision')
-curl -s -X PUT -H 'x-orchestrator-request: 1' -H 'content-type: application/json' $api/settings/source:github \
+jar=$(scripts/dsh-superagent login)
+rev=$(curl -s -b "$jar" -H 'x-orchestrator-request: 1' $api/settings | jq '.sources[] | select(.id == "github") | .revision')
+curl -s -X PUT -b "$jar" -H 'x-orchestrator-request: 1' -H 'content-type: application/json' $api/settings/source:github \
   -d "{\"value\": {\"enabled\": true, \"config\": {\"repository\": \"acme/widgets\", \"cli\": \"$HOME/.local/bin/gh-agent\"}}, \"revision\": $rev}"
 ```
 
 ## Setup checks
 
-Setup uses the DeepSeek Harness subprocess service, as worker shells do. It removes environment variables whose names contain KEY, PASSWORD, SECRET or TOKEN.
+Setup uses the DeepSeek Harness subprocess service, as worker shells do. It removes environment variables whose names contain KEY, PASSWORD, SECRET or TOKEN. Neither setup's probes nor the prepare command run inside the file sandbox.
+
+Setup first checks how Sessions are confined: the profile must hold the permission presets the sandbox setting uses, and no writable root may contain or lie inside the state directory, `$DSH_HOME` or the profile directory, or, under the workspace sandbox, lack the sandbox's grant.
 
 Setup verifies the GitHub repository and the agent's push access, writes the worker environment, and checks that git uses only the agent credentials for github.com. A Feishu setup failure disables only the Feishu Source.
 
+Setup also reads, as the agent account, the rulesets of the default branch (`repos/<repository>/rules/branches/<branch>`, and `rulesets/<id>` for whether the account can bypass one) and its branch protection (`branches/<branch>/protection`). When no rule requires at least one approving review that a push dismisses, or the agent account can bypass the rule that does, it records a setup warning. When it cannot read them, such as a 403 or 404 for an account without admin rights, the warning says it cannot verify. A warning never stops dsh-superagent: Overview and the GitHub Source show it with its fix, and **Check again** runs setup once the repository settings changed.
+
 The process environment that setup writes:
 
-- **Command shims** in `<stateDir>/worker-bin`, first on `PATH`: `gh` runs the agent's CLI; `lark-cli` runs the bot's CLI; blocked commands fail. A shim removes its own directory from `PATH` before it runs its target.
+- **Command shims** in `<stateDir>/worker-bin`, first on `PATH`: `gh` runs the agent's CLI, except that it refuses `gh pr merge` (but `--disable-auto`) and a `gh api` call naming the REST merge endpoint or the `mergePullRequest` or `enablePullRequestAutoMerge` mutations, pointing to `orchestrator_merge_request`; `lark-cli` runs the bot's CLI; blocked commands fail. A shim removes its own directory from `PATH` before it runs its target. Shims are guardrails on the default path, not a security boundary: a program run by its absolute path, an alias or a query read from a file passes them. Branch protection on GitHub is what stops an unreviewed merge.
 - **git configuration** in `<stateDir>/worker-gitconfig`: replaces the operator's global and system git configuration. It selects the agent CLI as the github.com credential helper, rewrites GitHub SSH addresses to HTTPS and defines Git LFS filters. Personal git settings such as an HTTP proxy do not apply. No commit identity is set here, git never prompts for credentials, and `GH_TOKEN` and `GITHUB_TOKEN` are removed.
 
 A file in `worker-bin` or `worker-gitconfig` that dsh-superagent did not write stops setup. A Ticket directory inside a git repository whose own configuration adds credentials fails the Ticket.
@@ -237,13 +286,17 @@ From an allowed GitHub account, open an Issue or post a comment containing `@<ag
 3. Run `git pull && pnpm install && pnpm build`.
 4. Run `scripts/dsh-superagent restart` and inspect its status.
 
-A restart ends running Assignments and starts replacements with recovery notes. Team text and overridden prompt parts are retained; parts without overrides follow the new defaults. Review parts marked **Default updated** after upgrading.
+A restart ends running Assignments and starts replacements with recovery notes. Team text and overridden prompt parts are retained; parts without overrides follow the new defaults. Review parts marked **Default updated** after upgrading. A team that saved its Delivery requirements before `orchestrator_merge_request` existed keeps its own merge paragraph: replace it with the default's, and move the merge CLI and the line threshold into the Execution settings.
 
 A database migrated by a newer version cannot be opened by an older one. Rollback therefore requires the pre-upgrade backup. After upgrading DeepSeek Harness itself, restart the running instance so the panel loads matching artifacts.
 
 ### Agent presets
 
 The worker and router presets move shell commands to the background after 5 seconds. A Session cannot load without its preset. Keep the `dsh-superagent-worker` and `dsh-superagent-router` rows in `cordis.patch.yml` while their Sessions are in use; otherwise resume fails with `agent-preset/not-found`.
+
+### Permission presets
+
+Versions before the file sandbox ran every managed Session with `danger-full-access`. After the upgrade, the main Session and each Executor Session take their sandboxed preset when dsh-superagent next ensures or loads them, at the restart or at their next launch. A worker whose checkout is a git worktree can then no longer commit; change the prepare command for new Tickets, and for running ones add the local clone's `.git` as a writable root where the sandbox can grant it, or set the sandbox to Full access until they end.
 
 ## Troubleshooting
 
@@ -259,14 +312,25 @@ Setup problems appear on the overview with a link to the fix, in the panel's lan
 | A Ticket fails with `The prepare command failed: …` | The output names the cause, such as a wrong clone path; fix the command, then retry the Ticket |
 | `git does not read the github.com credential configuration dsh-superagent writes` | Install git 2.32 or later |
 | A Ticket fails with `The git configuration of the repository in … sets …` | Remove the named credential or `http.*.extraheader` settings from the clone's `.git/config` |
+| `The profile has no permission preset …` | A profile layer replaced the bundle's `permission` row; keep `superagent-router` and `superagent-worker` in it, as in the bundle's `cordis.patch.yml` |
+| `… lies in …, which the DeepSeek Harness sandbox lets every worker write` | Move the named directory, such as `stateDir` in the profile's `cordis.patch.yml`, out of `/tmp` and the OS temporary directory |
+| `The writable root … would let workers write …` | Remove that root from the Execution settings, or from the profile's sandbox-policy row, or name a narrower directory |
+| `The DeepSeek Harness sandbox does not grant the writable root …` | Remove it, or grant it in the profile's sandbox-policy row where DeepSeek Harness supports `additionalWritableRoots`; or set the sandbox to Full access, with the risk described under Permissions and isolation |
+| A worker's command or file write fails with `[sandbox: file access denied under workspace-write mode]` | It wrote outside its Ticket directory. Point the tool's cache into the Ticket directory or a temporary area, add the directory as a writable root where the sandbox can grant it, or set the sandbox to Full access |
 | `… was not written by dsh-superagent` | Move the named file out of `<stateDir>/worker-bin` or `<stateDir>/worker-gitconfig`, or choose another `stateDir` |
 | `The bot lark-cli allows user identities` | Point the Feishu Source at a bot-only configuration, as in Feishu bot above |
 | `The bot lark-cli does not work.` or `The bot identity of app … is …` | Check the configuration's app id and secret |
 | `The Feishu bot is not a member of the chat.` | Add the bot to the chat in the chat's settings; the next attempt succeeds |
+| `… does not require an approving review that a new push dismisses …` (warning) | In a branch protection rule or ruleset of the default branch, require at least one approving review and dismiss stale approvals on a push, then choose **Check again** |
+| `@… may bypass the review rules of …` (warning) | Remove the agent account from the bypass list, or turn on **Do not allow bypassing the above settings** (enforce for administrators), then choose **Check again** |
+| `@… cannot read the review rules of …` (warning) | The agent account may not read branch protection, usually without admin rights; check the rules yourself in the repository settings. The warning stays while the account cannot read them |
+| `orchestrator_merge_request` answers `merge_account` | The merge CLI cannot read its account, or is signed in to the agent account; sign it in to another account |
 | `status` exits 2 | A part reports an error, which a restart does not fix: `errors` names each part, as listed under Management API, with its detail; each part clears its own entry once it works again |
 | `status` exits 3 | Setup waits: `setup` says what is missing, and the overview links to the setting that fixes it |
 | `status` exits 1 | The service does not run, runs twice, does not answer, or its runtime reports an error; the output and the newest log say which |
 | `… timed out after 90 s`, `… was stopped by …`, `… exited with code …` or `… could not run: …` | A CLI failed without printing why; run the named program by hand as the operator's user to see its own message |
+| `DeepSeek Harness sign-in required` (401) | The request carries no valid session cookie: run `scripts/dsh-superagent login` and send its jar with `curl -b`. In the panel, reload the DeepSeek Harness page or open the URL it printed at startup |
+| `login` says `DSH refused the launch token` | The newest log belongs to an earlier process, or the service was started outside the script: pass the URL the running DeepSeek Harness printed with `--launch-url` |
 | The panel says dsh-superagent is not answering | It is restarting, or did not start because of its configuration; the DeepSeek Harness log names the cause |
 | `dsh-superagent configuration has keys it does not use` (log) | Remove the named keys; the message says where each value lives now |
 | The log says the plugin is incompatible with the running dsh | Install a DeepSeek Harness version within the `engines.dsh` range |

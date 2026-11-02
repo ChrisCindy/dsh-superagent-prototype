@@ -20,8 +20,27 @@ import { KV } from '../kv.ts'
  */
 export class SettingsConflict extends Error {}
 const now = (): string => new Date().toISOString()
-/** Executor settings that control shell execution paths, prepare commands, and command shims. */
-const environment = ({ executor }: SettingsValue) => JSON.stringify([executor.directory, executor.prepare, executor.blockedCommands])
+/** Executor settings that control shell execution paths, prepare commands, command shims, how managed Sessions are confined, and who merges and when. */
+const environment = ({ executor }: SettingsValue) => JSON.stringify([executor.directory, executor.prepare, executor.blockedCommands,
+  executor.sandbox, executor.writableRoots, executor.merge])
+/** Executor settings that decide the permission preset of every managed Session, which a restart applies to them all. */
+const confinement = ({ executor }: SettingsValue) => JSON.stringify([executor.sandbox, executor.writableRoots])
+
+/** Settings that decide who may originate work and what is accepted: the whole Policy and the accept mode. */
+const authorization = (settings: SettingsValue) => [settings.policy, settings.eval.mode]
+/**
+ * Refuses a main-Session tool save that changes authorization, compared by path so that a key a Source's schema reorders changes
+ * nothing; a sync of a Source's list (`'sync'`) and the panel may.
+ */
+const panelOnlyPolicy = (current: SettingsValue, candidate: SettingsValue, origin: SettingsOrigin) => {
+  if (origin === 'tool' && changedPaths(authorization(current), authorization(candidate)).length) throw new UserError('panelOnlyPolicy')
+}
+
+/**
+ * A change to the `policy` or `eval` block that the main Session proposed through `orchestrator_policy_propose`, waiting for a
+ * person to accept (applied as a panel save against `revision`) or dismiss it; `changed` lists the settings paths it changes.
+ */
+export interface PolicyProposal { block: 'policy' | 'eval'; value: unknown; revision: number; reason: string; changed: string[]; at: string }
 
 /** Schema parser, settings merger, and non-panel origin guard for one settings block kind. */
 interface Block {
@@ -36,12 +55,16 @@ const BLOCKS: Record<'policy' | 'eval' | 'executor' | 'source', Block> = {
       return { ...policy, sources: sources.validatePolicy(policy.sources) }
     },
     merge: (settings, value) => ({ ...settings, policy: value as SettingsValue['policy'] }),
+    // The main Session reads untrusted text, so its Policy changes are proposals a person accepts (`Settings.propose`).
+    guard: panelOnlyPolicy,
   },
-  eval: { parse: value => EvalConfigSchema.parse(value), merge: (settings, value) => ({ ...settings, eval: value as SettingsValue['eval'] }) },
+  // The eval time limit and model stay open to tools; the accept mode is part of authorization.
+  eval: { parse: value => EvalConfigSchema.parse(value), merge: (settings, value) => ({ ...settings, eval: value as SettingsValue['eval'] }),
+    guard: panelOnlyPolicy },
   executor: {
     parse: value => ExecutorConfigSchema.parse(value),
     merge: (settings, value) => ({ ...settings, executor: value as SettingsValue['executor'] }),
-    // Only the management panel may modify shell execution paths or commands.
+    // Only the management panel may modify shell execution paths or commands, or the merge account and its conditions.
     guard: (current, candidate, origin) => { if (origin !== 'panel' && environment(current) !== environment(candidate)) throw new UserError('panelOnlyEnvironment') },
   },
   source: {
@@ -54,7 +77,7 @@ const BLOCKS: Record<'policy' | 'eval' | 'executor' | 'source', Block> = {
 
 /** Host dependencies used by `Settings`. */
 export interface SettingsHost {
-  readonly store: Pick<Store, 'settings' | 'saveSettings' | 'blockRevision' | 'atomic' | 'tickets' | 'get'>
+  readonly store: Pick<Store, 'settings' | 'saveSettings' | 'blockRevision' | 'atomic' | 'tickets' | 'get' | 'set' | 'delete'>
   readonly sources: SourceRegistry
   /** Notified when a settings save changes the policy version. */
   readonly engine: EngineForSettings
@@ -68,7 +91,7 @@ export interface SettingsHost {
   /** Source host passed to source kinds' policy syncs and label refreshes. */
   readonly sourceHost: SourceHost
   /** Setup state, account/command checks, and restart trigger when setup-read fields change. */
-  readonly setup: Pick<Setup, 'configured' | 'checkAccounts' | 'blockCommands' | 'restart'>
+  readonly setup: Pick<Setup, 'configured' | 'checkAccounts' | 'checkConfinement' | 'checkMergeCli' | 'blockCommands' | 'restart'>
   /** Triggers an immediate pass so work newly allowed by a settings save runs right away. */
   requestPass(): void
 }
@@ -138,9 +161,10 @@ export class Settings {
   }
   /**
    * Validates and saves one settings block against its `revision`; a no-op save records no new revision, a changed policy
-   * version notifies affected open tickets, and changing a setup-read field (`SETUP_FIELDS`, such as an account CLI) or any
+   * version notifies affected open tickets, and changing a setup-read field (`SETUP_FIELDS`, such as an account CLI), the Executor's
+   * `sandbox` or `writableRoots` (checked first, as setup checks them), or any
    * change saved while waiting for setup (`!this.host.setup.configured()`) restarts `dsh-superagent` so setup runs again.
-   * @param origin - Caller origin; restricts execution-environment and account-CLI changes to `'panel'` (a guardrail against prompt-injected tool calls, not an OS security boundary, since agents run shell commands; `origin` has no default so no caller receives panel privileges implicitly).
+   * @param origin - Caller origin; refuses Policy and accept-mode changes from `'tool'`, and restricts execution-environment and account-CLI changes to `'panel'` (a guardrail against prompt-injected tool calls, not an OS security boundary, since agents run shell commands; `origin` has no default so no caller receives panel privileges implicitly).
    * @returns Save outcome with the block's current `revision`, whether `policy_changed`, whether `restarting`, and `context_delivery` status (`'injected'` or `'pending'`).
    * @throws SettingsConflict when `block`'s revision changed before or during validation checks.
    * @throws UserError | z.ZodError when `block` is unknown, the source is not installed, `value` is invalid (such as an `executor` block carrying `paused`, which only `pause` sets), a non-panel `origin` changes panel-only fields, or a role-model or account check fails.
@@ -165,6 +189,9 @@ export class Settings {
     }
     rules.guard?.(current, candidate, origin)
     if (setupChanged(current, candidate)) await this.host.setup.checkAccounts(block, candidate)
+    if (confinement(current) !== confinement(candidate)) this.host.setup.checkConfinement(candidate)
+    // A changed merge CLI is checked before it is saved; it takes effect at the next merge request, without a restart.
+    if (candidate.executor.merge.cli !== current.executor.merge.cli) await this.host.setup.checkMergeCli(candidate.executor.merge)
     if (stale()) throw new SettingsConflict('Settings changed during the checks. Reload before saving.')
     // Re-read current settings after async checks in case unrelated blocks were saved concurrently.
     const old = store.settings()
@@ -173,7 +200,8 @@ export class Settings {
       const delivery = await sessions.delivery(`settings:${block}`)
       return { saved: true, revision: store.blockRevision(block), policy_changed: false, restarting: false, context_delivery: delivery }
     }
-    const restarting = setupChanged(old, settings) || !this.host.setup.configured()
+    // A changed sandbox or writable root restarts too, so setup checks it and every managed Session takes its new preset.
+    const restarting = setupChanged(old, settings) || confinement(old) !== confinement(settings) || !this.host.setup.configured()
     const before = policyVersion(old), after = policyVersion(settings)
     const scope = (version: SettingsValue) => ({
       scope: (input: { source: string; meta: Record<string, unknown> }) => this.host.sources.scope(input, version) })
@@ -193,6 +221,49 @@ export class Settings {
     if (restarting) this.host.setup.restart()
     else this.host.requestPass()
     return { saved: true, revision: store.blockRevision(block), policy_changed: before !== after, restarting, context_delivery: delivery }
+  }
+  /**
+   * Records the main Session's change to the `policy` or `eval` block as the one pending proposal, replacing an earlier one;
+   * nothing takes effect until a person accepts it on the panel (`acceptProposal`).
+   * @param reason - The person's request the proposal carries out, shown with it on the panel.
+   * @returns Whether a proposal was recorded (`proposed`, false when the value changes nothing) and the settings paths it changes.
+   * @throws SettingsConflict when `revision` is stale; UserError | z.ZodError when `value` is invalid.
+   */
+  propose(block: PolicyProposal['block'], value: unknown, revision: number, reason: string): { proposed: boolean; changed: string[] } {
+    const { store, sources } = this.host
+    if (revision !== store.blockRevision(block)) throw new SettingsConflict('Settings changed. Reload before proposing.')
+    const rules = BLOCKS[block], current = store.settings()
+    const parsed = rules.parse(value, sources, block)
+    const changed = changedPaths(current, SettingsSchema.parse(rules.merge(current, parsed, block)))
+    if (!changed.length) return { proposed: false, changed }
+    store.set(KV.settings.proposal, { block, value: parsed, revision, reason, changed, at: now() })
+    return { proposed: true, changed }
+  }
+  /** Returns the pending Policy proposal, `stale` when its block was saved since it was made (so accepting it is refused), or null. */
+  proposal(): (PolicyProposal & { stale: boolean }) | null {
+    const { store } = this.host
+    const proposal = store.get(KV.settings.proposal)
+    return proposal ? { ...proposal, stale: proposal.revision !== store.blockRevision(proposal.block) } : null
+  }
+  /**
+   * Applies the pending Policy proposal as a panel save against the revision it was made from, then removes it.
+   * @throws UserError (`noPolicyProposal`) when none is waiting; SettingsConflict when its block changed since, keeping the proposal.
+   */
+  async acceptProposal() {
+    const { store } = this.host
+    const proposal = store.get(KV.settings.proposal)
+    if (!proposal) throw new UserError('noPolicyProposal')
+    const saved = await this.save(proposal.block, proposal.value, proposal.revision, 'panel')
+    // A newer proposal made during the save's checks stays for a person to judge.
+    if (JSON.stringify(store.get(KV.settings.proposal)) === JSON.stringify(proposal)) store.delete(KV.settings.proposal)
+    return saved
+  }
+  /** Removes the pending Policy proposal without applying it. */
+  dismissProposal(): { dismissed: boolean } {
+    const { store } = this.host
+    const dismissed = store.get(KV.settings.proposal) !== undefined
+    store.delete(KV.settings.proposal)
+    return { dismissed }
   }
   /**
    * Pauses or resumes processing (new evaluations, worker dispatch, and channel delivery, while Sources continue recording

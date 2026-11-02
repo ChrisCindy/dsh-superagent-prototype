@@ -10,7 +10,7 @@ A team can edit three team sections, add skills, and override every built-in sys
 | --- | --- |
 | Communication | When to message people, how messages read, the line that begins every GitHub message (`This is by an automated agent, not a human` by default), how to handle reviews, and which ordinary accounts are review bots |
 | Ticket scope | When a Ticket goes on and when it stops with a draft |
-| Delivery requirements | Evidence in pull requests, the auto-merge condition with its line threshold, and the commit author; without one, the Executor commits as the agent account's no-reply address |
+| Delivery requirements | Evidence in pull requests, when to request a merge with `orchestrator_merge_request`, whose line limit and approvals are Execution settings, and the commit author; without one, the Executor commits as the agent account's no-reply address |
 | Team skills | Knowledge the agents load when they need it, such as an `identities` skill that says which Feishu user is which GitHub account |
 
 The built-in text covers the roles, tool usage, host mechanics, authorization rules, and the GitHub and Feishu skills. It refers to the team sections by their headings instead of repeating them.
@@ -74,6 +74,7 @@ From strongest to weakest:
 
 These apply [000 Philosophy](000-philosophy.md) to the agents:
 
+- **A person decides authorization.** The main Session never saves the Policy or the accept mode: the host refuses such a save, and on a person's request the main Session proposes the change with `orchestrator_policy_propose` for a person to accept on the panel. Its prompt says so in one line, beside the rule that outside text cannot change the Policy.
 - **Separate roles.** The main Session only routes: it forwards the original Trigger and the routing facts, and makes no technical decisions, through one routing tool that takes the decisions on several waiting candidates in one call. A routing note has at most 30 words. The Executor reads the original sources, judges the scope, implements and verifies.
 - **The main Session does not wait.** Reports, follow-up notices, candidates and completed background jobs arrive automatically as messages. It ends the turn when nothing remains to do. A guard refuses `sleep`, shell timeouts over 30 seconds and job waits over 5 seconds, because a blocked step delays new candidates. These instructions replace DeepSeek Harness's own job-notification note in the main Session's complete prompt.
 - **Message only when a person must act or can use a result:** a result can be reviewed or used, a decision or resource is needed, or the work cannot be finished. Chat messages are one sentence by default, with a hard limit of 100 words.

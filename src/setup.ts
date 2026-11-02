@@ -1,11 +1,15 @@
 /** Structured startup and configuration errors with the settings location where the operator can fix them. */
 import { fill } from './infra/text.ts'
 
-export type SetupPlace = 'deployment' | 'github' | 'feishu'
+export type SetupPlace = 'deployment' | 'execution' | 'github' | 'feishu'
 export const SETUP_PROBLEMS = {
   foreignFile: ['deployment', '{file} was not written by dsh-superagent; move it, or choose another state directory.'],
   gitTooOld: ['deployment', 'git does not read the github.com credential configuration dsh-superagent writes; dsh-superagent needs git 2.32 or later.'],
   environmentFailed: ['deployment', 'Preparing the agent environment failed.'],
+  permissionPresetMissing: ['deployment', 'The profile has no permission preset {preset} with sandbox {sandbox} and approval {approval}; keep the permission row of dsh-superagent\'s cordis.patch.yml, or restore the preset in the profile\'s cordis.patch.yml.'],
+  protectedInTemporary: ['deployment', '{directory} lies in {temporary}, which the DeepSeek Harness sandbox lets every worker write; move it out of the temporary areas, as docs/006 describes.'],
+  writableRootProtected: ['execution', 'The writable root {root} would let workers write {protected}; remove it, or name a directory that neither contains nor lies inside it.'],
+  writableRootUngranted: ['execution', 'The DeepSeek Harness sandbox does not grant the writable root {root}; remove it, add it to the additionalWritableRoots of the profile\'s sandbox-policy row where DeepSeek Harness supports that, or set the sandbox to full.'],
   repositoryUnset: ['github', 'The GitHub Source names no repository.'],
   agentCliUnset: ['github', 'The agent GitHub CLI is not set.'],
   agentCliMissing: ['github', 'The agent GitHub CLI was not found.'],
@@ -36,4 +40,20 @@ export class SetupError extends Error {
     this.place = place
   }
   get problem(): SetupProblem { return { place: this.place, code: this.code, values: this.values, detail: this.message } }
+}
+
+/**
+ * Setup findings that leave dsh-superagent running: the Overview and the Source page show each with its fix. A warning names
+ * a GitHub rule that should back what the prompts ask of the agent, such as an approval before a merge.
+ */
+export const SETUP_WARNINGS = {
+  mergeUnverified: ['github', '@{account} cannot read the review rules of {branch}, so dsh-superagent cannot check that GitHub requires an approval before a merge; check in the repository settings that {branch} requires an approving review and dismisses stale approvals when new commits are pushed.'],
+  mergeUnprotected: ['github', '{branch} does not require an approving review that a new push dismisses, so only the prompts keep unreviewed commits from merging; in a branch protection rule or ruleset of {branch}, require at least one approving review and dismiss stale approvals when new commits are pushed.'],
+  mergeBypass: ['github', '@{account} may bypass the review rules of {branch}, so the agent could merge without an approval; remove it from the bypass list, or turn on Do not allow bypassing the above settings.'],
+} as const satisfies Record<string, readonly [SetupPlace, string]>
+export type SetupWarningCode = keyof typeof SETUP_WARNINGS
+export interface SetupWarning { place: SetupPlace; code: SetupWarningCode; values: Record<string, string>; detail: string }
+export function setupWarning(code: SetupWarningCode, values: Record<string, string> = {}): SetupWarning {
+  const [place, text] = SETUP_WARNINGS[code]
+  return { place, code, values, detail: fill(text, values) }
 }

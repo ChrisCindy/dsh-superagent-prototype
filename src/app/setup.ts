@@ -1,10 +1,12 @@
 /** Probes repository and account CLIs, configures the worker execution environment and command shims, and tracks setup readiness. */
 import type { Context } from '@deepseek-ai/cordis'
 import { UserError } from '../core/index.ts'
-import { SETUP_FIELDS, resolveDeployment, resolveFeishuBot, workerProbe, type Deployment, type Machine } from '../deployment.ts'
+import { SETUP_FIELDS, checkMerging, executable, resolveDeployment, resolveFeishuBot, workerProbe, type Deployment, type Machine } from '../deployment.ts'
 import { agentVariables, applyEnvironment, verifyEnvironment, withoutDirectory, workerBin, writeEnvironment } from '../infra/environment.ts'
-import type { Settings, SettingsBlock } from '../policy.ts'
-import { SetupError, type SetupProblem } from '../setup.ts'
+import { sameName } from '../infra/text.ts'
+import type { MergeConfig, Settings, SettingsBlock } from '../policy.ts'
+import { SetupError, type SetupProblem, type SetupWarning } from '../setup.ts'
+import { checkPresets, checkTemporaryAreas, checkWritableRoots, protectedDirectories } from './permissions.ts'
 
 export interface SetupHost {
   readonly context: Context
@@ -25,6 +27,8 @@ export class Setup {
   private resolved?: Deployment
   problem?: SetupProblem
   feishuProblem?: SetupProblem
+  /** Findings that leave dsh-superagent running, such as a default branch whose merges GitHub does not gate on a review. */
+  warnings: SetupWarning[] = []
   /** PATH with the worker shim directory removed so the host's own CLI calls invoke the real binaries. */
   private readonly path: string
   /** Environment variables pointing agent subprocesses at the isolated git config and command shims. */
@@ -50,9 +54,9 @@ export class Setup {
       return false
     }
   }
-  /** Trigger a restart to re-run setup, refusing if setup and Feishu are already healthy so running assignments are not interrupted. */
+  /** Trigger a restart to re-run setup, refusing if setup and Feishu are already healthy and nothing warns, so running assignments are not interrupted. */
   check(): void {
-    if (this.configured() && !this.feishuProblem) throw new UserError('setupComplete')
+    if (this.configured() && !this.feishuProblem && !this.warnings.length) throw new UserError('setupComplete')
     this.restart()
   }
   /** Defer the restart to the next macrotask so the current HTTP or tool caller receives its response first. */
@@ -63,6 +67,37 @@ export class Setup {
     const check = block === 'source:feishu' ? resolveFeishuBot(machine, settings.sources.feishu?.config, this.probe())
       : resolveDeployment(machine, settings.sources.github?.config, this.probe())
     await check.catch((error: unknown) => { if (!(error instanceof SetupError) || error.place === block.slice(7)) throw error })
+  }
+  /**
+   * Check how `settings` confine managed Sessions: the profile holds the permission presets they run under, and no extra
+   * writable root, configured or granted by DSH's sandbox policy, opens the state directory, DSH's home or the profile, and
+   * none of those lies in a temporary area the sandbox lets workers write.
+   * @throws SetupError when a preset is missing or a writable root is refused.
+   */
+  checkConfinement(settings: Settings): void {
+    const { context, machine } = this.host
+    const { sandbox, writableRoots } = settings.executor
+    checkPresets(context.permissionPresets, sandbox)
+    // DSH's sandbox policy grants extra roots only where its version has them, deployment-wide, from the profile's configuration.
+    const policy = context.get('sandboxPolicy') as { additionalWritableRoots?: readonly string[] } | undefined
+    const guarded = protectedDirectories(machine.stateDir, (context as { baseUrl?: unknown }).baseUrl)
+    checkTemporaryAreas(guarded, sandbox, machine.temporaryAreas)
+    checkWritableRoots(writableRoots, sandbox, guarded, policy?.additionalWritableRoots)
+  }
+  /**
+   * Checks a merge CLI before it is saved: it runs, as setup probes CLIs, and reads an account other than the agent's, since
+   * GitHub attributes a merge to the account that enabled auto-merge. An empty CLI, or one saved while setup waits, is not checked.
+   * @throws UserError `mergeCliFailed` or `mergeCliAgent`.
+   */
+  async checkMergeCli(merge: MergeConfig): Promise<void> {
+    if (!merge.cli || !this.resolved) return
+    let login: string
+    try {
+      const cli = executable(merge.cli, this.path, workerBin(this.host.machine.stateDir))
+      login = (await this.probe()([cli, 'api', 'user', '--jq', '.login'])).trim()
+    } catch (error) { throw new UserError('mergeCliFailed', { cli: merge.cli, error: error instanceof Error ? error.message : String(error) }) }
+    if (!login) throw new UserError('mergeCliFailed', { cli: merge.cli, error: 'it printed no login' })
+    if (sameName(login, this.resolved.github.login)) throw new UserError('mergeCliAgent', { cli: merge.cli, account: this.resolved.github.login })
   }
   async blockCommands(blocked: readonly string[]): Promise<void> {
     if (this.resolved) await writeEnvironment(this.resolved, blocked)
@@ -75,6 +110,7 @@ export class Setup {
   }
   private async resolve(settings: Settings): Promise<Deployment> {
     const { context, machine, lifetime } = this.host
+    this.checkConfinement(settings)
     const probe = this.probe()
     const deployment = await resolveDeployment(machine, settings.sources.github?.config, probe)
     const feishu = await resolveFeishuBot(machine, settings.sources.feishu?.config, probe).catch((error: unknown) => {
@@ -84,6 +120,8 @@ export class Setup {
       return undefined
     })
     const resolved = { ...deployment, ...(feishu ? { feishu } : {}) }
+    this.warnings = await checkMerging(resolved, probe)
+    for (const warning of this.warnings) context.logger.warn('dsh-superagent setup warning: %s', warning.detail)
     const machineProblem = (error: unknown): never => {
       if (error instanceof SetupError) throw error
       throw new SetupError('environmentFailed', { output: error instanceof Error ? error.message : String(error) })

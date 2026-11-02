@@ -4,6 +4,7 @@ import { expect, it } from 'vitest'
 import { en, zh } from '../src/client/locales.ts'
 import { usePanel, mount, remount, all, find, tab, click, text } from './fixtures/panel.tsx'
 import { server, droppedReply, threadSummary } from './fixtures/panel-server.ts'
+import { setupWarning } from '../src/setup.ts'
 
 usePanel()
 it('leads the overview with the pending Tickets, then problems, the last day and the Executor, each linking to its stage', async () => {
@@ -156,4 +157,48 @@ it('says when no Source is on, an Eval is past its deadline or a message keeps f
   await click(tab(zh['tab.overview']))
   await click('评估超时未决定：#9 迟迟未决')
   expect(server.requests.some(request => request.path.startsWith('threads/github:9'))).toBe(true)
+})
+
+it('puts the main Session\'s Policy proposal before the other problems, for a person to accept or dismiss after confirming', async () => {
+  server.proposal = { block: 'policy', changed: ['policy.rules.0.enabled', 'policy.sources.github.allowed.1'], reason: 'Alice asked to add Bob',
+    at: '2026-09-22T00:00:00Z', stale: false }
+  await mount()
+  const row = () => all('.dt-cards .dt-att').find(item => item.textContent?.includes(zh['problemPolicyProposal.policy']))
+  expect(all('.dt-cards .dt-att-what')[0]?.textContent).toBe(zh['problemPolicyProposal.policy'])
+  expect([...row()!.querySelectorAll('.dt-changes li')].map(item => item.textContent)).toEqual(['policy.rules.0.enabled', 'policy.sources.github.allowed.1'])
+  expect(row()!.textContent).toContain(zh.policyProposalReason.replace('{reason}', 'Alice asked to add Bob'))
+  // Accepting asks first and names what it changes; nothing is sent until the person confirms.
+  await click(zh.policyProposalAccept)
+  expect(server.requests.some(request => request.path === 'policy-proposal/accept')).toBe(false)
+  expect(text()).toContain(zh.policyProposalAcceptConfirm.replace('{paths}', 'policy.rules.0.enabled、policy.sources.github.allowed.1'))
+  await click(zh.confirm)
+  expect(server.requests.find(request => request.path === 'policy-proposal/accept')).toMatchObject({ method: 'POST' })
+  expect(row()).toBeUndefined()
+  // A stale proposal offers only dismissal, and says why.
+  server.proposal = { block: 'eval', changed: ['eval.mode'], reason: 'Alice asked for auto', at: '2026-09-22T00:00:00Z', stale: true }
+  await remount()
+  const stale = all('.dt-cards .dt-att').find(item => item.textContent?.includes(zh['problemPolicyProposal.eval']))!
+  expect(stale.textContent).toContain(zh.policyProposalStale)
+  expect([...stale.querySelectorAll('button')].map(button => button.textContent)).toEqual([zh['problemPolicyProposal.eval'], zh.dismiss])
+  await click([...stale.querySelectorAll<HTMLElement>('button')].at(-1)!)
+  await click(zh.confirm)
+  expect(server.requests.find(request => request.path === 'policy-proposal/dismiss')).toMatchObject({ method: 'POST' })
+  expect(server.proposal).toBeUndefined()
+})
+
+it('shows a setup warning as a warning that keeps dsh-superagent running, on the overview and on its Source, with a check again', async () => {
+  const warning = setupWarning('mergeBypass', { account: 'agent-bot', branch: 'main', repository: 'acme/widgets' })
+  server.setup = { ...server.setup, warnings: [warning] }
+  await mount()
+  const row = all('.dt-cards .dt-att').find(item => item.textContent?.includes(zh.problemSetupWarning))!
+  expect(row.classList.contains('dt-att-error')).toBe(false)
+  expect(row.textContent).toContain('@agent-bot 可以绕过 main 的审查规则')
+  expect(row.textContent).toContain(zh.problemSetupWarningFix)
+  expect([...row.querySelectorAll('button')].some(button => button.textContent === '重新检查')).toBe(true)
+  await click(find(zh.problemSetupWarning, 'button'))
+  expect(tab(zh['tab.source']).getAttribute('aria-selected')).toBe('true')
+  // Only the GitHub Source names it.
+  const rows = all('.dt-form > .dt-list > .dt-row')
+  expect(rows.find(item => item.textContent?.includes('GitHub'))!.textContent).toContain('@agent-bot 可以绕过 main 的审查规则')
+  expect(rows.find(item => item.textContent?.includes('飞书'))!.textContent).not.toContain('审查规则')
 })

@@ -99,3 +99,41 @@ it('records nothing for a pause that changes nothing, refuses a sync while setup
   vi.mocked(Setup.prototype.configured).mockRestore()
   expect(() => settings.block('source:x')).toThrow(new UserError('unknownBlock', { block: 'source:x' }))
 })
+
+it('refuses a tool save that changes the Policy or the accept mode, and lets a tool change the other eval fields and a sync the lists', async () => {
+  h = await startRuntime()
+  const { settings, store } = h.runtime
+  const policy = store.settings().policy, evaluation = store.settings().eval
+  const mode = evaluation.mode === 'auto' ? 'observe' : 'auto'
+  const savePolicy = (value: unknown, origin: 'tool' | 'sync' | 'panel') => settings.save('policy', value, store.blockRevision('policy'), origin)
+  const rules = [{ id: 'docs', name: 'Docs', enabled: true, instruction: 'Fix docs' }]
+  const listed = { ...policy, sources: { ...policy.sources, github: { ...policy.sources.github!, allowed: [{ id: 'mallory' }] } } }
+  for (const value of [{ ...policy, rules }, listed]) await expect(savePolicy(value, 'tool')).rejects.toMatchObject({ code: 'panelOnlyPolicy' })
+  await expect(settings.save('eval', { ...evaluation, mode }, store.blockRevision('eval'), 'tool')).rejects.toMatchObject({ code: 'panelOnlyPolicy' })
+  expect(store.settings()).toMatchObject({ policy, eval: evaluation })
+  // A save that leaves authorization as it is, the other eval fields, and a Source's list sync are not refused.
+  expect(await savePolicy(policy, 'tool')).toMatchObject({ saved: true, policy_changed: false })
+  expect(await settings.save('eval', { ...evaluation, timeoutSeconds: 90 }, store.blockRevision('eval'), 'tool')).toMatchObject({ saved: true })
+  expect(await savePolicy(listed, 'sync')).toMatchObject({ saved: true, policy_changed: true })
+  expect(store.settings().policy.sources.github!.allowed).toEqual([{ id: 'mallory' }])
+})
+
+it('keeps one Policy proposal, the latest, refuses to accept it once its block changed, and dismisses it', async () => {
+  h = await startRuntime()
+  const { settings, store } = h.runtime
+  const policy = store.settings().policy
+  const first = [{ id: 'docs', name: 'Docs', enabled: true, instruction: 'Fix docs' }], second = [{ ...first[0]!, name: 'Documentation' }]
+  settings.propose('policy', { ...policy, rules: first }, store.blockRevision('policy'), 'first')
+  expect(settings.propose('policy', { ...policy, rules: second }, store.blockRevision('policy'), 'second')).toMatchObject({ proposed: true })
+  expect(settings.proposal()).toMatchObject({ block: 'policy', reason: 'second', value: { rules: second }, stale: false,
+    changed: expect.arrayContaining(['policy.rules.0.id', 'policy.rules.0.name']) })
+  // A save of the block after the proposal makes it stale: accepting it is refused and keeps it, for a person to dismiss.
+  await settings.save('policy', { ...policy, rules: [] }, store.blockRevision('policy'), 'panel')
+  expect(settings.proposal()).toMatchObject({ stale: true })
+  await expect(settings.acceptProposal()).rejects.toThrow(SettingsConflict)
+  expect(store.settings().policy.rules).toEqual([])
+  expect(settings.dismissProposal()).toEqual({ dismissed: true })
+  expect(settings.proposal()).toBeNull()
+  expect(settings.dismissProposal()).toEqual({ dismissed: false })
+  await expect(settings.acceptProposal()).rejects.toMatchObject({ code: 'noPolicyProposal', missing: true })
+})

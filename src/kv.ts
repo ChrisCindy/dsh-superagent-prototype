@@ -3,6 +3,7 @@
  * Readers and writers refer to a record by its entry here so each key is spelled once with its value type.
  */
 import type { PromptVersion } from './app/prompts.ts'
+import type { PolicyProposal } from './app/settings.ts'
 import type { SettingsVersion } from './app/store.ts'
 import type { SettingsSave } from './policy.ts'
 import type { Retry } from './sources/github.ts'
@@ -21,10 +22,14 @@ export function family<V, A extends unknown[] = [string]>(prefix: string, format
 export const KV = {
   /** Store: current database schema version. */
   store: { schema: record<number>('schema') },
-  /** Settings: current revision, per-block revision, and saved settings snapshots (including the current one). */
+  /**
+   * Settings: current revision, per-block revision, saved settings snapshots (including the current one), and the one pending
+   * Policy proposal of the main Session, which a later proposal replaces and a person accepts or dismisses on the panel.
+   */
   settings: { revision: record<number>('settings-revision'),
     block: family<number, [block: SettingsSave]>('settings-block-revision:'),
-    version: family<SettingsVersion, [revision: number]>('settings-version:') },
+    version: family<SettingsVersion, [revision: number]>('settings-version:'),
+    proposal: record<PolicyProposal>('settings-proposal') },
   /** Prompts: current revision and saved prompt versions. */
   prompts: { revision: record<number>('prompt-revision'), version: family<PromptVersion, [revision: number]>('prompt-version:'),
     /** The built-in text of a prompt part an override was edited from, by its `base`, which shows what an upgrade changed. */

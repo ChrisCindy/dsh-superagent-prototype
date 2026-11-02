@@ -116,6 +116,10 @@ A version change discards running Evals and queues their Triggers again. It also
 
 Unaffected Tickets receive no notice. The change does not immediately revoke live Tickets' Mandates.
 
+### Who changes the Policy
+
+Only a person on the panel changes the Policy version, apart from a Source's sync of its own allowed list. The main Session reads untrusted text, so `Settings.save` refuses its saves (origin `tool`) that change the `policy` block or the accept mode (`panelOnlyPolicy`); it may still change the Eval time limit and model. On a person's request, the main Session calls `orchestrator_policy_propose` with the whole block and its revision instead. The proposal changes nothing. One proposal is kept, the latest, with the request it carries out and the settings paths it changes. The panel's overview shows it to a person, who accepts it, which saves it as a panel save against the revision it was made from, or dismisses it. If the block was saved after the proposal, the proposal is stale and accepting it is refused.
+
 Source configuration is separate from Policy. It controls what enters the system: which chats are read and whether a scope receives all messages or only mentions. A Mandate records its Source and receiving scope. Resuming needs the Source to still listen to the Thread, but does not require it to still receive every message there.
 
 Replies wait while their Source is off. They are dropped if the Source no longer listens to their destination.

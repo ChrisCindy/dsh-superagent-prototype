@@ -1,5 +1,6 @@
-/** Loopback-only management HTTP routes with same-origin enforcement for the web panel. */
+/** Loopback-only management HTTP routes: a same-origin check for every request and a DeepSeek Harness sign-in for all but `GET state`. */
 import type { Context } from '@deepseek-ai/cordis'
+import type {} from '@deepseek-ai/dsh-client-connection'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { z } from 'zod'
@@ -10,7 +11,7 @@ import { PromptConflict, SKILL_NAME, SKILL_PREFIX, TEAM_SECTIONS, builtInBase, b
   from './prompts.ts'
 import { policyVersion } from '../policy.ts'
 import { SettingsConflict, type Settings } from './settings.ts'
-import { SetupError, type SetupProblem } from '../setup.ts'
+import { SetupError, type SetupProblem, type SetupWarning } from '../setup.ts'
 import { UserError, type EngineForPeople, type Ticket } from '../core/index.ts'
 import type { Deployment, Machine } from '../deployment.ts'
 import type { DshExecutor } from '../executor/dsh.ts'
@@ -35,7 +36,7 @@ export interface HttpHost {
   readonly sources: SourceRegistry
   readonly prompts: Pick<Prompts, 'current' | 'version' | 'history' | 'preview' | 'save' | 'defaultChanged'>
   readonly sessions: Pick<Sessions, 'status' | 'notify' | 'delivery'>
-  readonly settings: Pick<Settings, 'view' | 'save' | 'pause' | 'sync' | 'refreshLabels'>
+  readonly settings: Pick<Settings, 'view' | 'save' | 'pause' | 'sync' | 'refreshLabels' | 'proposal' | 'acceptProposal' | 'dismissProposal'>
   readonly engine: EngineForPeople
   readonly executor: Pick<DshExecutor, 'activeCount'>
   readonly health: Record<string, Health>
@@ -47,6 +48,8 @@ export interface HttpHost {
   readonly deployment: Deployment
   readonly setupProblem?: SetupProblem | undefined
   readonly feishuProblem?: SetupProblem | undefined
+  /** Setup findings that leave dsh-superagent running. */
+  readonly setupWarnings: readonly SetupWarning[]
   configured(): boolean
   links(): LinkTarget
   ticketEnvironment(ticket: Ticket): Variable[]
@@ -98,6 +101,7 @@ function setupView(runtime: HttpHost) {
   const resolved = runtime.configured() ? runtime.deployment : undefined
   return {
     machine: machineView(runtime.machine), problem: runtime.setupProblem ?? null, feishuProblem: runtime.feishuProblem ?? null,
+    warnings: runtime.setupWarnings,
     accounts: resolved ? { repository: resolved.repository, agent: resolved.github.login, feishu: resolved.feishu ? { appId: resolved.feishu.appId, brand: resolved.feishu.brand, botId: resolved.feishu.botId, name: resolved.feishu.name } : null } : null,
   }
 }
@@ -110,7 +114,7 @@ export function stateView(runtime: HttpHost) {
 }
 const views = (runtime: HttpHost): ViewHost => ({ store: runtime.store, sources: runtime.sources, links: runtime.links() })
 const setupState = (runtime: HttpHost): SetupState => ({ deployment: runtime.configured() ? runtime.deployment : undefined,
-  problem: runtime.setupProblem, feishuProblem: runtime.feishuProblem })
+  problem: runtime.setupProblem, feishuProblem: runtime.feishuProblem, warnings: runtime.setupWarnings })
 export type StateView = ReturnType<typeof stateView>
 /** Builds a ticket's detail view; `environment` is empty while waiting for setup because it requires the resolved deployment. */
 function ticketPage(runtime: HttpHost, id: string) {
@@ -155,7 +159,7 @@ function routes(runtime: HttpHost): Routes {
   return {
     'GET state': () => stateView(runtime),
     'GET overview': () => overview(views(runtime), runtime.health, policyVersion(store.settings()),
-      executorLoad(store, runtime.executor.activeCount()), runtime.setupProblem ?? runtime.feishuProblem),
+      executorLoad(store, runtime.executor.activeCount()), runtime.setupProblem ?? runtime.feishuProblem, runtime.setupWarnings),
     'GET search': ({ query }) => search(views(runtime), query.q ?? '', runtime.sourceLinks),
     'GET sources': () => sourcesStatus(views(runtime), runtime.health, setupState(runtime)),
     'GET settings': () => settingsView(store, runtime.sources, runtime.health, setupState(runtime), runtime.machine.stateDir),
@@ -201,6 +205,9 @@ function routes(runtime: HttpHost): Routes {
       return runtime.settings.save(block, request.value, request.revision, 'panel')
     },
     'GET policy/history': () => policyHistory(store, runtime.sources, policyVersion(store.settings())),
+    'GET policy-proposal': () => ({ proposal: runtime.settings.proposal() }),
+    'POST policy-proposal/accept': () => runtime.settings.acceptProposal(),
+    'POST policy-proposal/dismiss': () => runtime.settings.dismissProposal(),
     'POST policy-sync/:id': async ({ params }) => ({ policy: await runtime.settings.sync(params.id) }),
     'POST setup/check': () => { runtime.checkSetup(); return { restarting: true } },
     'GET models': () => runtime.models(),
@@ -215,6 +222,12 @@ function routes(runtime: HttpHost): Routes {
 function decoded(segment: string): string {
   try { return decodeURIComponent(segment) } catch { throw new RouteError(400, 'A path segment has a malformed escape') }
 }
+/**
+ * The routes answered without a DeepSeek Harness sign-in: `GET state` carries only health, load and setup problems, and lets
+ * `scripts/dsh-superagent status` and the hourly check work without credentials. Every other route, reads included, needs the
+ * browser session cookie that DeepSeek Harness's Connection verifies.
+ */
+export const OPEN_ROUTES: ReadonlySet<string> = new Set<keyof Api>(['GET state'])
 function match(table: Routes, method: string, segments: string[]) {
   for (const [route, run] of Object.entries(table)) {
     const [verb, path] = route.split(' ') as [string, string]
@@ -227,6 +240,11 @@ function match(table: Routes, method: string, segments: string[]) {
   }
   return undefined
 }
+const SIGN_IN = 'DeepSeek Harness sign-in required: open the URL it printed at startup, or send its session cookie'
+/**
+ * Mount the management routes under `/orchestrator/api/` on the DeepSeek Harness Web server. DeepSeek Harness's Web server
+ * authenticates nothing itself, so these routes ask its Connection service to admit each request but `OPEN_ROUTES`.
+ */
 export function registerHttp(ctx: Context, runtime: HttpHost): () => void {
   if (ctx.webServer.host !== '127.0.0.1') throw new Error('Orchestrator management requires a loopback Web server')
   const table = routes(runtime)
@@ -234,10 +252,19 @@ export function registerHttp(ctx: Context, runtime: HttpHost): () => void {
     ctx.webServer.register({ kind: 'prefix', path: '/orchestrator', handler: async (req, res) => {
       const url = new URL(req.url ?? '/', 'http://localhost')
       if (!url.pathname.startsWith('/orchestrator/api/')) { res.writeHead(404); res.end(); return }
+      // The header and Origin checks defend against cross-site requests; they do not say who is asking.
       if (!sameOrigin(req, ctx.webServer.port)) { json(res, 403, { error: 'Same-origin management request required' }); return }
+      const method = req.method ?? 'GET', path = url.pathname.slice('/orchestrator/api/'.length)
       try {
+        // Any local process can reach the loopback port, so every route but the open ones speaks for the DeepSeek Harness
+        // operator only: Connection admits a request that carries its signed browser session cookie. The open routes take no
+        // parameters, so the raw path names them; an unknown or malformed path is refused like any other closed route.
+        if (!OPEN_ROUTES.has(`${method} ${path}`)) {
+          const admission = ctx.connection.admit(req)
+          if ('rejection' in admission) { json(res, admission.rejection, { error: admission.rejection === 401 ? SIGN_IN : 'Request refused by DeepSeek Harness' }); return }
+        }
         await runtime.ready
-        const route = match(table, req.method ?? 'GET', url.pathname.slice('/orchestrator/api/'.length).split('/'))
+        const route = match(table, method, path.split('/'))
         if (!route) throw new RouteError(404, 'Unknown operation')
         const query = Object.fromEntries(url.searchParams)
         json(res, 200, await route.run({ params: route.params as never, query, body: maxBytes => readBody(req, maxBytes) }))

@@ -63,6 +63,33 @@ async function written(file: string): Promise<boolean> {
   const head = (await readFile(file, 'utf8')).split('\n', 2)
   return [MARKER, ...LEGACY_MARKERS].some(marker => head.includes(marker))
 }
+/** What the `gh` shim answers when the agent tries to merge, or to enable auto-merge, itself. */
+export const MERGE_REFUSED = 'The agent account does not merge or enable auto-merge: request the merge with orchestrator_merge_request, which checks the PR and enables auto-merge as the merge account. gh pr merge --disable-auto still works.'
+/**
+ * Shell lines of the `gh` shim that refuse `gh pr merge` (except `--disable-auto`, which withdraws auto-merge), and a `gh api`
+ * call that names the REST merge endpoint or the GraphQL `mergePullRequest` or `enablePullRequestAutoMerge` mutations.
+ * The first two words that are not flags name the command; `-R`, `--repo` and `--hostname` take the next word as their value.
+ * A guardrail on the default path, not a security boundary: a query read from a file, an alias or the real CLI by its path pass it.
+ */
+const MERGE_GUARD = [
+  `refuse() { echo ${shellQuote(MERGE_REFUSED)} >&2; exit 1; }`,
+  'first=; second=; skip=; withdraw=',
+  'for arg in "$@"; do',
+  '  if [ -n "$skip" ]; then skip=; continue; fi',
+  '  case "$arg" in',
+  '    -R|--repo|--hostname) skip=1 ;;',
+  '    --disable-auto) withdraw=1 ;;',
+  '    -*) ;;',
+  '    *) if [ -z "$first" ]; then first=$arg; elif [ -z "$second" ]; then second=$arg; fi ;;',
+  '  esac',
+  'done',
+  'if [ "$first" = pr ] && [ "$second" = merge ] && [ -z "$withdraw" ]; then refuse; fi',
+  'if [ "$first" = api ]; then',
+  '  for arg in "$@"; do',
+  '    case "$arg" in *mergePullRequest*|*enablePullRequestAutoMerge*|*/pulls/*/merge|*/pulls/*/merge\\?*) refuse ;; esac',
+  '  done',
+  'fi',
+].join('\n')
 async function own(file: string, text: string, mode = 0o644): Promise<void> {
   let foreign = false
   try { foreign = !await written(file) } catch { /* The file does not exist yet. */ }
@@ -97,7 +124,7 @@ export async function writeEnvironment(deployment: Pick<Deployment, 'stateDir' |
   ].join('\n')
   const run = (program: string): string => `${withoutShims}\nexec ${shellQuote(program)} "$@"`
   const fail = (message: string): string => `echo ${shellQuote(message)} >&2\nexit 1`
-  await shim('gh', run(github.cli))
+  await shim('gh', `${MERGE_GUARD}\n${run(github.cli)}`)
   await shim('lark-cli', feishu ? run(feishu.cli) : fail('lark-cli is unavailable: this installation has no Feishu bot.'))
   for (const name of new Set(blockedCommands.filter(name => !WORKER_COMMANDS.includes(name)))) {
     await shim(name, fail(`${name} is blocked in this installation; use gh, which acts as ${github.login}.`))
