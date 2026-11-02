@@ -32,13 +32,20 @@ export interface GithubWorld {
   reviews: Record<string, GhComment[]>
   pulls: Record<string, Record<string, unknown>>
   notifications: GhNotification[]
+  /** Active ruleset rules on the default branch, as `GET repos/<r>/rules/branches/<b>` lists them. */
+  branchRules: Record<string, unknown>[]
+  /** Rulesets by id, as `GET repos/<r>/rulesets/<id>` answers as the agent account. */
+  rulesets: Record<string, Record<string, unknown>>
   nextId: number
 }
 
 export function initialWorld(repository: string, agentLogin: string): GithubWorld {
   const agent = { login: agentLogin, id: 4242, type: 'User' }
   return { agent, signedIn: true, repository: { full_name: repository, default_branch: 'main', push: true, head_sha: 'e2e0000000000000000000000000000000000001' },
-    users: { [agentLogin]: agent }, issues: {}, comments: {}, reviewComments: {}, reviews: {}, pulls: {}, notifications: [], nextId: 1000 }
+    users: { [agentLogin]: agent }, issues: {}, comments: {}, reviewComments: {}, reviews: {}, pulls: {}, notifications: [],
+    // GitHub requires a fresh approval the agent account cannot bypass, so merge setup raises no warning.
+    branchRules: [{ type: 'pull_request', ruleset_id: 7, parameters: { required_approving_review_count: 1, dismiss_stale_reviews_on_push: true } }],
+    rulesets: { 7: { id: 7, current_user_can_bypass: 'never' } }, nextId: 1000 }
 }
 /** Creates the fake's state directory with an initial world. */
 export function createWorld(dir: string, world: GithubWorld): void {

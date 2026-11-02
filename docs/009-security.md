@@ -21,7 +21,7 @@ The rule from 002 holds throughout: messages, comments and quoted documents are 
 | A message asks the main Session to add someone to an allowed list, change a rule or switch to `auto` | The main Session cannot save the Policy or the accept mode; it can only propose a change, which a person accepts on the panel (002, Who changes the Policy) |
 | A message asks the main Session to change the prepare command, the sandbox, writable roots or the merge settings | Those fields are panel-only; tool saves are refused |
 | A worker or another local process calls the management API | Every route but `GET state` needs DeepSeek Harness's signed session cookie (006, Management API) |
-| A worker rewrites the database, the command shims, the git configuration or the profile | The worker's preset lets it write only its Ticket directory, the temporary areas and the writable roots; setup refuses a writable root that contains the state directory, `$DSH_HOME` or the profile (006, Permissions and isolation) |
+| A worker rewrites the database, the command shims, the git configuration or the profile | The worker's preset lets it write only its Ticket directory, the temporary areas and the writable roots; setup refuses a writable root that contains the state directory, `$DSH_HOME` or the profile, and any of those kept in a temporary area, which every worker may write (006, Permissions and isolation) |
 | The main Session writes files | Its preset is read-only |
 | A worker merges its own pull request | Merging goes through `orchestrator_merge_request`, which checks ownership, size, CI and approvals on the host; the worker's `gh` refuses merge commands; setup warns when GitHub's branch protection does not require an approval the agent cannot bypass (003, Merging) |
 

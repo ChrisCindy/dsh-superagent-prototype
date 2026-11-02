@@ -770,6 +770,7 @@ const TEXT = {
   'setup.gitTooOld': ['git 没有读取 dsh-superagent 为 github.com 写的凭据配置；需要 git 2.32 或更新版本。', SETUP_PROBLEMS.gitTooOld[1]],
   'setup.environmentFailed': ['准备智能体的运行环境失败。', SETUP_PROBLEMS.environmentFailed[1]],
   'setup.permissionPresetMissing': ['配置文件里没有权限预设 {preset}（沙箱 {sandbox}，审批 {approval}）；保留 dsh-superagent 的 cordis.patch.yml 里的 permission 一行，或在配置文件的 cordis.patch.yml 里补回这个预设。', SETUP_PROBLEMS.permissionPresetMissing[1]],
+  'setup.protectedInTemporary': ['{directory} 位于 {temporary}，DeepSeek Harness 的沙箱允许所有执行器写这个临时目录；请按 docs/006 把它移出临时目录。', SETUP_PROBLEMS.protectedInTemporary[1]],
   'setup.writableRootProtected': ['可写目录 {root} 会让执行器能写 {protected}；删掉它，或换一个既不包含它、也不在它里面的目录。', SETUP_PROBLEMS.writableRootProtected[1]],
   'setup.writableRootUngranted': ['DeepSeek Harness 的沙箱没有放开可写目录 {root}；删掉它，在 DeepSeek Harness 支持时把它加进配置文件 sandbox-policy 一行的 additionalWritableRoots，或把沙箱设为完全访问。', SETUP_PROBLEMS.writableRootUngranted[1]],
   'setup.agentCliUnset': ['没有设置智能体的 GitHub CLI。', SETUP_PROBLEMS.agentCliUnset[1]],

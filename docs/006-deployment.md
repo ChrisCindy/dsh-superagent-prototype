@@ -25,6 +25,8 @@ The bundle also adds two permission presets to DeepSeek Harness's preset table, 
 
 With approval `never`, a write the sandbox denies fails at once and a request for a wider sandbox is rejected; nothing waits for a person. Workers therefore cannot rewrite `<stateDir>/orchestrator.sqlite`, the shims in `worker-bin`, `worker-gitconfig`, the profile or `$DSH_HOME`. The bundle's `permission` row replaces the profile's preset table and restates DeepSeek Harness's own presets; if a profile layer replaces it again, it must keep both presets, or setup stops with `The profile has no permission preset …`.
 
+The temporary areas are `/tmp` and the OS user's temporary directory, and every worker may write them. Keep the state directory, `$DSH_HOME` and the profile outside them; otherwise setup stops with `… lies in …, which the DeepSeek Harness sandbox lets every worker write`.
+
 The sandbox covers files only. Sessions still run as the operator's OS user, reach the network, and read the operator's home directory, and a worker can execute programs by path. Account wrappers choose the agent's credentials by default; they do not isolate the process. For isolation, use a dedicated OS account containing only the agent's credentials.
 
 #### Writable roots and the full-access fallback
@@ -311,6 +313,7 @@ Setup problems appear on the overview with a link to the fix, in the panel's lan
 | `git does not read the github.com credential configuration dsh-superagent writes` | Install git 2.32 or later |
 | A Ticket fails with `The git configuration of the repository in … sets …` | Remove the named credential or `http.*.extraheader` settings from the clone's `.git/config` |
 | `The profile has no permission preset …` | A profile layer replaced the bundle's `permission` row; keep `superagent-router` and `superagent-worker` in it, as in the bundle's `cordis.patch.yml` |
+| `… lies in …, which the DeepSeek Harness sandbox lets every worker write` | Move the named directory, such as `stateDir` in the profile's `cordis.patch.yml`, out of `/tmp` and the OS temporary directory |
 | `The writable root … would let workers write …` | Remove that root from the Execution settings, or from the profile's sandbox-policy row, or name a narrower directory |
 | `The DeepSeek Harness sandbox does not grant the writable root …` | Remove it, or grant it in the profile's sandbox-policy row where DeepSeek Harness supports `additionalWritableRoots`; or set the sandbox to Full access, with the risk described under Permissions and isolation |
 | A worker's command or file write fails with `[sandbox: file access denied under workspace-write mode]` | It wrote outside its Ticket directory. Point the tool's cache into the Ticket directory or a temporary area, add the directory as a writable root where the sandbox can grant it, or set the sandbox to Full access |

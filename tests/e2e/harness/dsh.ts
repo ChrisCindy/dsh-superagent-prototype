@@ -123,7 +123,10 @@ export class DshHarness implements HarnessFields {
   static async create(options: HarnessOptions): Promise<DshHarness> {
     if (!existsSync(join(CHECKOUT, 'lib', 'index.js'))) throw new Error(`Build the bundle in ${CHECKOUT} first: pnpm install && pnpm build`)
     const dsh = await installDsh()
-    const runDir = mkdtempSync(join(process.env.SAE2E_TMP ?? tmpdir(), 'dsh-superagent-e2e-'))
+    // Not under the OS temp directory: DSH's workspace sandbox lets workers write /tmp, so setup refuses a state directory there.
+    const runs = process.env.SAE2E_TMP ?? join(ROOT, 'node_modules', '.cache', 'dsh-superagent-e2e-runs')
+    mkdirSync(runs, { recursive: true })
+    const runDir = mkdtempSync(join(runs, 'run-'))
     const base = tmpdir().length < 60 ? tmpdir() : '/tmp'
     const tmuxDir = mkdtempSync(join(base, 'sae2e-'))
     const ghDir = join(runDir, 'fake-github')

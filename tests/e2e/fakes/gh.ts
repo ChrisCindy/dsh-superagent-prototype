@@ -77,6 +77,8 @@ function route(world: GithubWorld, request: Request, write: (entry: Record<strin
     return { full_name: repo.full_name, name: repo.full_name.split('/')[1], default_branch: repo.default_branch,
       permissions: { admin: false, push: repo.push, pull: true }, html_url: `https://github.com/${repo.full_name}` }
   }
+  if ((match = is('GET', /^rules\/branches\/([^/]+)$/))) return decodeURIComponent(match[1]!) === repo.default_branch ? world.branchRules : []
+  if ((match = is('GET', /^rulesets\/(\d+)$/))) { const ruleset = world.rulesets[match[1]!]; if (!ruleset) throw new HttpError(404, 'Not Found'); return ruleset }
   if (is('GET', /^notifications$/)) {
     const from = query.get('since')
     return world.notifications.filter(item => !from || Date.parse(item.updated_at) >= Date.parse(from))
@@ -147,9 +149,10 @@ function jq(expression: string, value: unknown): string {
     if (ran.status !== 0) throw new HttpError(0, ran.stderr.trim())
     return ran.stdout
   }
-  // Without jq, answer the one expression setup uses.
-  const repo = value as { full_name?: string; permissions?: { push?: boolean } }
+  // Without jq, answer the expressions setup uses.
+  const repo = value as { full_name?: string; default_branch?: string; permissions?: { push?: boolean; admin?: boolean } }
   if (expression === '{name: .full_name, push: .permissions.push}') return JSON.stringify({ name: repo.full_name, push: repo.permissions?.push ?? null }) + '\n'
+  if (expression === '{branch: .default_branch, admin: .permissions.admin}') return JSON.stringify({ branch: repo.default_branch, admin: repo.permissions?.admin ?? null }) + '\n'
   if (expression === '.id') return `${(value as { id?: number }).id}\n`
   throw new HttpError(0, `fake gh: jq is not installed and ${expression} has no built-in answer`)
 }

@@ -8,6 +8,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { readLog } from './fakes/store.ts'
 import { DshHarness, waitFor } from './harness/dsh.ts'
 import { ACKNOWLEDGEMENT, cards, RESULT, superagentScript } from './harness/script.ts'
+import { existsSync } from 'node:fs'
 
 let harness: DshHarness
 const ALLOWED = 'alice'
@@ -191,6 +192,12 @@ describe('dsh-superagent on a real DeepSeek Harness', () => {
     expect(ticket.directory).toBe(directory)
     expect(directory).toMatch(/\/work\/fix-readme-typo-[0-9a-f]+$/)
     expect(workers[0]!.sessionId).toBe(ticket.assignments[0].ref)
+    // docs/009: the worker writes its Ticket directory, not the state directory, and its gh refuses to merge.
+    expect(pwd!.text).toContain('INSIDE_WRITE_OK')
+    expect(pwd!.text).toContain('ESCAPE_WRITE_DENIED')
+    expect(existsSync(join(harness.stateDir, 'escape.txt'))).toBe(false)
+    expect(pwd!.text).toContain('orchestrator_merge_request')
+    expect(pwd!.text).not.toContain('MERGE_EXIT=0')
 
     // The main Session receives the worker's report and sends the result, which the Outbox delivers through gh.
     const result = await waitFor('the result comment', () => writes().find(write => write.kind === 'comment' && write.body.includes(RESULT)), 120_000)
@@ -203,6 +210,7 @@ describe('dsh-superagent on a real DeepSeek Harness', () => {
     expect(ended.ended).toMatchObject({ outcome: 'completed' })
     // Each message went out once, and the bundle asked the fake nothing it does not know.
     expect(writes().filter(write => write.kind === 'comment').map(write => write.body.split('\n')[0])).toEqual([ACKNOWLEDGEMENT, RESULT])
+    expect(writes().filter(write => /merge/i.test(String(write.kind)))).toEqual([])
     expect(readLog<{ argv: string[]; unknown?: boolean }>(`${harness.runDir}/fake-github`, 'calls').filter(call => call.unknown)).toEqual([])
     const status = await harness.status()
     expect(status.code, status.stdout).toBe(0)
@@ -223,6 +231,18 @@ describe('dsh-superagent on a real DeepSeek Harness', () => {
     expect(status.code, status.stdout).toBe(0)
   })
 
+  it('(f) refuses the management API without the DeepSeek Harness sign-in, except the health read', async () => {
+    // docs/009: a worker or another local process that has the panel headers but not the signed cookie gets nowhere.
+    const headers = { 'x-orchestrator-request': '1', origin: harness.url, 'content-type': 'application/json' }
+    const call = (method: string, path: string, body?: unknown) => fetch(`${harness.url}/orchestrator/api/${path}`,
+      { method, headers, body: body === undefined ? undefined : JSON.stringify(body) }).then(response => response.status)
+    expect(await call('GET', 'state')).toBe(200)
+    expect(await call('GET', 'settings')).toBe(401)
+    expect(await call('PUT', 'settings/policy', { value: {}, revision: 0 })).toBe(401)
+    expect(await call('POST', 'executor/pause', { paused: true })).toBe(401)
+    expect(await call('POST', 'policy-proposal/accept', {})).toBe(401)
+    expect((await harness.api.get('state')).paused).toBe(false)
+  })
 })
 
 let issueNumber = 0

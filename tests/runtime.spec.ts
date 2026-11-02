@@ -269,7 +269,7 @@ it('runs the main Session read-only and each worker writing only its Ticket dire
   expect([presets.selected.get(sessionId), presets.selected.get(runtime.masterId)]).toEqual(['danger-full-access', 'danger-full-access'])
 })
 
-it('waits for setup while the profile lacks a permission preset its Sessions need, or a writable root opens the state directory', async () => {
+it('waits for setup while the profile lacks a permission preset its Sessions need, a writable root opens the state directory, or the state directory lies in a temporary area', async () => {
   const full = services.permissionPresets
   const { 'superagent-worker': _worker, ...table } = PRESET_TABLE
   services.permissionPresets = permissionPresets(table)
@@ -287,6 +287,11 @@ it('waits for setup while the profile lacks a permission preset its Sessions nee
   next = await restart()
   await next.ready
   expect(next.setupProblem).toMatchObject({ place: 'execution', code: 'writableRootProtected', values: { root: '/' } })
+  // A state directory in a temporary area, which the workspace sandbox lets every worker write, is refused too.
+  next.store.saveSettings(SettingsSchema.parse({ ...next.store.settings(), executor: { ...next.store.settings().executor, sandbox: 'workspace', writableRoots: [] } }))
+  next = await restart({ temporaryAreas: [dirname(directory)] })
+  await next.ready
+  expect(next.setupProblem).toMatchObject({ place: 'deployment', code: 'protectedInTemporary', values: { directory, temporary: dirname(directory) } })
 })
 
 it('fans a person\'s later thread message out to the live worker as context and tells the orchestrator, without an Eval', async () => {

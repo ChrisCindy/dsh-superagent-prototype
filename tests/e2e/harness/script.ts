@@ -4,7 +4,9 @@
  *
  * - main Session: an explicit `candidate` card → `orchestrator_route` accept; a `worker_report` with state `ready` →
  *   `orchestrator_reply` purpose `result`; anything else → a short text that ends the turn.
- * - worker: first turn → `bash pwd` (proves the directory it runs in); after that result → `orchestrator_report` ready
+ * - worker: first turn → `bash` that prints `pwd` (proves the directory it runs in), then tries the escalations of
+ *   docs/009: a write in its Ticket directory, a write in the state directory, and `gh pr merge`; after that result →
+ *   `orchestrator_report` ready
  *   with the directory in the summary; afterwards → a short text.
  * - any other request (such as a Session title) → a short text.
  */
@@ -26,6 +28,16 @@ export interface ScriptOptions {
   result?: string
 }
 export const ACKNOWLEDGEMENT = 'I will correct the README typo "widgts" to "widgets".'
+/**
+ * The worker's first command. `pwd` comes first so its line is the first path in the output. The work directory is
+ * `<stateDir>/work/<name>`, so `../../` is the state directory, which the worker preset must not let it write.
+ */
+export const WORKER_PROBE = [
+  'pwd',
+  'touch inside.txt && echo INSIDE_WRITE_OK || echo INSIDE_WRITE_DENIED',
+  'touch ../../escape.txt 2>/dev/null && echo ESCAPE_WRITE_OK || echo ESCAPE_WRITE_DENIED',
+  'gh pr merge 1 --squash 2>&1; echo "MERGE_EXIT=$?"',
+].join('; ')
 export const RESULT = 'Fixed: README.md now says "widgets". (e2e scripted result)'
 
 export function superagentScript(options: ScriptOptions = {}): Script {
@@ -56,7 +68,7 @@ export function superagentScript(options: ScriptOptions = {}): Script {
     if (request.results.length) return { text: 'Reported.' }
     const started = history.some(earlier => earlier.role === 'worker' && earlier.sessionId === request.sessionId)
     if (started) return { text: 'Waiting.' }
-    return { tool: 'bash', input: { command: 'pwd', description: 'Show the ticket directory' } }
+    return { tool: 'bash', input: { command: WORKER_PROBE, description: 'Show the ticket directory and probe the sandbox' } }
   }
   return (request, history) => request.role === 'main' ? main(request) : request.role === 'worker' ? worker(request, history) : { text: 'E2E' }
 }

@@ -6,7 +6,7 @@ import { agentVariables, applyEnvironment, verifyEnvironment, withoutDirectory, 
 import { sameName } from '../infra/text.ts'
 import type { MergeConfig, Settings, SettingsBlock } from '../policy.ts'
 import { SetupError, type SetupProblem, type SetupWarning } from '../setup.ts'
-import { checkPresets, checkWritableRoots, protectedDirectories } from './permissions.ts'
+import { checkPresets, checkTemporaryAreas, checkWritableRoots, protectedDirectories } from './permissions.ts'
 
 export interface SetupHost {
   readonly context: Context
@@ -70,7 +70,8 @@ export class Setup {
   }
   /**
    * Check how `settings` confine managed Sessions: the profile holds the permission presets they run under, and no extra
-   * writable root, configured or granted by DSH's sandbox policy, opens the state directory, DSH's home or the profile.
+   * writable root, configured or granted by DSH's sandbox policy, opens the state directory, DSH's home or the profile, and
+   * none of those lies in a temporary area the sandbox lets workers write.
    * @throws SetupError when a preset is missing or a writable root is refused.
    */
   checkConfinement(settings: Settings): void {
@@ -79,8 +80,9 @@ export class Setup {
     checkPresets(context.permissionPresets, sandbox)
     // DSH's sandbox policy grants extra roots only where its version has them, deployment-wide, from the profile's configuration.
     const policy = context.get('sandboxPolicy') as { additionalWritableRoots?: readonly string[] } | undefined
-    checkWritableRoots(writableRoots, sandbox, protectedDirectories(machine.stateDir, (context as { baseUrl?: unknown }).baseUrl),
-      policy?.additionalWritableRoots)
+    const guarded = protectedDirectories(machine.stateDir, (context as { baseUrl?: unknown }).baseUrl)
+    checkTemporaryAreas(guarded, sandbox, machine.temporaryAreas)
+    checkWritableRoots(writableRoots, sandbox, guarded, policy?.additionalWritableRoots)
   }
   /**
    * Checks a merge CLI before it is saved: it runs, as setup probes CLIs, and reads an account other than the agent's, since

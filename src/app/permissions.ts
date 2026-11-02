@@ -71,6 +71,21 @@ export function protectedDirectories(stateDir: string, baseUrl: unknown, env: No
 }
 
 /**
+ * Refuse, under the `workspace` sandbox, a protected directory inside a temporary area: DSH's `workspace-write` sandbox lets
+ * every confined command write `/tmp` and the user's temporary directory, so a worker could rewrite a state directory, DSH
+ * home or profile kept there. Under `full` every Session may write anywhere, which the setting itself states.
+ * @throws SetupError (`protectedInTemporary`) naming the first such directory and the area that holds it.
+ */
+export function checkTemporaryAreas(protectedDirs: readonly string[], sandbox: Sandbox, temporaryAreas: readonly string[]): void {
+  if (sandbox !== 'workspace') return
+  for (const directory of protectedDirs) {
+    const resolved = real(directory)
+    const area = temporaryAreas.find(path => within(resolved, real(path)))
+    if (area !== undefined) throw new SetupError('protectedInTemporary', { directory, temporary: area })
+  }
+}
+
+/**
  * Refuse an extra writable root that contains or lies inside a protected directory, where a worker could rewrite the
  * database, the command shims, the profile or DSH's own state; then, under the `workspace` sandbox, a configured root the
  * composed sandbox does not grant, so it is not silently ignored. `granted` is the extra roots DSH's sandbox-policy service
