@@ -4,10 +4,15 @@
 `status`, `start`, and `restart` exit 0 while the service runs normally; 1 when it is stopped, duplicated, unreachable, or
 reporting a runtime error, which `restart` may fix; 2 when it runs while a component such as a Source reports an error;
 and 3 when it runs and waits for setup. A restart fixes neither 2 nor 3: they need a person.
+
+`login` signs a script in to the management API: it exchanges the launch token DSH printed in the newest log for DSH's browser
+session cookie and saves it as a curl cookie jar, whose path it prints. Every management route but `GET state` requires it.
 """
 
 import argparse
 import fcntl
+import http.client
+from http.cookies import SimpleCookie
 import json
 import os
 from pathlib import Path
@@ -19,6 +24,7 @@ import subprocess
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -95,6 +101,54 @@ def state(url):
         return None
 
 
+LAUNCH_URL = re.compile(r'https?://[^\s\'"<>]+[?&]token=[^\s\'"<>&#]+')
+
+
+def launch_url(profile):
+    """Return the last tokenized URL DSH printed in the newest log this script wrote for `profile`, or None."""
+    for log in reversed(logs(profile)):
+        found = LAUNCH_URL.findall(log.read_text(errors='replace'))
+        if found:
+            return found[-1]
+    return None
+
+
+def login(args):
+    """Exchange DSH's launch token for its browser session cookie and save the cookie as a curl cookie jar.
+
+    DSH accepts the token only on `GET /` of the URL it printed, answers 303 with an authority-bound, signed `HttpOnly` cookie,
+    and verifies that cookie on every request until it expires (30 days by default), across restarts of the process.
+    """
+    url = args.launch_url or launch_url(args.profile)
+    if not url:
+        raise RuntimeError('No DSH launch URL found in the logs of this profile; pass the URL DSH printed with --launch-url.')
+    parts = urllib.parse.urlsplit(url)
+    if parts.scheme not in ('http', 'https') or not parts.hostname:
+        raise RuntimeError('The launch URL must be an http(s) URL.')
+    connection = (http.client.HTTPSConnection if parts.scheme == 'https' else http.client.HTTPConnection)(parts.netloc, timeout=5)
+    try:
+        connection.request('GET', (parts.path or '/') + '?' + parts.query)
+        response = connection.getresponse()
+        response.read()
+        cookies = SimpleCookie()
+        for header in response.headers.get_all('set-cookie') or []:
+            cookies.load(header)
+    finally:
+        connection.close()
+    if response.status != 303 or not cookies:
+        raise RuntimeError(f'DSH refused the launch token (HTTP {response.status}); the log may belong to an earlier process.')
+    lines = ['# Netscape HTTP Cookie File']
+    for morsel in cookies.values():
+        expires = int(time.time() + int(morsel['max-age'] or 0)) if morsel['max-age'] else 0
+        lines.append('\t'.join([('#HttpOnly_' if morsel['httponly'] else '') + parts.hostname, 'FALSE', morsel['path'] or '/',
+                                'TRUE' if morsel['secure'] else 'FALSE', str(expires), morsel.key, morsel.value]))
+    jar = control(args.profile) / 'cookies.txt'
+    jar.unlink(missing_ok=True)
+    with os.fdopen(os.open(jar, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), 'w') as file:
+        file.write('\n'.join(lines) + '\n')
+    print(str(jar))
+
+
 PART_ERROR = 2
 SETUP_WAITS = 3
 
@@ -148,11 +202,16 @@ def stop(args, intentional=True):
     print('dsh-superagent stopped. Automatic recovery is paused until start/restart.' if intentional else 'dsh-superagent stopped.')
 
 
+def logs(profile):
+    """Return the log files this script wrote for `profile`, oldest first."""
+    name = re.compile(re.escape(f'dsh-superagent-{profile}-') + r'\d{8}-\d{6}-\d+\.log')
+    found = (path for path in ARTIFACTS.iterdir() if name.fullmatch(path.name)) if ARTIFACTS.is_dir() else ()
+    return sorted(found, key=lambda path: path.stat().st_mtime)
+
+
 def prune_logs(profile):
     """Retain only the newest `KEEP_LOGS` log files for `profile`."""
-    name = re.compile(re.escape(f'dsh-superagent-{profile}-') + r'\d{8}-\d{6}-\d+\.log')
-    logs = sorted((path for path in ARTIFACTS.iterdir() if name.fullmatch(path.name)), key=lambda path: path.stat().st_mtime)
-    for path in logs[:-KEEP_LOGS]:
+    for path in logs(profile)[:-KEEP_LOGS]:
         path.unlink(missing_ok=True)
 
 
@@ -208,7 +267,7 @@ def start(args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=['start', 'stop', 'restart', 'status'])
+    parser.add_argument('action', choices=['start', 'stop', 'restart', 'status', 'login'])
     parser.add_argument('--profile', default=os.environ.get('DSH_SUPERAGENT_PROFILE') or 'superagent',
                         help='DSH profile that loads dsh-superagent; its tmux session is dsh-<profile>.')
     parser.add_argument('--url', default=os.environ.get('DSH_SUPERAGENT_URL') or 'http://127.0.0.1:3082',
@@ -216,6 +275,7 @@ def main():
     parser.add_argument('--timeout', type=float, default=60, help='Startup timeout in seconds.')
     parser.add_argument('--stop-timeout', type=float, default=300,
                         help='Graceful shutdown timeout in seconds; running Executor Sessions finish their step first.')
+    parser.add_argument('--launch-url', help='For login: the tokenized URL DSH printed, when it is not in the newest log.')
     parser.add_argument('--respect-stop', action='store_true',
                         help='For monitoring: never start/restart after an intentional stop.')
     args = parser.parse_args()
@@ -234,6 +294,8 @@ def main():
             return 0
         if args.action == 'status':
             return status(args)
+        if args.action == 'login':
+            return login(args)
         if args.action in ('stop', 'restart'):
             # Only a stop keeps automatic recovery off; a restart whose stop timed out leaves it on.
             stop(args, intentional=args.action == 'stop')

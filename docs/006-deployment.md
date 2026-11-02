@@ -108,6 +108,8 @@ scripts/dsh-superagent status
 
 `stop` and `restart` request graceful shutdown and wait up to five minutes for Executors. They never force-kill the process or touch other tmux sessions.
 
+`login` signs a script in to the Management API, below, and prints the path of the cookie jar it wrote.
+
 `status` prints process ids, health and setup problems. For a different profile or port, use `--profile` and `--url`, or set `DSH_SUPERAGENT_PROFILE` and `DSH_SUPERAGENT_URL`.
 
 `status`, `start` and `restart` exit with one of four codes:
@@ -160,15 +162,26 @@ Setup must succeed before polling or work starts. Overview lists missing require
 
 The panel uses a local HTTP API that agents can also call. `SETUP.md` uses it to save settings, and the service script reads `GET state`.
 
-Send requests to `http://127.0.0.1:<port>/orchestrator/api/` with `x-orchestrator-request: 1`. The host must be `127.0.0.1:<port>` or `localhost:<port>`. Missing headers or an `Origin` from another site receive 403.
+Send requests to `http://127.0.0.1:<port>/orchestrator/api/` with `x-orchestrator-request: 1`. The host must be `127.0.0.1:<port>` or `localhost:<port>`. Missing headers or an `Origin` from another site receive 403. These checks stop other websites; they do not say who is asking.
 
-API saves have the panel's permissions. They can change execution environment and setup account fields, unlike saves made through the main Session's tools.
+Every route but `GET state` also requires the DeepSeek Harness sign-in that its Web UI uses: the browser session cookie, which DeepSeek Harness's Connection verifies. Without it the answer is 401, before the request is read; a request Connection refuses at its own Host and Origin check is answered 403. Reads need it too, since settings, prompts and Source status show configuration and message previews. `GET state` stays open so that `scripts/dsh-superagent status` and the hourly check need no credentials. The panel runs in the signed-in DeepSeek Harness page and sends the cookie itself.
+
+A script or an agent signs in once with the launch token DeepSeek Harness prints at startup:
+
+```sh
+jar=$(scripts/dsh-superagent login)
+curl -s -b "$jar" -H 'x-orchestrator-request: 1' http://127.0.0.1:3082/orchestrator/api/settings
+```
+
+`login` reads the tokenized URL (`dsh web: http://127.0.0.1:<port>/?token=…`) from the newest startup log of the profile, or takes it from `--launch-url`, exchanges it on `GET /` for the cookie, and writes the cookie as a curl cookie jar, `.artifacts/control/profiles/<profile>/cookies.txt`, readable only by its owner. It prints the jar's path. The token changes with each process, but the cookie stays valid across restarts until it expires, 30 days by default (`cookieMaxAgeDays` of DeepSeek Harness's Connection), so sign in again only after it expires or after a 401. Use the same host name as the URL DeepSeek Harness printed, since the cookie belongs to that host and port. Treat the jar as a password.
+
+API saves have the panel's permissions. They can change execution environment and setup account fields, unlike saves made through the main Session's tools. The sign-in keeps other local users and processes without the cookie out; it is not a boundary against the agent itself, whose shell runs as the operator's user and can read the same log and DeepSeek Harness credentials (see Permissions and isolation).
 
 Agents may rely on these routes and fields. The other routes in `src/app/api.ts` serve the panel and change with it.
 
 | Request | Answer |
 | --- | --- |
-| `GET state` | What every page reads: `setup`, with `problem` and `feishuProblem`, each `null` or a setup problem with `place`, `code`, `values` and `detail`, and `accounts` once setup resolved them; `health`, an entry per part, below, with `state` (`starting`, `ready`, `paused` or `error`), `detail` and `at`; `load`, the Executor Sessions `running`, the Tickets `queued` and `maxWorkers`; `paused`; and `masterId` |
+| `GET state` (no sign-in) | What every page reads: `setup`, with `problem` and `feishuProblem`, each `null` or a setup problem with `place`, `code`, `values` and `detail`, and `accounts` once setup resolved them; `health`, an entry per part, below, with `state` (`starting`, `ready`, `paused` or `error`), `detail` and `at`; `load`, the Executor Sessions `running`, the Tickets `queued` and `maxWorkers`; `paused`; and `masterId` |
 | `GET settings` | `blocks`: `policy`, `eval` and `executor`, each with its `value` and its `revision`; `sources`: the Source instances, each with `id`, `kind`, `installed`, its block's `value`, `{"enabled": …, "config": {…}}`, and `revision`, its kind's form, and its setup `problem` when it has one; `policyVersion`; and `environment`, the execution environment's `root` and `variables` |
 | `GET sources` | Each Source's status: `state` (`missing`, `off`, `error`, `setup`, `starting`, `paused` or `ready`), the `health` of its parts, its setup `problem`, the last day's `stats`, the Triggers it `filtered` in that day, and the messages it `dropped` in that day, newest drop first, each with its `channel`, `preview`, `ticket` (`id` and `title`) when it was for one, its `thread` when the store has it, and `dropped.at` and `dropped.reason`, `channelGone` or `channelIgnored` |
 | `PUT settings/<block>` with `{"value": …, "revision": n}` | Saves one block: `saved`, the block's new `revision`, `policy_changed` and `restarting`. `value` is the whole block, as `GET settings` holds it; a missing key takes its default |
@@ -208,8 +221,9 @@ Changing a repository or CLI runs the corresponding setup check first. A failed 
 
 ```sh
 api=http://127.0.0.1:3082/orchestrator/api
-rev=$(curl -s -H 'x-orchestrator-request: 1' $api/settings | jq '.sources[] | select(.id == "github") | .revision')
-curl -s -X PUT -H 'x-orchestrator-request: 1' -H 'content-type: application/json' $api/settings/source:github \
+jar=$(scripts/dsh-superagent login)
+rev=$(curl -s -b "$jar" -H 'x-orchestrator-request: 1' $api/settings | jq '.sources[] | select(.id == "github") | .revision')
+curl -s -X PUT -b "$jar" -H 'x-orchestrator-request: 1' -H 'content-type: application/json' $api/settings/source:github \
   -d "{\"value\": {\"enabled\": true, \"config\": {\"repository\": \"acme/widgets\", \"cli\": \"$HOME/.local/bin/gh-agent\"}}, \"revision\": $rev}"
 ```
 
@@ -267,6 +281,8 @@ Setup problems appear on the overview with a link to the fix, in the panel's lan
 | `status` exits 3 | Setup waits: `setup` says what is missing, and the overview links to the setting that fixes it |
 | `status` exits 1 | The service does not run, runs twice, does not answer, or its runtime reports an error; the output and the newest log say which |
 | `… timed out after 90 s`, `… was stopped by …`, `… exited with code …` or `… could not run: …` | A CLI failed without printing why; run the named program by hand as the operator's user to see its own message |
+| `DeepSeek Harness sign-in required` (401) | The request carries no valid session cookie: run `scripts/dsh-superagent login` and send its jar with `curl -b`. In the panel, reload the DeepSeek Harness page or open the URL it printed at startup |
+| `login` says `DSH refused the launch token` | The newest log belongs to an earlier process, or the service was started outside the script: pass the URL the running DeepSeek Harness printed with `--launch-url` |
 | The panel says dsh-superagent is not answering | It is restarting, or did not start because of its configuration; the DeepSeek Harness log names the cause |
 | `dsh-superagent configuration has keys it does not use` (log) | Remove the named keys; the message says where each value lives now |
 | The log says the plugin is incompatible with the running dsh | Install a DeepSeek Harness version within the `engines.dsh` range |

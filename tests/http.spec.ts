@@ -6,23 +6,28 @@ import { SettingsConflict } from '../src/app/settings.ts'
 import type { HttpHost } from '../src/app/http.ts'
 import { SettingsSchema } from '../src/policy.ts'
 import { SetupError } from '../src/setup.ts'
+import { fakeConnection, PANEL_HEADERS } from './fixtures/connection.ts'
 
 type Handler = (req: unknown, res: unknown) => Promise<void>
 type Headers = Record<string, string | undefined>
-/** Mount management HTTP routes on a fake web server and return a request helper that includes default panel headers. */
+/**
+ * Mount management HTTP routes on a fake web server and a fake DeepSeek Harness Connection, and return a request helper that
+ * includes the headers of a signed-in panel; `connection.admitted` lists the requests the routes asked it to admit.
+ */
 function serve(runtime: Partial<Record<keyof HttpHost, unknown>>, host = '127.0.0.1') {
   let handler: Handler = async () => {}
-  const ctx = { webServer: { host, port: 3082, register: (route: { handler: Handler }) => { handler = route.handler; return () => {} } } }
+  const connection = fakeConnection()
+  const ctx = { connection, webServer: { host, port: 3082, register: (route: { handler: Handler }) => { handler = route.handler; return () => {} } } }
   registerHttp(ctx as never, { ready: Promise.resolve(), ...runtime } as unknown as HttpHost)
-  return async (method: string, path: string, body?: unknown, headers: Headers = {}) => {
+  return Object.assign(async (method: string, path: string, body?: unknown, headers: Headers = {}) => {
     let status = 0, text = ''
     const chunks = body === undefined ? [] : [Buffer.from(typeof body === 'string' ? body : JSON.stringify(body))]
-    const sent = Object.fromEntries(Object.entries({ host: '127.0.0.1:3082', 'x-orchestrator-request': '1', ...headers }).filter(([,
+    const sent = Object.fromEntries(Object.entries({ ...PANEL_HEADERS, ...headers }).filter(([,
       value]) => value !== undefined))
     const req = { method, url: `/orchestrator/api/${path}`, headers: sent, async *[Symbol.asyncIterator]() { yield* chunks } }
     await handler(req, { writeHead: (code: number) => { status = code }, end: (data: string) => { text = data } })
     return { status, body: JSON.parse(text) as Record<string, unknown> }
-  }
+  }, { connection })
 }
 
 it('answers each kind of failure with its own status', async () => {
@@ -95,4 +100,45 @@ it('answers a prompt save that lost a race with 409, and a settings body over 12
   expect(await call('PUT', 'settings/executor', { value, revision: 0 })).toEqual({ status: 400,
     body: { error: `Request exceeds ${128 * 1024} bytes` } })
   expect(saves).toEqual([])
+})
+
+it('answers every route but GET state only for a request DeepSeek Harness signed in, before it reads the body or waits for startup', async () => {
+  const saves: unknown[] = []
+  const call = serve({
+    store: { settings: () => SettingsSchema.parse({}), tickets: { get: () => ({ id: 't1' }), open: () => [] } },
+    executor: { activeCount: () => 0 },
+    configured: () => false, machine: { stateDir: '/srv', promptMaxChars: { get: () => 1 }, admissionContextMaxPages: { get: () => 1 },
+      admissionContextTimeoutMs: { get: () => 1 } },
+    masterId: 'master', health: {},
+    sources: { instances: () => [{ id: 'github' }] },
+    engine: { retryTicket: (id: string) => saves.push(['retry', id]) },
+    settings: { save: async (...args: unknown[]) => { saves.push(args); return { saved: true, revision: 1, restarting: false } } },
+  })
+  const anonymous = { cookie: undefined }
+  const refused = { status: 401, body: { error: expect.stringContaining('DeepSeek Harness sign-in required') } }
+  // Writes, reads that carry configuration or messages, unknown routes and malformed paths all need the session cookie.
+  for (const [method, path] of [['PUT', 'settings/executor'], ['POST', 'tickets/t1/retry'], ['POST', 'executor/pause'], ['PUT', 'prompts'],
+    ['GET', 'settings'], ['GET', 'sources'], ['GET', 'prompts'], ['GET', 'tickets'], ['GET', 'nothing/here'], ['GET', 'threads/%E0']] as const) {
+    expect(await call(method, path, { value: {}, revision: 0 }, anonymous), `${method} ${path}`).toEqual(refused)
+    expect(await call(method, path, { value: {}, revision: 0 }, { cookie: 'dsh_session=forged' }), `${method} ${path}`).toEqual(refused)
+  }
+  expect(saves).toEqual([])
+  // A signed-in request is answered.
+  expect(await call('PUT', 'settings/executor', { value: {}, revision: 0 })).toMatchObject({ status: 200, body: { saved: true } })
+  expect(await call('POST', 'tickets/t1/retry')).toEqual({ status: 200, body: { retried: true } })
+  expect(saves).toEqual([['executor', {}, 0, 'panel'], ['retry', 't1']])
+  // GET state answers without a session, so the service script's status check needs no credentials.
+  expect(await call('GET', 'state', undefined, anonymous)).toMatchObject({ status: 200, body: { masterId: 'master', paused: false } })
+  expect(await call('GET', 'state?x=1', undefined, anonymous)).toMatchObject({ status: 200 })
+  // Sign-in does not replace the same-origin check: a signed-in request without the panel header is still refused first.
+  call.connection.admitted.length = 0
+  expect(await call('PUT', 'settings/executor', { value: {}, revision: 0 }, { 'x-orchestrator-request': undefined }))
+    .toEqual({ status: 403, body: { error: 'Same-origin management request required' } })
+  expect(call.connection.admitted).toEqual([])
+})
+
+it('passes on the status of a request Connection refuses at its Host and Origin fence', async () => {
+  const call = serve({})
+  call.connection.admit = () => ({ rejection: 403 })
+  expect(await call('POST', 'executor/pause', { paused: true })).toEqual({ status: 403, body: { error: 'Request refused by DeepSeek Harness' } })
 })

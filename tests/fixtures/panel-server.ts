@@ -440,6 +440,9 @@ export function usePanelServer(cleanup: () => void) {
       const method = init?.method ?? 'GET'
       const body: unknown = init?.body ? JSON.parse(String(init.body)) : undefined
       server.requests.push({ path: decodeURIComponent(`${path}${address.search}`), method, ...body === undefined ? {} : { body } })
+      // The management API signs a request in by the DeepSeek Harness session cookie, which only a request that sends
+      // same-origin credentials carries.
+      if (init?.credentials !== 'same-origin') { server.misuse.push(`${method} ${path} sent no session cookie`); return new Reply({ error: 'DeepSeek Harness sign-in required' }, 401) }
       const route = match(method, path.split('/'))
       if (!route) return new Reply({ error: 'Unknown operation' }, 404)
       const answer = await run(route.key, route.params, address.searchParams, body)
