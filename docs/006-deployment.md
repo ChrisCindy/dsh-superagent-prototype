@@ -170,7 +170,7 @@ Check dsh-superagent: run `scripts/dsh-superagent --profile superagent status` i
 
 Setup must succeed before polling or work starts. Overview lists missing requirements and links to their settings. A settings change runs setup again. If you fix something outside the application, such as CLI authentication, choose **Check again**.
 
-1. **Sources.** Set the GitHub repository (`owner/name`) and agent CLI, for example `/home/me/.local/bin/gh-agent`. Requests normally arrive through the agent account's notifications. A new Issue or comment mentioning the account arrives on the next poll; adding a mention by editing an existing Issue body does not. Post a new comment instead. For Feishu, set the bot CLI, chats, each chat's receive-all or mentions-only mode, and whether to receive direct messages.
+1. **Sources.** Set the GitHub repository (`owner/name`) and agent CLI, for example `/home/me/.local/bin/gh-agent`. Requests normally arrive through the agent account's notifications. A new Issue or comment mentioning the account arrives on the next poll; adding a mention by editing an existing Issue body does not. Post a new comment instead. For Feishu, set the bot CLI, chats, each chat's receive-all or mentions-only mode, and whether to receive direct messages. For another repository, add another GitHub Source below the first, one per repository. Its ID, such as `github-docs`, cannot change later. It starts off and copies the agent CLI, since all GitHub Sources share the agent account. Set its repository and switch it on; saving restarts dsh-superagent.
 2. **Policy.** The two example rules can be edited or removed. Under **On each Source**, add the GitHub accounts and Feishu users who may ask for work; until a list has someone, no request can become a Ticket. With Feishu, a chat can be chosen to sync the list from, at startup and on **Sync now**.
 3. **Execution.** The directory root and a prepare command. To give each Ticket a checkout of the repository:
 
@@ -210,10 +210,12 @@ Agents may rely on these routes and fields. The other routes in `src/app/api.ts`
 
 | Request | Answer |
 | --- | --- |
-| `GET state` (no sign-in) | What every page reads: `setup`, with `problem` and `feishuProblem`, each `null` or a setup problem with `place`, `code`, `values` and `detail`, `warnings`, the setup warnings in the same shape, which leave dsh-superagent running, and `accounts` once setup resolved them; `health`, an entry per part, below, with `state` (`starting`, `ready`, `paused` or `error`), `detail` and `at`; `load`, the Executor Sessions `running`, the Tickets `queued` and `maxWorkers`; `paused`; and `masterId` |
+| `GET state` (no sign-in) | What every page reads: `setup`, with `problem` and `feishuProblem`, each `null` or a setup problem with `place`, `code`, `values` and `detail`, `warnings`, the setup warnings in the same shape, which leave dsh-superagent running, and `accounts` once setup resolved them, with `repository`, the first GitHub Source's, and `repositories`, by Source ID; `health`, an entry per part, below, with `state` (`starting`, `ready`, `paused` or `error`), `detail` and `at`; `load`, the Executor Sessions `running`, the Tickets `queued` and `maxWorkers`; `paused`; and `masterId` |
 | `GET settings` | `blocks`: `policy`, `eval` and `executor`, each with its `value` and its `revision`; `sources`: the Source instances, each with `id`, `kind`, `installed`, its block's `value`, `{"enabled": …, "config": {…}}`, and `revision`, its kind's form, and its setup `problem` when it has one; `policyVersion`; and `environment`, the execution environment's `root` and `variables` |
 | `GET sources` | Each Source's status: `state` (`missing`, `off`, `error`, `setup`, `starting`, `paused` or `ready`), the `health` of its parts, its setup `problem`, its setup `warnings` when it has any, the last day's `stats`, the Triggers it `filtered` in that day, and the messages it `dropped` in that day, newest drop first, each with its `channel`, `preview`, `ticket` (`id` and `title`) when it was for one, its `thread` when the store has it, and `dropped.at` and `dropped.reason`, `channelGone` or `channelIgnored` |
 | `PUT settings/<block>` with `{"value": …, "revision": n}` | Saves one block: `saved`, the block's new `revision`, `policy_changed` and `restarting`. `value` is the whole block, as `GET settings` holds it; a missing key takes its default |
+| `POST sources` with `{"kind": "github", "id": "github-docs"}` | Adds a Source instance of a kind that allows several, switched off: `saved`, `revision` and `restarting`. The ID is the kind, a hyphen, then lowercase letters and digits joined by single hyphens, at most 40 characters |
+| `POST sources/<id>/remove` with `{"revision": n}` | Removes an added Source instance and its part of the Policy: `removed`, `revision` and `restarting`, true when it was on. Refused for a kind's first instance and while an open Ticket uses the instance |
 | `POST executor/pause` with `{"paused": true}` or `false` | Pauses or resumes processing: `paused` |
 | `POST setup/check` | Runs setup again by restarting dsh-superagent: `restarting: true`. Refused when setup has nothing to fix |
 | `POST policy-sync/<source id>` | Syncs that Source's allowed list now: `policy`, the Source's part as saved |
@@ -232,7 +234,7 @@ Health entries are grouped by responsibility:
 | `evals` | Unavailable Evals from the last hour with no later judgement or dismissal |
 | `assessment`, `launch`, `delivery`, `relay`, `notice`, `reply` | Stored work described in [003 Execution](003-execution.md); delivery counts waiting work, while reply covers Channel messages |
 | `worker` | Executor Session event handling; appears after its first failure |
-| `github`, `feishu`, `history` | Source polling, events and history recovery |
+| `github`, `feishu`, `history` | Source polling, events and history recovery; another GitHub Source reports under its ID, such as `github-docs` |
 | `sync:<source id>` | Allowed-list synchronization |
 
 A refusal has a status and `error`, its English text:
@@ -244,7 +246,7 @@ A refusal has a status and `error`, its English text:
 
 The blocks:
 
-- `source:github`, `source:feishu`: `{"enabled": true, "config": {…}}`. GitHub's config has `repository` and `cli`, and the switches `observeIssues`, `observePulls`, `observeComments` and `observeCi`, off by default, which receive every new Issue, new pull request and comment in the repository and the default branch's CI; Feishu's has `cli`, `chats` as `[{"chatId": "oc_…", "name": "…", "listen": "mentions"}]` (or `"all"`), `directMessages`, and `otherChats` as `"none"` or `"mentions"`.
+- `source:<id>`, such as `source:github`, `source:github-docs` or `source:feishu`: `{"enabled": true, "config": {…}}`. GitHub's config has `repository` and `cli`, and the switches `observeIssues`, `observePulls`, `observeComments` and `observeCi`, off by default, which receive every new Issue, new pull request and comment in the repository and the default branch's CI; Feishu's has `cli`, `chats` as `[{"chatId": "oc_…", "name": "…", "listen": "mentions"}]` (or `"all"`), `directMessages`, and `otherChats` as `"none"` or `"mentions"`.
 - `policy`: `{"rules": […], "sources": {"github": {"allowed": [{"id": "<login>"}], "bots": [{"id": "dependabot[bot]"}]}, "feishu": {"allowed": [{"id": "ou_…", "name": "…"}], "syncChat": "oc_…", "admission": {"oc_…": {"unlistedAddressed": "explicit"}}}}}`. `bots` lists the bots whose messages may become inferred candidates. An `admission` row is keyed by chat id, `other` or `direct` for Feishu, and by `issues`, `pulls`, `comments` or `ci` for GitHub; an unset cell takes its default (see [002 Authorization](002-authorization.md)).
 - `eval`: `mode`, `timeoutSeconds`, `maxInferredPerHour` and `model`.
 - `executor`: `model`, `maxWorkers`, `directory`, `prepare`, `blockedCommands`, `sandbox` (`workspace`, the default, or `full`) and `writableRoots`, absolute paths, and `merge`, `{"cli": "", "method": "squash", "maxLines": 200, "requireApprovals": 1}`, and `budget`, `{"turns": 300, "minutes": 120, "tokens": null}` (see [003 Execution](003-execution.md)). The main Session's tools cannot change `directory`, `prepare`, `blockedCommands`, `sandbox`, `writableRoots`, `merge` or `budget`. Saves that change `sandbox` or `writableRoots` are checked as setup checks them, and restart. A save that changes `merge.cli` first runs it, as setup probes CLIs, and refuses one that cannot read its account or is signed in to the agent account; merge settings take effect without a restart. The processing pause is a setting of its own, `paused`, which `POST executor/pause` sets.
@@ -265,9 +267,9 @@ Setup uses the DeepSeek Harness subprocess service, as worker shells do. It remo
 
 Setup first checks how Sessions are confined: the profile must hold the permission presets the sandbox setting uses, and no writable root may contain or lie inside the state directory, `$DSH_HOME` or the profile directory, or, under the workspace sandbox, lack the sandbox's grant.
 
-Setup verifies the GitHub repository and the agent's push access, writes the worker environment, and checks that git uses only the agent credentials for github.com. A Feishu setup failure disables only the Feishu Source.
+Setup verifies each GitHub Source's repository and the agent's push access to it, checks that every GitHub Source's CLI is signed in to the same agent account and that no repository is listed twice, writes the worker environment, and checks that git uses only the agent credentials for github.com. A Feishu setup failure disables only the Feishu Source.
 
-Setup also reads, as the agent account, the rulesets of the default branch (`repos/<repository>/rules/branches/<branch>`, and `rulesets/<id>` for whether the account can bypass one) and its branch protection (`branches/<branch>/protection`). When no rule requires at least one approving review that a push dismisses, or the agent account can bypass the rule that does, it records a setup warning. When it cannot read them, such as a 403 or 404 for an account without admin rights, the warning says it cannot verify. A warning never stops dsh-superagent: Overview and the GitHub Source show it with its fix, and **Check again** runs setup once the repository settings changed.
+Setup also reads, as the agent account and for each repository, the rulesets of the default branch (`repos/<repository>/rules/branches/<branch>`, and `rulesets/<id>` for whether the account can bypass one) and its branch protection (`branches/<branch>/protection`). When no rule requires at least one approving review that a push dismisses, or the agent account can bypass the rule that does, it records a setup warning. When it cannot read them, such as a 403 or 404 for an account without admin rights, the warning says it cannot verify. A warning never stops dsh-superagent: Overview and the GitHub Source show it with its fix, and **Check again** runs setup once the repository settings changed.
 
 The process environment that setup writes:
 
@@ -310,6 +312,8 @@ Setup problems appear on the overview with a link to the fix, in the panel's lan
 | `The agent GitHub CLI cannot read its account` | Sign the wrapper in with `auth login` |
 | `@… cannot read …` or `@… cannot push to …` | Give the agent account write access to the repository |
 | `The GitHub Source names no repository.` | Set the repository, `owner/name`, on the GitHub card |
+| `… GitHub Sources share the agent's account …` | Point the named Source's CLI at the agent account's wrapper |
+| `Another GitHub Source already receives …` | Remove the repository from one of the two Sources |
 | A Ticket fails with `The prepare command failed: …` | The output names the cause, such as a wrong clone path; fix the command, then retry the Ticket |
 | `git does not read the github.com credential configuration dsh-superagent writes` | Install git 2.32 or later |
 | A Ticket fails with `The git configuration of the repository in … sets …` | Remove the named credential or `http.*.extraheader` settings from the clone's `.git/config` |
