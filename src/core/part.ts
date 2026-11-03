@@ -48,12 +48,18 @@ export abstract class EnginePart {
     this.repo.triggers.saveDisposition(trigger.id, { ...disposition, handbacks })
     return decided && !this.owners(trigger).length && this.queueForEval(trigger)
   }
-  /** Record that a ticket's worker took a person's message up as within the ticket, by acknowledging or answering it. */
+  /**
+   * Record that a ticket's worker took a person's message up as within the ticket, by acknowledging or answering it. Only a
+   * ticket the message reached as its own and that did not hand it back takes it up: a reply to a message no fan-out or
+   * attach gave the ticket, such as the one it started from, or one it follows for context, decides nothing.
+   */
   protected takeUp(ticketId: string, triggerId: string): void {
     const disposition = this.repo.triggers.disposition(triggerId)
-    if (disposition && !disposition.acked?.includes(ticketId)) {
-      this.repo.triggers.saveDisposition(triggerId, { ...disposition, acked: [...disposition.acked ?? [], ticketId] })
-    }
+    if (!disposition || disposition.acked?.includes(ticketId)) return
+    const own = disposition.fanout.includes(ticketId) && !disposition.context?.includes(ticketId)
+      && !disposition.handbacks?.some(item => item.ticketId === ticketId)
+    // An empty list still says take-ups are recorded on the message, so an acknowledgement in the outbox counts for none (see `takenUp`).
+    if (own || !disposition.acked) this.repo.triggers.saveDisposition(triggerId, { ...disposition, acked: [...disposition.acked ?? [], ...own ? [ticketId] : []] })
   }
   /** Queue a Trigger on its primary Thread for the next Eval, unless it waits there already or an Eval holds it. */
   protected queueForEval(trigger: Trigger): boolean {

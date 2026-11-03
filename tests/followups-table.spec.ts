@@ -439,7 +439,7 @@ const rows: Row[] = [
     h.receive('3')
     expect([h.ended(k), h.owners('2'), h.owners('3')]).toEqual([undefined, [k], [k]])
   } },
-  // Rules the table found wrong, which later commits change.
+  // A take-up counts only while the ticket decides the message.
   { from: 'taken', event: 'the worker that took it up hands it back, and the other ticket ends without taking it up', to: 'handedBack',
     doc: '002', check: h => {
       const a = h.ticket('1'), b = h.ticket('5', 't5')
@@ -460,8 +460,8 @@ const rows: Row[] = [
       h.ack(b, '2')
       expect(h.owners('2')).toEqual([a])
       h.report(a, 'dropped')
-      // Locked as found: the acknowledgement of a ticket that never decided it keeps it from Eval.
-      expect(h.queued('2')).toBe(false)
+      // A ticket that never decided it takes nothing up by replying to it, so no ticket decides it and it goes to Eval.
+      expect(h.queued('2')).toBe(true)
     } },
 ]
 
