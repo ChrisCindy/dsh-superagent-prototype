@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { ADMISSION_DEFAULTS, ADMISSION_OPTIONS, type Admission, type AdmissionCell } from '../admission.ts'
 import type { AdmissionRowView } from '../sources/kind.ts'
 import { LIMITS } from '../limits.ts'
+import { MANDATE_ACTIONS, type MandateAction } from '../core/model.ts'
 import { DECISION_FILTERS, DECISION_QUERIES, usePoll, type DecisionFilter, type Settings, type SourceView } from './api.ts'
 import { Button, DisclosureRow, Icon, InfoTip, Input, Pill, SegmentedControl, Switch } from './controls.tsx'
 import { SaveBar } from './draft.tsx'
@@ -39,6 +40,42 @@ export function EvalStatus({ filter, window, paused }: { filter: DecisionFilter;
 }
 
 type Rule = Settings['policy']['rules'][number]
+type Limits = NonNullable<Rule['limits']>
+/** A rule's limits with `next` applied; a field set to undefined is dropped, and limits left empty are dropped too. */
+function withLimits(rule: Rule, next: Partial<Limits>): Rule {
+  const merged = { ...rule.limits, ...next }
+  const limits = Object.fromEntries(Object.entries(merged).filter(([, value]) => value !== undefined)) as Limits
+  const { limits: _limits, ...rest } = rule
+  return Object.keys(limits).length ? { ...rest, limits } : rest
+}
+/** The limits a rule presets for its tickets: the files they may change, one glob per line, and the actions they may take. */
+function RuleLimits({ rule, onChange }: { rule: Rule; onChange: (rule: Rule) => void }) {
+  const { t } = usePanel()
+  const paths = rule.limits?.paths ?? []
+  const actions = rule.limits?.actions
+  const toggle = (action: MandateAction, on: boolean) => onChange(withLimits(rule, { actions: MANDATE_ACTIONS.filter(item => item === action
+    ? on : actions?.includes(item)) }))
+  return <>
+    <Field label={t('ruleLimitPaths')} hint={t('ruleLimitPathsHint')}>
+      {/* Committed on blur, so a line being typed is not dropped; a save blurs it first. */}
+      <textarea key={paths.join('\n')} className="dt-textarea dt-mono" rows={2} defaultValue={paths.join('\n')} placeholder="locale/**"
+        aria-label={t('ruleLimitPaths')} onBlur={event => {
+          const lines = [...new Set(event.target.value.split('\n').map(line => line.trim()).filter(Boolean))]
+          if (lines.join('\n') !== paths.join('\n')) onChange(withLimits(rule, { paths: lines.length ? lines : undefined }))
+        }} />
+    </Field>
+    <Field label={t('ruleLimitActions')} hint={t('ruleLimitActionsHint')}>
+      <span className="dt-flow">
+        <Switch checked={!!actions} onChange={on => onChange(withLimits(rule, { actions: on ? [...MANDATE_ACTIONS] : undefined }))}
+          label={t('ruleLimitActions')} />
+        {actions && MANDATE_ACTIONS.map(action => <label key={action} className="dt-flow">
+          <input type="checkbox" checked={actions.includes(action)} onChange={event => toggle(action, event.target.checked)} />
+          {t(`mandateAction.${action}`)}
+        </label>)}
+      </span>
+    </Field>
+  </>
+}
 function RuleRow({ rule, expanded, onToggle, onChange, onDuplicate, onRemove }: {
   rule: Rule; expanded: boolean; onToggle: () => void; onChange: (rule: Rule) => void; onDuplicate: () => void; onRemove: () => void
 }) {
@@ -56,6 +93,7 @@ function RuleRow({ rule, expanded, onToggle, onChange, onDuplicate, onRemove }: 
             placeholder={t('ruleInstructionPlaceholder')}
             onChange={event => onChange({ ...rule, instruction: event.target.value })} />
         </Field>
+        <RuleLimits rule={rule} onChange={onChange} />
         <div className="dt-actions">
           <Button variant="ghost" size="sm" icon={<Icon name="copy" />} onClick={onDuplicate}>{t('duplicate')}</Button>
           <Button variant="ghost" size="sm" icon={<Icon name="trash" />} onClick={onRemove}>{t('remove')}</Button>

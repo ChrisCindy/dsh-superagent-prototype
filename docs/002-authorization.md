@@ -108,6 +108,29 @@ Each rule describes a kind of proactive work. The Ticket's Mandate records the m
 
 For that Ticket, a rule's process and communication requirements override the defaults. A silence rule can suppress an acknowledgement; a review rule can name the required reviewer and approval before merge. Requirements that apply to every Ticket belong in team prompt sections instead.
 
+### Mandate limits
+
+A Mandate's scope is text for the Executor. Its optional `limits` are the part the host checks:
+
+- `paths`: globs of the repository files the work may change, such as `locale/**`. A glob matches the whole path from the repository root: `*` matches within one folder, `**` across folders, `?` one character, and `{a,b}` either alternative.
+- `actions`: what the work may do, out of `comment`, `push`, `open_pr` and `merge`.
+
+A rule can preset limits on the panel. A field is limited only when every rule the assessment matched presets it. The Mandate then allows the union of what those rules allow, because the work may belong to any of them. A matched rule that leaves a field out sets no limit on it. An explicit request matches no rule and so has no limits. The assessment can also give `paths`; they apply only when the matched rules set none. A Mandate without limits works as before.
+
+Limits are fixed at accept, like the rest of the Mandate. A rule's limits are part of the Policy version, so editing them notifies the Tickets accepted under the rule, but their Mandates keep the limits they were given. The Executor's assignment states its limits.
+
+What the host checks, and what it cannot:
+
+| Limit | The host checks | Not checked |
+| --- | --- | --- |
+| `paths` | On a `ready` Report, the files of each open pull request the Ticket opened, a renamed file under both names. A file outside the paths, or a pull request with more files than GitHub lists (3,000), turns the Report into `blocked` with an Attention that names the files, so the Ticket does not reach `person/review`. A merge request for such a pull request is refused | A pull request the Ticket started from, which holds other people's changes; commits that are in no pull request |
+| `comment` | `orchestrator_ack` refuses | Comments the Executor posts with `gh`; replies the main Session sends |
+| `push` | Nothing: no host tool pushes | `git push` itself |
+| `open_pr` | The host does not bind a pull request the Ticket opened, whether reported or found by polling | `gh pr create` itself: the pull request exists, but the Ticket does not follow it |
+| `merge` | `orchestrator_merge_request` refuses | The Executor's `gh` refuses merges for every Ticket anyway |
+
+A person answers the Attention of a `paths` refusal: ask the Executor to drop the other files, or review and merge the pull request themselves. Wider work needs a new request.
+
 ## Policy version
 
 Rules, accept mode and each Source's Policy form the Policy version. Every Mandate records the version under which it was accepted.

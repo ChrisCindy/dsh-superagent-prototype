@@ -5,8 +5,8 @@
 import { LIMITS } from './limits.ts'
 import { z } from 'zod'
 import { ADMISSION_DEFAULTS, type Admission, type AdmissionCell, type AdmissionRow } from './admission.ts'
-import { key, type AssessmentOutcome, type Mandate, type Policy, type PolicyEffect, type SourceScope, type Strength, type Thread, type Ticket,
-  type Trigger, type ActorRef, type GateResult } from './core/index.ts'
+import { globPattern, key, MANDATE_ACTIONS, type AssessmentOutcome, type Mandate, type MandateLimits, type Policy, type PolicyEffect, type SourceScope,
+  type Strength, type Thread, type Ticket, type Trigger, type ActorRef, type GateResult } from './core/index.ts'
 import { sameName } from './infra/text.ts'
 import { WORKER_COMMANDS } from './infra/environment.ts'
 
@@ -27,9 +27,32 @@ export function directionAllowed(value: unknown): value is AdmissionDirection {
   const result = AdmissionDirectionSchema.safeParse(value)
   return result.success && result.data.implementation_requested && result.data.target_basis !== 'undetermined' && !result.data.requires_design_decision
 }
+/** A glob over repository-relative paths, as `globPattern` reads it, such as `locale/**`. */
+export const GlobSchema = z.string().trim().max(200).refine(glob => { try { globPattern(glob); return true } catch { return false } },
+  'A repository-relative glob such as locale/**: no leading /, no . or .. segments, balanced braces')
+const PathsSchema = z.array(GlobSchema).min(1).max(20)
+/** Mandate limits a rule presets for the tickets accepted under it (see `mandateLimits`); a field it leaves out sets no limit. */
+export const LimitsSchema = z.object({
+  paths: PathsSchema.optional(),
+  actions: z.array(z.enum(MANDATE_ACTIONS)).refine(actions => new Set(actions).size === actions.length, 'Duplicate actions').optional(),
+}).strict()
 export interface Assessment {
   decision: 'accept' | 'ignore' | 'unavailable'; rule_assessments: RuleAssessment[]; direction: unknown
   title: string; scope: string; reason: string; intent_evidence?: string | null; acknowledgement?: string | null; worktree_name?: string
+  paths?: string[] | null
+}
+/**
+ * The limits of a Mandate accepted under `rules` with the assessment's `paths`. A field is limited only when every matched
+ * rule presets it, to the union of what they allow, since the work may be any of theirs; a matched rule without it, like an
+ * explicit request, which matches none, sets no limit. The rules' paths take precedence over the assessment's, which limit
+ * the files only when the rules do not.
+ */
+export function mandateLimits(rules: readonly Rule[], paths?: readonly string[] | null): MandateLimits | undefined {
+  const preset = <T>(field: (limits: z.infer<typeof LimitsSchema>) => readonly T[] | undefined): T[] | undefined =>
+    rules.length && rules.every(rule => rule.limits && field(rule.limits)) ? [...new Set(rules.flatMap(rule => field(rule.limits!)!))] : undefined
+  const files = preset(limits => limits.paths) ?? (paths?.length ? [...new Set(paths)] : undefined)
+  const actions = preset(limits => limits.actions)
+  return files || actions ? { ...files ? { paths: files } : {}, ...actions ? { actions } : {} } : undefined
 }
 /**
  * Validate an assessment against enabled rules and convert it into an engine `AssessmentOutcome`.
@@ -52,12 +75,13 @@ export function assessmentOutcome(assessment: Assessment, settings: Pick<Setting
   if (!matches.length) return { kind: 'ignore', audit, reason: { code: 'noRuleMatched' } }
   if (!assessment.intent_evidence) throw new Error('Acceptance requires intent_evidence')
   const { title, scope, worktree_name: name } = assessment
+  const limits = mandateLimits(enabled.filter(rule => matches.some(match => match.rule_id === rule.id)), assessment.paths)
   if (strength === 'inferred' && settings.eval.mode !== 'auto') {
-    const proposal = { title, scope, worktree_name: name }
+    const proposal = { title, scope, worktree_name: name, ...limits ? { limits } : {} }
     return { kind: 'ignore', audit: { ...audit, would_accept: true, proposal }, reason: { code: 'observed', values: { text: assessment.reason } } }
   }
   return { kind: 'accept', title, scope, reason: assessment.reason, ...(assessment.acknowledgement ? { acknowledgement: assessment.acknowledgement } : {}),
-    rules: matches.map(match => match.rule_id), audit, ...(name ? { name } : {}) }
+    rules: matches.map(match => match.rule_id), audit, ...(name ? { name } : {}), ...(limits ? { limits } : {}) }
 }
 const DEFAULT_RULES = [
   { id: 'copy', name: 'Copy fixes', enabled: true, instruction: 'Explicit requests to correct a typo, wording, punctuation or existing translation. Preserve product promises and business meaning.' },
@@ -79,11 +103,12 @@ export type Budget = z.infer<typeof BudgetSchema>
 export const RuleBudgetSchema = z.object({ turns: limit(LIMITS.budgetTurns).optional(), minutes: limit(LIMITS.budgetMinutes).optional(),
   tokens: limit(LIMITS.budgetTokens).optional() }).strict()
 /**
- * An assessment rule; its instruction may also specify PR reviewers and whether to wait for their approval. Its `budget` sets
- * what each Assignment of a ticket accepted under it may use, which is no part of authorization.
+ * An assessment rule; its instruction may also specify PR reviewers and whether to wait for their approval. Its `limits` preset
+ * what the Mandates of tickets accepted under it let the work change and do (see `mandateLimits`), which is part of
+ * authorization. Its `budget` sets what each Assignment of such a ticket may use, which is not.
  */
 export const RuleSchema = z.object({ id: RuleIdSchema, name: z.string().trim().min(1).max(LIMITS.ruleName), enabled: z.boolean(),
-  instruction: z.string().trim().min(1).max(LIMITS.ruleInstruction), budget: RuleBudgetSchema.optional() }).strict()
+  instruction: z.string().trim().min(1).max(LIMITS.ruleInstruction), limits: LimitsSchema.optional(), budget: RuleBudgetSchema.optional() }).strict()
 export type Rule = z.infer<typeof RuleSchema>
 /** A rule as it bears on authorization: without its budget. */
 const authorizing = ({ budget: _budget, ...rule }: Rule) => rule

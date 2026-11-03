@@ -11,7 +11,7 @@ Each open Ticket has one stage, determined by what it is waiting for. Read the t
 | person / held | A person held it, and no person's message or release has lifted the hold | Held |
 | person / delivery | Delivering an Input to the Executor Session failed; it is retried after 2 seconds, then after a delay that doubles up to a minute, and a success, a new Assignment or the Ticket's end clears it | Input undelivered |
 | person / answer | It has an Attention | Awaiting answer |
-| person / review | The latest Report is `ready` | Awaiting review |
+| person / review | The latest Report is `ready`. A `ready` Report whose pull request changes files outside the Mandate's `paths` is recorded as `blocked` instead (002, Mandate limits) | Awaiting review |
 | person / blocked, failed | The latest Report is `blocked` or `failed`, and no person's message reached the Ticket since | Blocked · Failed |
 | working / queued | No Assignment, or a pending one | Queued |
 | idle | The latest Report is `waiting`, or the Assignment ended | Waiting for a Trigger |
@@ -88,10 +88,12 @@ The host checks a merge, and GitHub enforces it; the prompt only says when to as
 
 An Executor never merges or enables auto-merge with its `gh`: GitHub attributes the merge to whoever enabled auto-merge, and that must not be the agent account. It calls `orchestrator_merge_request` with the pull request's number. The host refuses unless every check passes:
 
+- the Mandate's limits allow `merge` (check `limits`);
 - the Ticket opened the pull request and follows it (`follows` with `own`), and the pull request is open;
 - it is not a draft;
 - every CI check run and commit status of its head commit succeeded, none failing or still running;
 - its additions plus deletions are at most `maxLines`;
+- every file it changes is within the Mandate's `paths`, when it has some (check `paths`);
 - approvals of accounts other than the agent's cover the head commit, at least `requireApprovals` of them, counting each person's latest decision and no bot; an approval of an earlier commit with the same tree, such as one rewritten to credit a reviewer, covers it too;
 - no requested change is outstanding;
 - the merge CLI is set and is signed in to an account other than the agent's.

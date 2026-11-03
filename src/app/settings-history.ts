@@ -11,7 +11,7 @@ export type SettingsChangeCode = 'ruleAdded' | 'ruleRenamed' | 'ruleInstruction'
   | 'sourceEnabled' | 'sourceDisabled' | 'sourceField' | 'sourceRowsAdded' | 'sourceRowsRemoved' | 'sourceRowsChanged' | 'sourceAdmission'
   | 'mode' | 'timeout' | 'proactiveLimit' | 'evalModel' | 'executorModel' | 'maxWorkers' | 'paused' | 'resumed' | 'executionDirectory' | 'prepareCommand'
   | 'blockedCommands' | 'sandbox' | 'writableRoots' | 'mergeCli' | 'mergeMethod' | 'mergeMaxLines' | 'mergeApprovals'
-  | 'budgetTurns' | 'budgetMinutes' | 'budgetTokens' | 'ruleBudget'
+  | 'budgetTurns' | 'budgetMinutes' | 'budgetTokens' | 'ruleBudget' | 'ruleLimits'
 /** A single settings diff entry rendered by the panel using `change.<code>` and field labels from the Source listing. */
 export interface SettingsChange {
   code: SettingsChangeCode; items?: string[]; from?: string | number | boolean; to?: string | number | boolean; name?: string; source?: string
@@ -55,6 +55,7 @@ function settingsChanges(before: SettingsVersion['settings'], after: SettingsVer
     if (old.instruction !== rule.instruction) changes.push({ code: 'ruleInstruction', name: rule.name })
     if (old.enabled !== rule.enabled) changes.push({ code: rule.enabled ? 'ruleEnabled' : 'ruleDisabled', name: rule.name })
     if (!same(old.budget ?? {}, rule.budget ?? {})) changes.push({ code: 'ruleBudget', name: rule.name })
+    if (!same(old.limits ?? {}, rule.limits ?? {})) changes.push({ code: 'ruleLimits', name: rule.name })
   }
   for (const rule of before.policy.rules) if (!after.policy.rules.some(item => item.id === rule.id)) changes.push({ code: 'ruleRemoved', name: rule.name })
   for (const id of new Set([...Object.keys(before.policy.sources), ...Object.keys(after.policy.sources)])) {

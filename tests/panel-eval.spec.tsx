@@ -215,3 +215,32 @@ it('shows the GitHub Source\'s switches for what it receives across the reposito
   expect(field('Default branch CI · Not on the list · no mention')).toBeTruthy()
   expect(all('.dt-admission thead th').map(cell => cell.textContent)).toContain(en.admissionAddressed)
 })
+
+it('presets a rule\'s limits: the files its Tickets may change, one glob per line, and the actions they may take', async () => {
+  await mount()
+  await click(zh['tab.eval'])
+  await click(find(zh['tab.settings'], '.dt-status-head button'))
+  await click(zh.addRule)
+  await type(field<HTMLInputElement>(zh.ruleName), '文档')
+  await type(field<HTMLTextAreaElement>(zh.ruleInstruction), '修复失效链接')
+  const paths = field<HTMLTextAreaElement>(zh.ruleLimitPaths)
+  await type(paths, 'docs/**\n\n  locale/**  \ndocs/**')
+  // The globs are taken once the field loses focus, so a line being typed is kept.
+  await act(async () => { paths.dispatchEvent(new FocusEvent('focusout', { bubbles: true })) })
+  await settle()
+  await click(all('button[role="switch"]').find(button => button.getAttribute('aria-label') === zh.ruleLimitActions)!)
+  const box = (action: string) => all('label').find(label => label.textContent === zh[`mandateAction.${action}` as keyof typeof zh])!
+    .querySelector('input')!
+  await click(box('merge'))
+  await click(box('open_pr'))
+  await click(zh.save)
+  expect(server.settings.policy.rules.at(-1)).toMatchObject({ name: '文档', limits: { paths: ['docs/**', 'locale/**'], actions: ['comment', 'push'] } })
+  // Turning the switch off drops the actions limit, and an emptied field the paths, which leaves no limits.
+  await click(all('button[role="switch"]').find(button => button.getAttribute('aria-label') === zh.ruleLimitActions)!)
+  const emptied = field<HTMLTextAreaElement>(zh.ruleLimitPaths)
+  await type(emptied, '')
+  await act(async () => { emptied.dispatchEvent(new FocusEvent('focusout', { bubbles: true })) })
+  await settle()
+  await click(zh.save)
+  expect(server.settings.policy.rules.at(-1)).not.toHaveProperty('limits')
+})

@@ -100,6 +100,9 @@ function MandateDetails({ ticket, actor }: { ticket: TicketPageView; actor: stri
     { version: mandate.policyVersion }))}>{mandate.policyVersion.slice(0, 8)}</button>
   return <Section title={t('mandateDetails')} icon="shield">
     <KeyValues rows={[...rows, [t('term.scope'), legacy ? t('legacyScopeShort') : mandate.scope || t('empty')],
+      ...mandate.limits ? [[t('term.limits'), [...mandate.limits.paths ? [t('limitsPaths', { paths: mandate.limits.paths.join(', ') })] : [],
+        ...mandate.limits.actions ? [t('limitsActions', { actions: mandate.limits.actions.map(action => t(`mandateAction.${action}`)).join(', ')
+          || t('none') })] : []].join(' · ')] as [string, string]] : [],
       ...facts.map((item): [string, string] => [valueLabel(t, 'basis', item.name), fact(item)]),
       ...legacy ? [] : [[t('policyVersion'), version] as [string, ReactNode]]]} />
   </Section>

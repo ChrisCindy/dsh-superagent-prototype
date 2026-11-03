@@ -172,10 +172,10 @@ it('tells a Ticket or Thread that does not exist from a dsh-superagent that is n
   expect(text()).toContain(zh.hostNotRunning)
 })
 
-it('gives a Ticket a bot\'s message started its basis, marks a Thread it follows for context, and an Input it handed back', async () => {
+it('gives a Ticket a bot\'s message started its basis and its limits, marks a Thread it follows for context, and an Input it handed back', async () => {
   const t1 = server.ticketDetails.t1!
   server.ticketDetails.t1 = { ...t1, mandate: { ...t1.mandate, strength: 'inferred', basis: { via: 'bot', sender: '评审机器人',
-    observation: { mode: 'auto' } } },
+    observation: { mode: 'auto' } }, limits: { paths: ['locale/**'], actions: ['comment', 'push'] } },
   basis: { facts: [{ name: 'sender', value: '评审机器人' }, { name: 'bot' }, { name: 'mode', value: 'auto' }], legacy: false },
   threads: [threadSummary(), { ...threadSummary({ key: 'github:7', title: '#7 相关 Issue' }), context: true }],
   inputs: [{ id: 'i1', kind: 'trigger', triggerId: 'e2', at: '2026-09-22T00:03:00Z', delivered: true, trigger: { id: 'e2',
@@ -184,7 +184,8 @@ it('gives a Ticket a bot\'s message started its basis, marks a Thread it follows
   at({ page: 'execution', id: 't1' })
   await mount()
   const facts = () => all('.dt-kv > div').map(row => [row.querySelector('dt')?.textContent, row.querySelector('dd')?.textContent])
-  expect(facts()).toEqual(expect.arrayContaining([[zh['basis.sender'], '评审机器人'], [zh['basis.bot'], zh.yes], [zh['basis.mode'], zh['mode.auto']]]))
+  expect(facts()).toEqual(expect.arrayContaining([[zh['basis.sender'], '评审机器人'], [zh['basis.bot'], zh.yes], [zh['basis.mode'], zh['mode.auto']],
+    [zh['term.limits'], '文件：locale/** · 操作：评论, 推送']]))
   expect(all('.dt-list .dt-ticket').map(row => row.querySelector('.dt-tag')?.textContent)).toEqual([undefined, zh.contextOnly])
   await click(zh.deliveredInputs.replace('{count}', '1'))
   expect(text()).toContain('已交回评估：Asks for a new page')

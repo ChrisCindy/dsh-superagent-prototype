@@ -1,8 +1,8 @@
 /** What the Executor and its workers report about the Assignments that run tickets. */
 import { key } from './ids.ts'
 import { UserError } from './errors.ts'
-import { latestAssignment, liveTicket, runningAssignment, waitsForPerson } from './model.ts'
-import type { ReportState, Ticket } from './model.ts'
+import { latestAssignment, liveTicket, outsidePaths, runningAssignment, waitsForPerson } from './model.ts'
+import type { PullChanges, ReportState, Ticket } from './model.ts'
 import { EnginePart, type EngineOptions } from './part.ts'
 import type { Replies } from './replies.ts'
 import { automatic, type Tickets } from './tickets.ts'
@@ -17,7 +17,12 @@ export interface WorkerReport {
   askedBy?: string
   /** The person's question this report answers, which the worker thereby takes up; authorizes the main Session to send an answer reply. */
   answers?: string
+  /** The files each open pull request the ticket opened changes, as the host read them for a `ready` report (see `report`). */
+  changes?: PullChanges[]
 }
+/** The question a `ready` report becomes when its pull requests change files outside the Mandate's paths. */
+const outsideQuestion = (lines: string[], paths: string[]) => `${lines.join('; ')}: outside the files this work may change (${paths.join(', ')}). `
+  + 'Remove those changes? A wider change needs a new request, or a person can review and merge the PR.'
 const RECOVERY_NOTE = 'The host restarted during this ticket. Inspect the current worktree, git history and GitHub state before continuing. Do not repeat an already completed external operation. Finish the original assignment and report its status.'
 
 /**
@@ -92,7 +97,8 @@ export class Assignments extends EnginePart {
   }
   /**
    * Records a worker status report on an open ticket's current assignment, updating `attention`, `answers`, held automated
-   * inputs, and ending the ticket when `dropped` or when `ready` and not waiting on followed threads (`followsDone`).
+   * inputs, and ending the ticket when `dropped` or when `ready` and not waiting on followed threads (`followsDone`). A `ready`
+   * report whose `changes` reach outside the Mandate's paths is recorded as `blocked`, with the files as its question.
    * @throws UserError for an unknown or ended ticket, an ended assignment, a question combined with a ready result or answer,
    * or a question/answer referencing a non-human or unreached trigger.
    */
@@ -100,6 +106,13 @@ export class Assignments extends EnginePart {
     const ticket = this.require(ticketId)
     if (!liveTicket(ticket)) throw new UserError('ticketEnded')
     if (report.question && (report.state === 'ready' || report.answers)) throw new UserError('questionWithResult')
+    // A ready result whose pull requests change files outside the Mandate's paths waits for a person instead.
+    const outside = report.state === 'ready' ? outsidePaths(ticket.mandate.limits, report.changes ?? []) : []
+    if (outside.length) {
+      const question = outsideQuestion(outside, ticket.mandate.limits!.paths!)
+      report = { ...report, state: 'blocked', question, summary: `${report.summary}\n\nThe host made this ready report blocked: ${question}` }
+      delete report.askedBy
+    }
     if (report.askedBy && !report.question) throw new UserError('askerWithoutQuestion')
     const person = (id: string, channel: boolean) => {
       const trigger = this.repo.triggers.get(id)

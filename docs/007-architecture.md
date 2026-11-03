@@ -288,7 +288,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 - `src/app/links.ts` resolves Feishu message links and `repliedTo`. It and Runtime read settings with `feishuSettings`.
 - `src/app/resources.ts` reads the `feishu/` and `github/` originals; `src/app/cards.ts` uses `pullOf` for Ticket cards.
 - Runtime sends `pullEndNotices` for merged or closed Tickets.
-- Executor tools bind reported pull requests with `readPull` and `claimPull`, and request a merge with `requestMerge`, using the GitHub context exposed by Runtime.
+- Executor tools bind reported pull requests with `readPull` and `claimPull`, and request a merge with `requestMerge`, using the GitHub context exposed by Runtime. For a `ready` Report under a Mandate with `paths`, they read the files of each open pull request the Ticket opened with `pullFiles` and pass them to `Engine.report` as `changes`, which records the Report as `blocked` when a file lies outside (`outsidePaths` in `src/core/model.ts`).
 - MasterAssessor reads repository files with `readRepositoryPath`.
 - Sessions and Prompts register built-in skills only for GitHub and Feishu. Migration converts their schema-10 records.
 - Setup probes only GitHub and Feishu account fields (`SETUP_FIELDS`). Only those Sources receive account setup problems through `SourceContext.problem`.
@@ -374,9 +374,9 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/sources/github.ts` | The GitHub kind and plugin entry, exported as `./github-watch`: a poll round of notifications, the pull requests of open Tickets with their CI, and subscribed Threads |
 | `src/sources/github-trigger.ts` | GitHub comments, reviews, Issue bodies and CI changes as Triggers, and GitHub addresses |
 | `src/sources/github-pull.ts` | The pull request rules: which pull requests a Ticket follows (`claimPull`, `observePull`), the closes it reports to the Engine, and `pullEndNotices`, the chat notice of a Ticket that ended merged or closed |
-| `src/sources/github-merge.ts` | `orchestrator_merge_request`'s host checks of a pull request (`mergeChecks`) and enabling auto-merge as the merge account for the checked head commit (`requestMerge`) |
+| `src/sources/github-merge.ts` | `orchestrator_merge_request`'s host checks of a pull request (`mergeChecks`), including the Mandate's limits, and enabling auto-merge as the merge account for the checked head commit (`requestMerge`) |
 | `src/sources/github-channel.ts` | The GitHub Channel: comments and review thread replies, `sent` or `gone` |
-| `src/sources/github-read.ts` | CI snapshots, repository reads, the `github/` resources, and `githubThreadContext`: an Issue's or pull request's conversation by page |
+| `src/sources/github-read.ts` | CI snapshots, repository reads, the files a pull request changes (`pullFiles`), the `github/` resources, and `githubThreadContext`: an Issue's or pull request's conversation by page |
 | `src/sources/feishu.ts` | The Feishu kind and plugin entry, exported as `./feishu-watch` |
 | `src/sources/feishu-trigger.ts` | Feishu messages as Triggers, by one rule for live events, history pages and topic pages |
 | `src/sources/feishu-loops.ts` | The Feishu loops: the event consumer, history recovery, chat names and polling of subscribed topics |

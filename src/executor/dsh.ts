@@ -4,8 +4,8 @@ import type { SessionEvent, SessionId, SessionLogOffset } from '@deepseek-ai/dsh
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { mkdir, rmdir, stat } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
-import { key, latestAssignment, latestReport, liveTicket, runningAssignment, threadKey, waitsForPerson } from '../core/index.ts'
-import type { AssessmentOutcome, Assignment, EngineForExecutor, Execution, Executor, Mandate, PolicyEffect, Ticket, TicketInput, Trigger }
+import { key, latestAssignment, latestReport, liveTicket, MANDATE_ACTIONS, runningAssignment, threadKey, waitsForPerson } from '../core/index.ts'
+import type { AssessmentOutcome, Assignment, EngineForExecutor, Execution, Executor, Mandate, MandateLimits, PolicyEffect, Ticket, TicketInput, Trigger }
   from '../core/index.ts'
 import type { Machine } from '../deployment.ts'
 import { runAsWorker, verifyDirectory } from '../infra/environment.ts'
@@ -93,6 +93,14 @@ export function mandateInstructions(mandate: Pick<Mandate, 'strength'>): string 
     + 'internal to one module within the accepted rule scope. If it requires public-interface or behavior changes, new interaction, product '
     + 'decisions or clarification, stop and report dropped; do not expand scope.' : ''
 }
+/** Tells a worker its Mandate's limits, which the host checks; empty without limits. */
+export function limitsText(limits: MandateLimits | undefined): string {
+  if (!limits) return ''
+  const refused = MANDATE_ACTIONS.filter(action => !limits.actions?.includes(action))
+  const actions = !limits.actions ? [] : [limits.actions.length ? `only the actions ${limits.actions.join(', ')} (not ${refused.join(', ') || 'others'})`
+    : `none of the actions ${refused.join(', ')}`]
+  return `\nLimits the host checks: ${[...limits.paths ? [`change only files matching ${limits.paths.join(', ')}`] : [], ...actions].join('; ')}.`
+}
 /** Builds a newly accepted ticket's Execution metadata: its worktree name, workspace directory, and assignment text. */
 export function ticketExecution(ticket: Ticket, outcome: Extract<AssessmentOutcome, { kind: 'accept' }>, settings: Settings,
   stateDir: string): Execution {
@@ -104,9 +112,10 @@ export function ticketExecution(ticket: Ticket, outcome: Extract<AssessmentOutco
     .map(rule => `\n- ${rule.name} (${rule.id}): ${rule.instruction}`).join('')
   const precedence = rules ? `\nMatched rules; their procedure and communication instructions take precedence over the default acknowledgement and messaging policy for this ticket:${rules}` : ''
   // The origin trigger is delivered alongside the assignment, so `assignment` omits the trigger text.
+  const limits = limitsText(ticket.mandate.limits)
   const assignment = ticket.mandate.strength === 'inferred' && ruleIds
-    ? `Proactively accepted under ${ruleIds.join(', ')}. Scope: ${outcome.scope}.${precedence}${note}`
-    : note.trim()
+    ? `Proactively accepted under ${ruleIds.join(', ')}. Scope: ${outcome.scope}.${limits}${precedence}${note}`
+    : `${limits}${note}`.trim()
   return { name, directory: join(executionRoot(settings, stateDir), name), assignment }
 }
 /** Character limits for inline assignment and trigger text in worker messages; longer text is read via its resource. */

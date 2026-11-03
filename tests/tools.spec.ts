@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { TICKET_STATES } from '../src/app/cards.ts'
 import { builtInBase, builtInParts, defaultPrompts } from '../src/app/prompts.ts'
-import { UserError } from '../src/core/index.ts'
+import { UserError, ticketStage, type Ticket } from '../src/core/index.ts'
 import { KV } from '../src/kv.ts'
 import { RESOURCES } from '../src/app/resources.ts'
 import { CliError, Commands } from '../src/infra/commands.ts'
@@ -662,5 +662,80 @@ describe('orchestrator_merge_request', () => {
     // Changing only a condition does not check the CLI again.
     h.answers[`${cli} api user --jq .login`] = ''
     expect(await panel({ cli, maxLines: 90 })).toMatchObject({ saved: true })
+  })
+})
+
+describe('Mandate limits', () => {
+  const MERGE = '/usr/local/bin/gh-merge'
+  /**
+   * A ticket accepted proactively under the copy rule, which presets `limits`, and GitHub as the agent's gh reads it: PR 42 from
+   * the ticket's branch, which changes `files`, with passing CI and an approval of its head.
+   */
+  async function proactiveTicket(limits: Record<string, unknown>) {
+    const policy = h.runtime.store.settings().policy
+    const rules = policy.rules.map(rule => rule.id === 'copy' ? { ...rule, limits } : rule)
+    await h.runtime.settings.save('policy', { ...policy, rules }, h.runtime.store.blockRevision('policy'), 'panel')
+    const settings = h.runtime.store.settings()
+    h.runtime.store.saveSettings({ ...settings, executor: { ...settings.executor, merge: { ...settings.executor.merge, cli: MERGE } } })
+    vi.mocked(Commands.prototype.run).mockImplementation(async (program, args) => program !== MERGE ? '{"ok":true,"data":{}}'
+      : args[0] === 'api' ? 'merger\n' : '')
+    const trigger = feishu('20', '把副标题改成“浏览网页”', { mentions: [] })
+    await h.runtime.receive(trigger); await h.runtime.idle()
+    vi.mocked(Commands.prototype.lark).mockResolvedValue({ items: [{ message_id: 'om_20', chat_id: CHAT }] })
+    await h.runTool(h.runtime.masterId, 'orchestrator_eval', { trigger_id: trigger.id })
+    const accepted = await h.runTool(h.runtime.masterId, 'orchestrator_eval_decide', { trigger_id: trigger.id, decision: 'accept', title: '文案修订',
+      worktree_name: 'copy-fix', scope: 'the subtitle', reason: 'copy change', intent_evidence: 'quoted', paths: ['src/**'],
+      rule_assessments: [{ rule_id: 'copy', matched: true, reason: 'copy' }, { rule_id: 'visual', matched: false, reason: 'not visual' }],
+      direction: { implementation_requested: true, target_basis: 'specified', requires_design_decision: false, evidence: 'it names the text' } }) as
+      { ticket: { ticket_id: string } }
+    await h.runtime.idle()
+    const ticket = h.runtime.store.tickets.get(accepted.ticket.ticket_id)!
+    return { ticket, sessionId: `worker-${ticket.id}` }
+  }
+  function github(ticket: Ticket, files: string[]) {
+    const answers: Record<string, unknown> = {
+      'repos/acme/widgets/pulls/42': { number: 42, state: 'open', draft: false, additions: 3, deletions: 1, html_url: 'https://github.com/acme/widgets/pull/42',
+        user: { login: 'agent-bot' }, head: { sha: 'head2', ref: `agent/${ticket.execution!.name}`, repo: { full_name: 'acme/widgets' } } },
+      'repos/acme/widgets/pulls/42/files?per_page=100': [files.map(filename => ({ filename, status: 'modified' }))],
+      'repos/acme/widgets/commits/head2/check-runs?per_page=100': [{ check_runs: [{ name: 'test', status: 'completed', conclusion: 'success' }] }],
+      'repos/acme/widgets/commits/head2/statuses?per_page=100': [[]],
+      'repos/acme/widgets/pulls/42/reviews?per_page=100': [[{ user: { login: 'alice', type: 'User' }, state: 'APPROVED', commit_id: 'head2' }]],
+    }
+    vi.mocked(Commands.prototype.gh).mockImplementation(async args => args[1] === 'user' ? { login: 'agent-bot' }
+      : args[1]! in answers ? answers[args[1]!] : { default_branch: 'master', permissions: { push: true } })
+  }
+
+  it('keeps a ticket whose rule allows only locale/** and whose PR changes src/ from person/review, and from a merge', async () => {
+    const { ticket, sessionId } = await proactiveTicket({ paths: ['locale/**'] })
+    // The rule's paths take precedence over those the assessment gave; the worker is told them in its assignment.
+    expect(ticket.mandate.limits).toEqual({ paths: ['locale/**'] })
+    expect(JSON.stringify(h.relays(sessionId)[0])).toContain('Limits the host checks: change only files matching locale/**.')
+    github(ticket, ['locale/zh.json', 'src/app.ts'])
+    h.deliveries.mockClear()
+    const result = await h.runTool(sessionId, 'orchestrator_report', { state: 'ready', summary: 'Changed the subtitle.', pr_number: 42 })
+    expect(result).toMatchObject({ reported: true, state: 'blocked', attention: { question: expect.stringContaining('PR #42 changes src/app.ts') } })
+    const blocked = h.runtime.store.tickets.get(ticket.id)!
+    expect(ticketStage(blocked)).not.toEqual({ stage: 'person', action: 'review' })
+    expect(blocked.follows).toEqual([expect.objectContaining({ thread: 'github:42', own: true })])
+    await h.runtime.idle()
+    expect(h.relays(h.runtime.masterId)).toEqual([expect.objectContaining({ kind: 'worker_attention', state: 'blocked' })])
+    expect(await h.runTool(sessionId, 'orchestrator_merge_request', { pull: 42 })).toMatchObject({ auto_merge: 'refused',
+      refused: [{ check: 'paths', detail: expect.stringContaining('PR #42 changes src/app.ts: outside the files this ticket may change (locale/**)') }] })
+    // Once the PR changes only files within its paths, its ready report reaches a person for review, and it may merge.
+    github(ticket, ['locale/zh.json'])
+    expect(await h.runTool(sessionId, 'orchestrator_report', { state: 'ready', summary: 'Kept only the copy.' })).not.toHaveProperty('state')
+    expect(ticketStage(h.runtime.store.tickets.get(ticket.id)!)).toEqual({ stage: 'person', action: 'review' })
+    expect(await h.runTool(sessionId, 'orchestrator_merge_request', { pull: 42 })).toMatchObject({ auto_merge: 'enabled' })
+  })
+
+  it('refuses on the host the actions its limits leave out: an acknowledgement, binding a PR it opened and a merge', async () => {
+    const { ticket, sessionId } = await proactiveTicket({ actions: ['push'] })
+    expect(ticket.mandate.limits).toEqual({ paths: ['src/**'], actions: ['push'] })
+    await expect(h.runTool(sessionId, 'orchestrator_ack', { trigger_id: ticket.origin.triggerId, text: '收到。' })).rejects.toThrow('leave out comment')
+    github(ticket, ['src/app.ts'])
+    await expect(h.runTool(sessionId, 'orchestrator_report', { state: 'progress', summary: 'pr open', pr_number: 42 })).rejects.toThrow('may not open a PR')
+    expect(h.runtime.store.tickets.get(ticket.id)!.follows ?? []).toEqual([])
+    expect(await h.runTool(sessionId, 'orchestrator_merge_request', { pull: 42 })).toMatchObject({ auto_merge: 'refused',
+      refused: expect.arrayContaining([{ check: 'limits', detail: expect.stringContaining('leave out merge') }]) })
   })
 })

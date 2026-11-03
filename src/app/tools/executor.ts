@@ -1,9 +1,10 @@
 /** Executor Session tools for reading ticket context, acknowledging requests, managing threads, handing back out-of-scope triggers, requesting a merge, and reporting status. */
 import { z } from 'zod'
-import { liveTicket, type EngineForExecutor, type Ticket } from '../../core/index.ts'
+import { actionAllowed, latestAssignment, liveTicket, type EngineForExecutor, type PullChanges, type Ticket } from '../../core/index.ts'
 import { IM_WORDS } from '../../infra/text.ts'
 import { requestMerge } from '../../sources/github-merge.ts'
-import { claimPull, readPull } from '../../sources/github-pull.ts'
+import { agentPull, claimPull, pullsOf, readPull, ticketBranch, type Pull } from '../../sources/github-pull.ts'
+import { pullFiles } from '../../sources/github-read.ts'
 import type { SourceContext } from '../../sources/host.ts'
 import { readResource, type ResourceHost } from '../resources.ts'
 import type { Store } from '../store.ts'
@@ -24,6 +25,18 @@ export interface ExecutorToolsHost {
   sendReplies(): Promise<void>
 }
 
+/**
+ * The files of each open PR the ticket opened, counting `pull` when the report binds one it opened, for a `ready` report under a
+ * Mandate that limits paths; none otherwise.
+ */
+async function readyChanges(github: SourceContext, ticket: Ticket, state: string, pull: Pull | undefined, signal: AbortSignal): Promise<PullChanges[]> {
+  if (state !== 'ready' || !ticket.mandate.limits?.paths) return []
+  const own = new Set((ticket.follows ?? []).filter(item => item.own && !item.closed).flatMap(item => pullsOf({ follows: [item] }, false, github.source)))
+  if (pull && pull.state === 'open' && agentPull(pull, github.deployment.github, github.commands.repository) && ticketBranch(ticket, pull.head.ref)) own.add(pull.number)
+  const commands = github.commands.withSignal(signal)
+  return Promise.all([...own].map(number => pullFiles(commands, number)))
+}
+
 export function executorTools(host: ExecutorToolsHost, ticket: Ticket): Tool[] {
   const ticketId = ticket.id
   const github = host.github(ticket)
@@ -38,6 +51,9 @@ export function executorTools(host: ExecutorToolsHost, ticket: Ticket): Tool[] {
         text: AcknowledgementSchema.describe(`At most ${IM_WORDS} words; Markdown is supported.`),
       }).strict(),
       execute: async args => {
+        if (!actionAllowed(host.store.tickets.get(ticketId)?.mandate.limits, 'comment')) {
+          throw new Error('This ticket\'s limits leave out comment: the host posts no acknowledgement for it')
+        }
         const reply = host.engine.reply({ purpose: 'acknowledgement', ticketId, triggerId: args.trigger_id, text: args.text })
         if (reply.status !== 'sent') await host.sendReplies()
         return { trigger_id: args.trigger_id, acknowledgement: host.store.replyStatus(reply.id)!, reused: reply.reused }
@@ -101,18 +117,25 @@ export function executorTools(host: ExecutorToolsHost, ticket: Ticket): Tool[] {
         const current = host.store.tickets.get(ticketId)
         if (!current || !liveTicket(current)) throw new Error('Ticket ended (PR was closed or work finished); do not resume it')
         const pull = args.pr_number != null ? await readPull(github, args.pr_number, signal) : undefined
+        // The host reads what each PR the ticket opened changes, so a ready report beyond the Mandate's paths waits for a person.
+        const changes = await readyChanges(github, current, args.state, pull, signal)
         // Claim the PR, record the report, and queue the relay atomically so a rejected PR claim or invalid report leaves no partial state, and a recorded report always reaches the main Session.
         return host.store.atomic(() => {
           const refused = pull && claimPull(github, ticketId, pull)
           if (refused) throw new Error(refused)
           const report = { state: args.state, summary: args.summary, ...(args.human_action !== undefined ? { question: args.human_action } : {}),
             ...(args.question_for_trigger_id ? { askedBy: args.question_for_trigger_id } : {}),
-            ...(args.reply_to_trigger_id ? { answers: args.reply_to_trigger_id } : {}) }
+            ...(args.reply_to_trigger_id ? { answers: args.reply_to_trigger_id } : {}), ...(changes.length ? { changes } : {}) }
           const updated = host.engine.report(ticketId, report)
-          const relay = reportRelay(updated, report)
+          // The report as recorded, which the host turns blocked when its PR reaches beyond the Mandate's paths.
+          const recorded = latestAssignment(updated)?.report
+          const relayed = recorded && recorded.state !== report.state ? { ...report, state: recorded.state, summary: recorded.summary,
+            question: updated.attention?.question } : report
+          const relay = reportRelay(updated, relayed)
           if (relay) host.sessions.relay(relay.id, relay.text)
           const notification = relay ? 'orchestrator' : 'internal_only'
-          return { reported: true, notification, ...(updated.attention ? { attention: updated.attention } : {}) }
+          return { reported: true, notification, ...(relayed !== report ? { state: recorded!.state } : {}),
+            ...(updated.attention ? { attention: updated.attention } : {}) }
         })
       },
     }),

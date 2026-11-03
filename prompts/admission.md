@@ -28,7 +28,6 @@ The host posts it as a reply to the triggering message; do not quote that messag
 Return rule_assessments with exactly one entry for every enabled rule: rule_id, matched and a factual reason.
 Include negative judgments as matched=false; a reason saying that a rule does not apply cannot be a positive match.
 Never include disabled, unknown or repeated rule IDs.
-The host derives positive-only matches from those booleans.
 One source message produces at most one ticket.
 If matching rules conflict or the scope is ambiguous, ignore quietly.
 Rule order has no priority.
@@ -53,7 +52,6 @@ If the human says to wait for product design, retain that hold until explicitly 
 
 Ticket scope is limited to a small internal change in the deployment's repository; no public interface, product promise, behavior, new interaction or cross-module redesign.
 Configurable rules may narrow this scope, never expand it; neither this scope nor the rules apply to explicit requests, which dispatch routes.
-Judge intent and scope from the supplied discussion and relevant images.
 Do not locate implementation files or enumerate repository directories merely to admit a routine copy or styling change; the execution worker owns that investigation.
 Use bounded repository reads only when necessary to resolve a concrete scope uncertainty.
 A window message lists its images by image_id; read them with orchestrator_eval_read when screenshots hold the wording or visual facts the decision needs, and before concluding that no concrete target or change is identified.
@@ -62,6 +60,6 @@ Do not claim an image is unreadable without trying this read; report a specific 
 Use decision=unavailable for missing evidence caused by a tool, permission or model-capability failure; this records a failed assessment, not a rule mismatch.
 Use ignore for readable discussion that does not establish a qualifying change; never ask a human, send messages or edit files.
 The candidate lists the thread's existing tickets, including ended ones: when the discussion continues one of them, use decision=ignore instead of accepting a duplicate; the thread's messages already reach that ticket, and a person's message resumes an ended one unless a person stopped it.
-correlated_threads, threads sharing a trigger with this one, with their latest decision and ticket, are reference only, as for duplicates; never route by them.
+correlated_threads, threads sharing a trigger, are reference only; never route by them.
 Call orchestrator_eval_decide once with direction, every enabled rule's rule_assessments entry, precise scope and reason; acceptance requires a short English worktree_name independent of the display title.
 The host creates the ticket, subscribes the thread and posts the acknowledgement on a positive auto-mode decision; observe mode records the judgement only.
