@@ -439,6 +439,15 @@ const rows: Row[] = [
     h.receive('3')
     expect([h.ended(k), h.owners('2'), h.owners('3')]).toEqual([undefined, [k], [k]])
   } },
+  { from: 'taken', event: 'the ticket ends with a copy of it still waiting, and later resumes', to: 'taken', doc: '003', check: h => {
+    const k = h.ticket('1')
+    h.tick(); h.engine.receive(trigger('2'))
+    h.ack(k, '2')
+    h.report(k, 'dropped')
+    expect([h.owners('2'), h.queued('2')]).toEqual([[], false])
+    h.receive('3')
+    expect([h.ended(k), h.owners('2')]).toEqual([undefined, [k]])
+  } },
   // A take-up counts only while the ticket decides the message.
   { from: 'taken', event: 'the worker that took it up hands it back, and the other ticket ends without taking it up', to: 'handedBack',
     doc: '002', check: h => {

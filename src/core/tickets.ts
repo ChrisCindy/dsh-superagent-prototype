@@ -351,14 +351,17 @@ export class Tickets extends EnginePart {
   }
   /**
    * A ticket that ended, or cannot resume, lets go of the messages its worker never received, `waiting`, and of the person's
-   * messages it decided but may not have taken up, `left`: it no longer counts as having reached them, and each of `left`
+   * messages it decided but may not have taken up, `left`: it no longer counts as having reached them, unless its worker took
+   * one up or handed it back, and each of `left`
    * that no other ticket decides goes to Eval, as a person's message that reached no ticket does, unless a ticket took it
    * up, a Decision settled it, or it is the message a stop ended this ticket on.
    */
   private letGo(ticketId: string, waiting: readonly Trigger[], left: readonly Trigger[]): void {
     for (const trigger of [...waiting, ...left]) {
       const disposition = this.repo.triggers.disposition(trigger.id)
-      if (disposition?.fanout.includes(ticketId)) {
+      // A message its worker took up or handed back stays so, whatever copy of it still waited.
+      const kept = disposition?.acked?.includes(ticketId) || disposition?.handbacks?.some(item => item.ticketId === ticketId)
+      if (disposition?.fanout.includes(ticketId) && !kept) {
         this.repo.triggers.saveDisposition(trigger.id, { ...disposition, fanout: disposition.fanout.filter(id => id !== ticketId) })
       }
     }
