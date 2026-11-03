@@ -45,7 +45,9 @@ function host(overrides: Partial<SourceContextDeps> = {}) {
   const value = { ...parts, context: (kind: { kind: string; health: readonly string[] }) => sourceContextOf(parts, kind) }
   const context = sourceContextOf(parts, { kind: 'feishu', health: ['github', 'feishu', 'history'] })
   const health = overrides.sources ? healthOf.get(overrides.sources)!.all : board.all
-  return { ...value, ...context, health, store, engine, commands: parts.commands, receive, executor }
+  // One context serves both kinds' functions here: the Feishu ones name their Source, and the GitHub ones take the context's.
+  return { ...value, ...context, source: 'github', config: <C extends Record<string, unknown>>(id = 'github') => context.config<C>(id), health, store,
+    engine, commands: parts.commands, receive, executor }
 }
 const healthOf = new WeakMap<SourceRegistry, HealthBoard>()
 function emptyRegistry(): SourceRegistry {
@@ -418,7 +420,7 @@ describe('github source', () => {
     expect(h.store.tickets.get('t1')).toMatchObject({ ended: { by: 'executor', outcome: 'merged', at: '2026-09-02T00:00:00.000Z' } })
     expect(h.store.threads.get('github:9')?.subscriptions).toEqual(['t1'])
     // The notice its end gives follows the language of the source request.
-    const notices = pullEndNotices(h.store.tickets.get('t1')!, request.text, 'acme/widgets')
+    const notices = pullEndNotices(h.store.tickets.get('t1')!, request.text, { github: 'acme/widgets' })
     expect(notices).toEqual([expect.objectContaining({ kind: 'notice', channel: expect.objectContaining({ source: 'feishu' }), text: expect.stringContaining('已合并') })])
     expect(h.executor.stop).toHaveBeenCalledOnce()
     // Resumed after the merge, the ticket works on: a later look at the merged PR reports nothing again.
@@ -430,7 +432,7 @@ describe('github source', () => {
     expect(h.store.tickets.get('t1')).toMatchObject({ ended: { outcome: 'merged' } })
     expect(Date.parse(h.store.tickets.get('t1')!.ended!.at)).toBeGreaterThan(Date.parse('2026-09-03T00:00:00Z'))
     // Its notice has the id of the first one, so it goes out once.
-    expect(pullEndNotices(h.store.tickets.get('t1')!, request.text, 'acme/widgets').map(notice => notice.id)).toEqual(notices.map(notice => notice.id))
+    expect(pullEndNotices(h.store.tickets.get('t1')!, request.text, { github: 'acme/widgets' }).map(notice => notice.id)).toEqual(notices.map(notice => notice.id))
     h.store.close()
   })
   it('keeps a ticket working on its other open PR when one of its PRs merges', async () => {
@@ -473,9 +475,21 @@ describe('github source', () => {
     h.store.triggers.save(request)
     h.store.tickets.save({ id: 't2', title: 'two', decisionId: 'd2', mandate: { strength: 'explicit', policyVersion: '', basis: { via: 'listed' }, actor: { source: 'feishu', id: MEMBER }, scope: '' }, channels: [{ source: 'feishu', thread: 'feishu:oc_1', address: { chatId: 'oc_1', messageId: 'om_2' } }], assignments: [], inputs: [], undelivered: [], createdAt: '', updatedAt: '', ...pulled(12), origin: { triggerId: request.id, triggerIds: [request.id] } })
     expect(await observePull(h, endedPull(12, '2026-09-02T00:00:00Z', false))).toBe(true)
-    expect(pullEndNotices(h.store.tickets.get('t2')!, request.text, 'acme/widgets'))
+    expect(pullEndNotices(h.store.tickets.get('t2')!, request.text, { github: 'acme/widgets' }))
       .toEqual([expect.objectContaining({ text: '[PR #12](https://github.com/acme/widgets/pull/12) was closed without merging.' })])
     h.store.close()
+  })
+  it('links the terminal notice to the PR in the repository of the Source whose Thread it is, and skips every GitHub Source\'s Channels', () => {
+    const repositories = { github: 'acme/widgets', 'github-docs': 'acme/docs' }
+    const ticket = { id: 't9', ended: { at: '3', by: 'executor', outcome: 'merged' },
+      follows: [{ thread: 'github:4', own: false, closed: { at: '2' } }, { thread: 'github-docs:12', own: true, closed: { at: '1' } }],
+      channels: [{ source: 'feishu', thread: 'feishu:oc_1', address: { chatId: 'oc_1' } }, { source: 'github-docs', thread: 'github-docs:12', address: { number: '12' } },
+        { source: 'github', thread: 'github:4', address: { number: '4' } }] } as unknown as Ticket
+    expect(pullEndNotices(ticket, 'fix it', repositories)).toEqual([expect.objectContaining({ channel: ticket.channels[0],
+      text: '[PR #12](https://github.com/acme/docs/pull/12) has merged.' })])
+    // A Thread of a Source with no repository (such as one switched off since) names no PR, and its Channel still gets none.
+    expect(pullEndNotices(ticket, 'fix it', { github: 'acme/widgets' })).toEqual([expect.objectContaining({ channel: ticket.channels[0],
+      text: '[PR #4](https://github.com/acme/widgets/pull/4) has merged.' })])
   })
   it('polls subscribed PR threads since their checkpoint and skips the bot\'s own comments', async () => {
     const h = host()

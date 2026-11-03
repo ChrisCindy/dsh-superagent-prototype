@@ -5,7 +5,7 @@ import type { MergeConfig } from '../policy.ts'
 import { sameName } from '../infra/text.ts'
 import { ciFailures, pullChecks } from './github-read.ts'
 import { readPull } from './github-pull.ts'
-import { isHumanLogin, SOURCE } from './github-trigger.ts'
+import { isHumanLogin } from './github-trigger.ts'
 import type { SourceContext } from './host.ts'
 
 const ReviewSchema = z.looseObject({ user: z.looseObject({ login: z.string(), type: z.string().optional() }).nullable(), state: z.string(),
@@ -30,7 +30,7 @@ export async function mergeChecks(ctx: SourceContext, ticket: Pick<Ticket, 'foll
   signal?: AbortSignal): Promise<{ refused: MergeRefusal[]; head?: string }> {
   const refused: MergeRefusal[] = []
   if (!merge.cli) refused.push({ check: 'merge_cli', detail: 'No merge CLI is set in the Execution settings, so a person merges every PR' })
-  const own = ticket.follows?.some(item => item.thread === `${SOURCE}:${number}` && item.own && !item.closed)
+  const own = ticket.follows?.some(item => item.thread === `${ctx.source}:${number}` && item.own && !item.closed)
   if (!own) refused.push({ check: 'ticket_pull', detail: `This ticket did not open PR #${number}, or does not follow it; bind the PR it opened with orchestrator_report pr_number first` })
   if (refused.length) return { refused }
   const commands = ctx.commands.withSignal(signal)
@@ -93,6 +93,6 @@ export async function requestMerge(ctx: SourceContext, ticket: Pick<Ticket, 'fol
     return { auto_merge: 'refused', pull: number, refused, next }
   }
   await ctx.commands.withSignal(signal).run(merge.cli, ['pr', 'merge', String(number), '--auto', `--${merge.method}`, '--match-head-commit', head,
-    '--repo', ctx.deployment.repository])
+    '--repo', ctx.commands.repository])
   return { auto_merge: 'enabled', pull: number, head, method: merge.method }
 }

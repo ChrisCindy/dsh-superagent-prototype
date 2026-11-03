@@ -1,11 +1,12 @@
 /** Probes repository and account CLIs, configures the worker execution environment and command shims, and tracks setup readiness. */
 import type { Context } from '@deepseek-ai/cordis'
 import { UserError } from '../core/index.ts'
-import { SETUP_FIELDS, checkMerging, executable, resolveDeployment, resolveFeishuBot, workerProbe, type Deployment, type Machine } from '../deployment.ts'
+import { SETUP_FIELDS, checkMerging, executable, githubInstances, resolveDeployment, resolveFeishuBot, resolveGithub, sameAccount, workerProbe,
+  type Deployment, type Machine } from '../deployment.ts'
 import { agentVariables, applyEnvironment, verifyEnvironment, withoutDirectory, workerBin, writeEnvironment } from '../infra/environment.ts'
 import { sameName } from '../infra/text.ts'
 import type { MergeConfig, Settings, SettingsBlock } from '../policy.ts'
-import { SetupError, type SetupProblem, type SetupWarning } from '../setup.ts'
+import { SetupError, problemSource, setupWarning, type SetupProblem, type SetupWarning } from '../setup.ts'
 import { checkPresets, checkTemporaryAreas, checkWritableRoots, protectedDirectories } from './permissions.ts'
 
 export interface SetupHost {
@@ -15,12 +16,19 @@ export interface SetupHost {
   restart(): void
 }
 
-const setupFields = (settings: Settings) =>
-  JSON.stringify(Object.entries(SETUP_FIELDS).map(([id, keys]) => keys.map(key => settings.sources[id]?.config[key] ?? '')))
+/**
+ * What setup reads from the Source settings: the setup fields of each kind's first instance, and of each other instance while it
+ * is on. Switching another instance on or off, or removing one that is on, changes what setup resolves; adding or removing one
+ * that is off does not.
+ */
+const setupFields = ({ sources }: Settings) => JSON.stringify(Object.entries(SETUP_FIELDS).flatMap(([kind, keys]) => {
+  const others = Object.keys(sources).filter(id => id !== kind && sources[id]!.kind === kind && sources[id]!.enabled).sort()
+  return [kind, ...others].map(id => [id, ...keys.map(key => sources[id]?.config[key] ?? '')])
+}))
 export const setupChanged = (before: Settings, after: Settings): boolean => setupFields(before) !== setupFields(after)
 
 /**
- * Resolves the target repository, GitHub account, and optional Feishu bot by probing CLIs, then writes and applies the isolated git and shim environment used by worker processes.
+ * Resolves each GitHub Source instance's repository, the GitHub account they share, and the optional Feishu bot by probing CLIs, then writes and applies the isolated git and shim environment used by worker processes.
  * `Runtime` runs it at startup to gate orchestration readiness, while `Settings` uses it to validate account changes, update blocked command shims, and schedule restarts.
  */
 export class Setup {
@@ -61,12 +69,27 @@ export class Setup {
   }
   /** Defer the restart to the next macrotask so the current HTTP or tool caller receives its response first. */
   restart(): void { setTimeout(this.host.restart, 0) }
-  /** Verify account CLIs for a modified source block before saving, ignoring setup errors belonging to other blocks. */
+  /**
+   * Verify the account CLIs of a modified Source block before saving, ignoring setup errors belonging to other blocks. A GitHub
+   * instance must also share the account of every other GitHub instance that resolves, and receive a repository none of them does;
+   * an instance other than the kind's first that is off is not checked.
+   */
   async checkAccounts(block: SettingsBlock, settings: Settings): Promise<void> {
     const { machine } = this.host
-    const check = block === 'source:feishu' ? resolveFeishuBot(machine, settings.sources.feishu?.config, this.probe())
-      : resolveDeployment(machine, settings.sources.github?.config, this.probe())
-    await check.catch((error: unknown) => { if (!(error instanceof SetupError) || error.place === block.slice(7)) throw error })
+    const id = block.startsWith('source:') ? block.slice('source:'.length) : block
+    const kind = settings.sources[id]?.kind ?? id
+    const own = (error: unknown) => { if (!(error instanceof SetupError) || (error.place === kind && problemSource(error.problem) === id)) throw error }
+    if (kind === 'feishu') { await resolveFeishuBot(machine, settings.sources[id]?.config, this.probe()).catch(own); return }
+    if (kind !== 'github') return
+    const instances = githubInstances(settings.sources)
+    const instance = instances.find(item => item.id === id)
+    if (!instance) return
+    const resolved = await resolveGithub(machine, instance, this.probe()).catch((error: unknown) => { own(error); return undefined })
+    if (!resolved) return
+    for (const other of instances.filter(item => item.id !== id)) {
+      const found = await resolveGithub(machine, other, this.probe()).catch(() => undefined)
+      if (found) sameAccount(id, resolved, found)
+    }
   }
   /**
    * Check how `settings` confine managed Sessions: the profile holds the permission presets they run under, and no extra
@@ -112,7 +135,7 @@ export class Setup {
     const { context, machine, lifetime } = this.host
     this.checkConfinement(settings)
     const probe = this.probe()
-    const deployment = await resolveDeployment(machine, settings.sources.github?.config, probe)
+    const deployment = await resolveDeployment(machine, githubInstances(settings.sources), probe)
     const feishu = await resolveFeishuBot(machine, settings.sources.feishu?.config, probe).catch((error: unknown) => {
       if (!(error instanceof SetupError)) throw error
       this.feishuProblem = error.problem
@@ -120,7 +143,12 @@ export class Setup {
       return undefined
     })
     const resolved = { ...deployment, ...(feishu ? { feishu } : {}) }
-    this.warnings = await checkMerging(resolved, probe)
+    // Each repository has its own default branch and rules, so each GitHub instance is checked on its own.
+    const warnings: SetupWarning[] = []
+    for (const [id, repository] of Object.entries(resolved.repositories)) {
+      for (const warning of await checkMerging({ repository, github: resolved.github }, probe)) warnings.push(setupWarning(warning.code, warning.values, id))
+    }
+    this.warnings = warnings
     for (const warning of this.warnings) context.logger.warn('dsh-superagent setup warning: %s', warning.detail)
     const machineProblem = (error: unknown): never => {
       if (error instanceof SetupError) throw error

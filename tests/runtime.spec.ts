@@ -1,4 +1,5 @@
 import { Context } from '@deepseek-ai/cordis'
+import { SettingsConflict } from '../src/app/settings.ts'
 import { bindScopeParent } from '@deepseek-ai/dsh-scope'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -970,6 +971,86 @@ it('runs with a warning when the agent account may bypass the review rules of th
   await vi.waitFor(() => expect(restarts).toHaveBeenCalledTimes(1))
 })
 
+it('runs one GitHub Source per repository on the agent\'s one account, each with its own setup checks and its Tickets\' own repository', async () => {
+  answers[`${AGENT()} api repos/acme/docs --jq {name: .full_name, push: .permissions.push}`] = '{"name":"acme/docs","push":true}\n'
+  for (const [command, answer] of Object.entries(reviewedBranch(AGENT()))) answers[command.replace('acme/widgets', 'acme/docs')] = answer
+  // Only the docs repository lets the agent bypass its review rules.
+  answers[`${AGENT()} api repos/acme/docs/rulesets/1`] = '{"current_user_can_bypass":"always"}\n'
+  const settings = runtime.store.settings()
+  runtime.store.saveSettings(SettingsSchema.parse({ ...settings,
+    sources: { ...settings.sources, 'github-docs': { kind: 'github', enabled: true, config: { repository: 'acme/docs', cli: AGENT() } } },
+    policy: { ...settings.policy, sources: { ...settings.policy.sources, 'github-docs': { allowed: [{ id: 'alice' }] } } } }))
+  const next = await restart()
+  await next.ready
+  next.sources.register(feishuKind); next.sources.register(githubKind)
+  expect(next.setupProblem).toBeUndefined()
+  expect(next.deployment.repositories).toEqual({ github: 'acme/widgets', 'github-docs': 'acme/docs' })
+  expect(next.setupWarnings).toEqual([{ place: 'github', source: 'github-docs', code: 'mergeBypass',
+    values: { account: 'agent-bot', branch: 'master', repository: 'acme/docs' }, detail: expect.stringContaining('master in acme/docs') }])
+  const sources = (await api('GET', 'sources')).body as unknown as { id: string; warnings?: unknown[] }[]
+  expect(sources.find(source => source.id === 'github-docs')?.warnings).toHaveLength(1)
+  expect(sources.find(source => source.id === 'github')).not.toHaveProperty('warnings')
+  // A mention on the docs repository becomes a Ticket of that Source, whose workers get its repository.
+  const mention = commentTrigger({ id: 2, body: '@agent-bot please fix', user: { login: 'alice' }, html_url: 'https://github.com/acme/docs/pull/7#issuecomment-2',
+    created_at: '2026-09-09T00:01:00Z' }, { number: 7, isPr: true }, 'conversation', 'agent-bot', 'github-docs')
+  await receive(mention)
+  expect(relays(runtime.masterId).at(-1)).toMatchObject({ kind: 'candidate', strength: 'explicit', trigger_id: mention.id })
+  const result = await route({ kind: 'accept', trigger_id: mention.id, title: 'Fix docs PR 7', worktree_name: 'fix-docs', acknowledgement: 'On it.' })
+  const ticket = runtime.store.tickets.get((result.ticket as { ticket_id: string }).ticket_id)!
+  expect(ticket.channels).toEqual([expect.objectContaining({ source: 'github-docs', thread: 'github-docs:7' })])
+  expect(Object.fromEntries(runtime.ticketEnvironment(ticket).map(variable => [variable.key, variable.value]))).toMatchObject({
+    DSH_SUPERAGENT_GITHUB_REPOSITORY: 'acme/docs', DSH_SUPERAGENT_GITHUB_NUMBER: '7', DSH_SUPERAGENT_GITHUB_PR_HEAD: 'refs/pull/7/head',
+    DSH_SUPERAGENT_GITHUB_ACCOUNT: 'agent-bot' })
+  // Its worker reads github/… from its Source's repository, and the main Session names the instance.
+  const gh = vi.mocked(Commands.prototype.gh)
+  const paths = async (sessionId: string, resource: string) => {
+    gh.mockClear()
+    await runTool(sessionId, 'orchestrator_read', { resource }).catch(() => undefined)
+    return gh.mock.calls.map(([args]) => args.find(arg => arg.startsWith('repos/'))).filter(Boolean)
+  }
+  expect(await paths(`worker-${ticket.id}`, 'github/issues/7')).toEqual([expect.stringMatching(/^repos\/acme\/docs\/issues\/7/)])
+  expect(await paths(runtime.masterId, 'github-docs/issues/7')).toEqual([expect.stringMatching(/^repos\/acme\/docs\/issues\/7/)])
+  expect(await paths(runtime.masterId, 'github/issues/7')).toEqual([expect.stringMatching(/^repos\/acme\/widgets\/issues\/7/)])
+  // The same number on the first repository is another Thread, of the first Source.
+  const widgets = commentTrigger({ id: 3, body: '@agent-bot please fix', user: { login: 'alice' }, html_url: 'https://github.com/acme/widgets/pull/7#issuecomment-3',
+    created_at: '2026-09-09T00:02:00Z' }, { number: 7, isPr: true }, 'conversation', 'agent-bot')
+  await receive(widgets)
+  expect(runtime.store.threads.get('github:7')).toBeDefined()
+  expect(runtime.store.tickets.get(ticket.id)!.inputs.some(input => input.kind === 'trigger' && input.triggerId === widgets.id)).toBe(false)
+  // An instance an open Ticket uses cannot be removed; the first instance never can.
+  await expect(runtime.settings.removeSource('github-docs', runtime.store.blockRevision('source:github-docs'))).rejects.toMatchObject({ code: 'sourceInUse' })
+  await expect(runtime.settings.removeSource('github', runtime.store.blockRevision('source:github'))).rejects.toMatchObject({ code: 'sourceNotRemovable' })
+})
+
+it('adds a GitHub Source disabled, with the account CLI of the first, and removes it with its part of the Policy', async () => {
+  const { settings, store } = runtime
+  await expect(settings.addSource('feishu', 'feishu-two')).rejects.toMatchObject({ code: 'sourceSingle' })
+  await expect(settings.addSource('jira', 'jira-two')).rejects.toMatchObject({ code: 'sourceNotInstalled' })
+  for (const id of ['github', 'docs', 'github-Docs', 'github-', `github-${'a'.repeat(40)}`]) await expect(settings.addSource('github', id)).rejects.toMatchObject({ code: 'sourceIdInvalid' })
+  expect(await settings.addSource('github', 'github-docs')).toMatchObject({ saved: true, restarting: false })
+  expect(store.settings().sources['github-docs']).toEqual({ kind: 'github', enabled: false, config: expect.objectContaining({ cli: AGENT(), repository: '' }) })
+  await expect(settings.addSource('github', 'github-docs')).rejects.toMatchObject({ code: 'sourceExists' })
+  expect(restarts).not.toHaveBeenCalled()
+  // The added instance saves against its own revision; enabling it restarts, since setup resolves its repository.
+  const block = settings.block('source:github-docs')
+  const value = block.value as { enabled: boolean; config: Record<string, unknown> }
+  await settings.save('policy', { ...store.settings().policy, sources: { ...store.settings().policy.sources, 'github-docs': { allowed: [{ id: 'carol' }] } } },
+    store.blockRevision('policy'), 'panel')
+  expect(store.settings().policy.sources['github-docs']).toEqual({ allowed: [{ id: 'carol' }], admission: {} })
+  answers[`${AGENT()} api repos/acme/docs --jq {name: .full_name, push: .permissions.push}`] = '{"name":"acme/docs","push":true}\n'
+  expect(await settings.save('source:github-docs', { ...value, enabled: true, config: { ...value.config, repository: 'acme/docs' } }, block.revision, 'panel'))
+    .toMatchObject({ saved: true, restarting: true })
+  // The same repository twice is refused before it is saved.
+  const again = settings.block('source:github-docs')
+  await expect(settings.save('source:github-docs', { ...again.value as object, config: { ...value.config, repository: 'acme/widgets' } }, again.revision, 'panel'))
+    .rejects.toMatchObject({ code: 'repositoryTwice' })
+  await expect(settings.removeSource('github-docs', again.revision - 1)).rejects.toThrow(SettingsConflict)
+  expect(await settings.removeSource('github-docs', again.revision)).toMatchObject({ removed: true, restarting: true })
+  expect(store.settings().sources['github-docs']).toBeUndefined()
+  expect(store.settings().policy.sources['github-docs']).toBeUndefined()
+  await expect(settings.removeSource('github-docs', store.blockRevision('source:github-docs'))).rejects.toMatchObject({ code: 'sourceNotRemovable' })
+})
+
 it('reports each setup problem where the operator fixes it, and checks the agent CLI the way worker shells run it', async () => {
   const needs = async (place: string, code: string, values: Record<string, string>, accounts: Accounts = {}) => {
     const next = await restart({}, accounts)
@@ -1779,7 +1860,7 @@ it('shows the settings history when one revision holds values its Source kind no
   const revision = runtime.store.get(KV.settings.revision)!
   const stored = runtime.store.get(KV.settings.version(revision - 1))!
   runtime.store.set(KV.settings.version(revision - 1), { ...stored, settings: { ...stored.settings,
-    sources: { ...stored.settings.sources, feishu: { enabled: true, config: { readPageSize: 'many' } } } } })
+    sources: { ...stored.settings.sources, feishu: { kind: 'feishu', enabled: true, config: { readPageSize: 'many' } } } } })
   const history = policyHistory(runtime.store, runtime.sources, policyVersion(runtime.store.settings()))
   expect(history.items.slice(0, 2)).toEqual([expect.objectContaining({ revision, changes: null }), expect.objectContaining({ revision: revision - 1, changes: null })])
   expect(history.items[2]).toMatchObject({ revision: revision - 2 })

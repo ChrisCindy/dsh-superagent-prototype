@@ -4,20 +4,25 @@ import type { Deployment } from '../../deployment.ts'
 import type { Health } from '../../sources/host.ts'
 import type { SourceInstance } from '../../sources/kind.ts'
 import type { SourceRegistry } from '../../sources/registry.ts'
-import type { SetupProblem, SetupWarning } from '../../setup.ts'
+import { problemSource, type SetupProblem, type SetupWarning } from '../../setup.ts'
 import { dayAgo, snapshot, type ViewHost } from './records.ts'
 import { preview } from './text.ts'
 
 export type HealthMap = Record<string, Health>
-/** Resolves health entries for a Source instance, treating stale `sourceOff` entries on an enabled Source as `starting`. */
+/**
+ * Resolves health entries for a Source instance (by the kind's entry names), treating stale `sourceOff` entries on an enabled
+ * Source as `starting`. An instance other than the kind's first is titled with its ID after the kind's title.
+ */
 export function sourceHealth(sources: SourceRegistry, instance: SourceInstance, health: HealthMap) {
   const kind = sources.kind(instance.kind)
   const starting: Health = { state: 'starting', detail: '' }
-  const parts = (kind?.health ?? []).map(name => {
-    const entry = health[name]
+  const parts = sources.healthNames(instance).map(({ name, entry: named }) => {
+    const entry = health[named]
     return { name, ...(!entry || (instance.enabled && entry.code === 'sourceOff') ? starting : entry) }
   })
-  return { id: instance.id, title: kind?.title ?? { zh: instance.id, en: instance.id }, health: parts }
+  const title = kind?.title ?? { zh: instance.id, en: instance.id }
+  return { id: instance.id, title: instance.id === instance.kind ? title : { zh: `${title.zh} · ${instance.id}`, en: `${title.en} · ${instance.id}` },
+    health: parts }
 }
 export interface SetupState {
   /** Resolved deployment facts; undefined while waiting for initial setup. */
@@ -29,7 +34,8 @@ export interface SetupState {
   /** Setup findings that leave the Sources running, each shown on the Source it names. */
   warnings?: readonly SetupWarning[] | undefined
 }
-export const problemOf = (id: string, setup: SetupState) => [setup.problem, setup.feishuProblem].find(problem => problem?.place === id)
+/** The setup problem that belongs to Source instance `id`. */
+export const problemOf = (id: string, setup: SetupState) => [setup.problem, setup.feishuProblem].find(problem => problem && problemSource(problem) === id)
 /** Source lifecycle state in priority order: missing kind, disabled, setup/part error, blocked on global setup, starting, paused, or ready. */
 export type SourceState = 'missing' | 'off' | 'error' | 'setup' | 'starting' | 'paused' | 'ready'
 function sourceState(instance: SourceInstance & { installed: boolean }, parts: { state: string }[], setup: SetupState): SourceState {
@@ -52,7 +58,7 @@ export function sourcesStatus(host: ViewHost, health: HealthMap, setup: SetupSta
   return sources.instances().map(instance => {
     const { health: parts, ...named } = sourceHealth(sources, instance, health)
     const problem = problemOf(instance.id, setup)
-    const warnings = (setup.warnings ?? []).filter(warning => warning.place === instance.id)
+    const warnings = (setup.warnings ?? []).filter(warning => problemSource(warning) === instance.id)
     return { ...named, installed: instance.installed, enabled: instance.enabled, state: sourceState(instance, parts, setup), health: parts,
       ...problem ? { problem } : {}, ...warnings.length ? { warnings } : {}, stats: stats[instance.id] ?? { received: 0, filtered: 0, lastAt: '' }, filtered: filtered(instance.id),
       dropped: dropped.filter(item => item.channel.source === instance.id) }

@@ -1,5 +1,6 @@
 /**
- * The GitHub world the fake `gh` serves: one repository, the agent account, Issues and pull requests with their comments,
+ * The GitHub world the fake `gh` serves: one repository (and, in `others`, repositories that answer only what setup and a
+ * notifications poll read), the agent account, Issues and pull requests with their comments,
  * and the agent's notifications. The harness seeds and edits it; the fake answers from it and appends what it is asked to
  * write. Erasable syntax only (see store.ts).
  */
@@ -20,11 +21,14 @@ export interface GhNotification {
   id: string; reason: string; unread: boolean; updated_at: string
   repository: { full_name: string }; subject: { title: string; url: string; type: string }
 }
+export interface GhRepository { full_name: string; default_branch: string; push: boolean; head_sha: string }
 export interface GithubWorld {
   agent: GhUser
   /** False makes `gh api user` fail as a signed-out CLI does. */
   signedIn: boolean
-  repository: { full_name: string; default_branch: string; push: boolean; head_sha: string }
+  repository: GhRepository
+  /** Further repositories by name, for a second GitHub Source: setup's reads and the notifications poll answer for them. */
+  others?: Record<string, GhRepository>
   users: Record<string, GhUser>
   issues: Record<string, GhIssue>
   comments: Record<string, GhComment[]>

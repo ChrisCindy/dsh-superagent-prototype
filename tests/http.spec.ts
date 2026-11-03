@@ -167,3 +167,33 @@ it('serves the pending Policy proposal and answers a stale or missing one\'s acc
   expect(await call('POST', 'policy-proposal/accept')).toMatchObject({ status: 404, body: { code: 'noPolicyProposal' } })
   expect(await call('POST', 'policy-proposal/dismiss')).toEqual({ status: 200, body: { dismissed: false } })
 })
+
+it('adds and removes a Source instance, checking each body, and answers a refusal or a stale revision with its status', async () => {
+  const calls: unknown[] = []
+  const call = serve({
+    settings: {
+      addSource: async (kind: string, id: string) => {
+        calls.push(['add', kind, id])
+        if (id === 'github-docs') return { saved: true, revision: 1, restarting: false }
+        throw new UserError('sourceExists', { source: id })
+      },
+      removeSource: async (id: string, revision: number) => {
+        calls.push(['remove', id, revision])
+        if (revision !== 1) throw new SettingsConflict('Settings changed. Reload before saving.')
+        if (id === 'github') throw new UserError('sourceNotRemovable', { source: id })
+        return { removed: true, revision: 2, restarting: true }
+      },
+    },
+  })
+  expect(await call('POST', 'sources', { kind: 'github', id: 'github-docs' })).toEqual({ status: 200, body: { saved: true, revision: 1, restarting: false } })
+  expect(await call('POST', 'sources', { kind: 'github', id: 'github' })).toMatchObject({ status: 400, body: { code: 'sourceExists' } })
+  for (const body of [{ kind: 'github' }, { kind: 'github', id: '' }, { kind: 'github', id: 'github-x', enabled: true }]) {
+    expect(await call('POST', 'sources', body)).toMatchObject({ status: 400 })
+  }
+  expect(await call('POST', 'sources/github-docs/remove', { revision: 1 })).toEqual({ status: 200, body: { removed: true, revision: 2, restarting: true } })
+  expect(await call('POST', 'sources/github-docs/remove', { revision: 0 })).toMatchObject({ status: 409 })
+  expect(await call('POST', 'sources/github/remove', { revision: 1 })).toMatchObject({ status: 400, body: { code: 'sourceNotRemovable' } })
+  expect(await call('POST', 'sources/github-docs/remove', { revision: -1 })).toMatchObject({ status: 400 })
+  expect(calls).toEqual([['add', 'github', 'github-docs'], ['add', 'github', 'github'], ['remove', 'github-docs', 1], ['remove', 'github-docs', 0],
+    ['remove', 'github', 1]])
+})

@@ -29,7 +29,7 @@ function ProblemLine({ problem, onChanged }: { problem: Problem; onChanged: () =
     // A failed Feishu bot check pauses only the Feishu Source; other setup problems halt the entire service.
     case 'setup': return row(t(problem.place === 'feishu' ? 'problemSetupFeishu' : 'problemSetup'), <p className="dt-error"><SetupMessage
       problem={problem} /></p>,
-      setupPage(problem.place), t(`problemSetupFix.${problem.place}`), <CheckSetupButton />)
+      setupPage(problem.place, problem.source), t(`problemSetupFix.${problem.place}`), <CheckSetupButton />)
     // A Policy change the main Session proposed waits here for a person, who accepts it as a panel save or dismisses it.
     case 'policy-proposal': {
       const { proposal } = problem

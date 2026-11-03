@@ -63,7 +63,7 @@ it('renders each Source\'s settings from its kind\'s fields and saves one Source
   await mount()
   await click(zh['tab.source'])
   await click(find(zh['tab.settings'], '.dt-status-head button'))
-  const cards = all('.dt-card')
+  const cards = all('.dt-card[id^="dt-source-"]')
   expect(cards.map(card => card.querySelector('.dt-row-title')?.firstChild?.textContent)).toEqual(['飞书', 'GitHub'])
   const feishu = cards[0]!
   expect(feishu.textContent).toContain('接收的群')
@@ -174,7 +174,7 @@ it('shows a failed Feishu bot check as a problem of the Feishu Source only, with
 
 it('leaves Feishu out of a GitHub-only deployment', async () => {
   server.setup = { ...server.setup, accounts: { ...server.setup.accounts!, feishu: null } }
-  server.settings = { ...server.settings, sources: { ...server.settings.sources, feishu: { enabled: false, config: {} } } }
+  server.settings = { ...server.settings, sources: { ...server.settings.sources, feishu: { kind: 'feishu', enabled: false, config: {} } } }
   at({ page: 'settings', query: { group: 'prompts' } })
   await mount()
   await click(tab(zh.promptViewFull))
@@ -283,4 +283,41 @@ it('reads the settings again as soon as dsh-superagent answers after a save rest
   expect(server.requests.filter(request => request.path === 'settings').length).toBeGreaterThan(reads)
   expect(field('智能体的 GitHub CLI').matches(':disabled')).toBe(false)
   expect(field<HTMLInputElement>('智能体的 GitHub CLI').value).toBe('/opt/bin/gh-agent')
+})
+
+it('adds a GitHub Source under an ID checked as the server checks it, and removes an added one, never the first', async () => {
+  await mount()
+  await click(zh['tab.source'])
+  await click(find(zh['tab.settings'], '.dt-status-head button'))
+  const form = () => document.querySelector<HTMLFormElement>('form[aria-label="添加另一个GitHub来源"]')!
+  // Only a kind that allows several instances offers another, after its last one; the first instance has no remove button.
+  expect(all('form[aria-label^="添加另一个"]')).toHaveLength(1)
+  expect(form().previousElementSibling?.id).toBe('dt-source-github')
+  expect([...all('.dt-card[id^="dt-source-"]')].some(card => card.textContent?.includes(zh.sourceRemove))).toBe(false)
+  const input = form().querySelector('input')!
+  const add = () => [...form().querySelectorAll('button')].find(button => button.textContent === zh.sourceAddButton)!
+  expect(input.value).toBe('github-')
+  expect(add().disabled).toBe(true)
+  for (const [id, error] of [['github-a_b', 'ID 以 github- 开头'], ['docs', 'ID 以 github- 开头'], [`github-${'a'.repeat(40)}`, 'ID 最多 40 个字符'],
+    ['github', '已经有这个 ID 的来源']] as const) {
+    await type(input, id)
+    expect(form().textContent).toContain(error)
+    expect(add().disabled).toBe(true)
+  }
+  // Letters are taken in lowercase.
+  await type(input, 'GitHub-Docs')
+  expect(input.value).toBe('github-docs')
+  expect(add().disabled).toBe(false)
+  await click(add())
+  expect(server.requests.find(request => request.path === 'sources' && request.method === 'POST')).toMatchObject({ body: { kind: 'github', id: 'github-docs' } })
+  expect(document.querySelector('.dt-toast')?.textContent).toBe(zh.saved)
+  const card = () => document.getElementById('dt-source-github-docs')
+  expect(card()?.querySelector('.dt-card-title')?.textContent).toBe('GitHub · github-docs')
+  expect(form().previousElementSibling?.id).toBe('dt-source-github-docs')
+  expect(form().querySelector('input')!.value).toBe('github-')
+  await click([...card()!.querySelectorAll('button')].find(button => button.textContent === zh.sourceRemove)!)
+  expect(text()).toContain('删除来源 github-docs 和它在策略里的部分？')
+  await click(zh.confirm)
+  expect(server.requests.find(request => request.path === 'sources/github-docs/remove')).toMatchObject({ method: 'POST', body: { revision: 1 } })
+  expect(card()).toBeNull()
 })

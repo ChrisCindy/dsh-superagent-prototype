@@ -233,7 +233,49 @@ describe('dsh-superagent on a real DeepSeek Harness', () => {
     expect(status.code, status.stdout).toBe(0)
   })
 
-  it('(f) refuses the management API without the DeepSeek Harness sign-in, except the health read', async () => {
+  it('(f) runs a second GitHub Source for another repository on the same account, checked by setup, and removes it', async () => {
+    const docs = 'acme/docs'
+    harness.github.edit(world => { world.others = { [docs]: { ...world.repository, full_name: docs } } })
+    // An added Source starts off, with the agent CLI of the first, and restarts nothing.
+    expect(await harness.api.post('sources', { kind: 'github', id: 'github-docs' })).toMatchObject({ restarting: false })
+    const added = (await harness.api.get('settings')).sources.find((source: any) => source.id === 'github-docs')
+    expect(added).toMatchObject({ kind: 'github', value: { enabled: false, config: { cli: harness.gh, repository: '' } } })
+    const twice = await harness.api.saveBlock('source:github-docs', { enabled: true, config: { repository: harness.repository, cli: harness.gh } })
+    expect(twice.status).toBe(400)
+    expect(twice.body.setup).toMatchObject({ code: 'repositoryTwice' })
+    const saved = await harness.api.saveBlock('source:github-docs', { enabled: true, config: { repository: docs, cli: harness.gh } })
+    expect(saved.status, JSON.stringify(saved.body)).toBe(200)
+    expect(saved.body).toMatchObject({ restarting: true })
+    const state = await waitFor('both repositories to resolve and both Sources to poll', async () => {
+      const answer = await harness.api.request<any>('GET', 'state')
+      return answer.status === 200 && answer.body.setup.accounts?.repositories?.['github-docs']
+        // After the restart each instance's poll loop reports ready on its own first poll, in either order.
+        && answer.body.health['github-docs']?.state === 'ready' && answer.body.health.github?.state === 'ready'
+        ? answer.body : undefined
+    }, 90_000)
+    expect(state.setup).toMatchObject({ problem: null, warnings: [],
+      accounts: { repository: harness.repository, repositories: { github: harness.repository, 'github-docs': docs }, agent: harness.agent } })
+    expect(state.health.github).toMatchObject({ state: 'ready' })
+    // Setup read the second repository's push access and review rules, and its poll read that repository's notifications.
+    const calls = readLog<{ argv: string[]; unknown?: boolean }>(`${harness.runDir}/fake-github`, 'calls')
+    const lines = calls.map(call => call.argv.join(' '))
+    expect(lines).toContain(`api repos/${docs} --jq {name: .full_name, push: .permissions.push}`)
+    expect(lines).toContain(`api repos/${docs}/rules/branches/main`)
+    expect(lines.some(line => line.startsWith(`api repos/${docs}/notifications`))).toBe(true)
+    expect(calls.filter(call => call.unknown)).toEqual([])
+    const revision = (await harness.api.get('settings')).sources.find((source: any) => source.id === 'github-docs').revision
+    expect(await harness.api.post('sources/github-docs/remove', { revision })).toMatchObject({ removed: true, restarting: true })
+    await waitFor('the second Source to be gone after the restart', async () => {
+      const answer = await harness.api.request<any>('GET', 'state')
+      return answer.status === 200 && answer.body.setup.accounts && !answer.body.setup.accounts.repositories['github-docs']
+        && answer.body.health.runtime?.state === 'ready' && !answer.body.health['github-docs'] ? true : undefined
+    }, 90_000)
+    expect((await harness.api.get('settings')).sources.map((source: any) => source.id)).toEqual(['feishu', 'github'])
+    const status = await harness.status()
+    expect(status.code, status.stdout).toBe(0)
+  })
+
+  it('(g) refuses the management API without the DeepSeek Harness sign-in, except the health read', async () => {
     // docs/009: a worker or another local process that has the panel headers but not the signed cookie gets nowhere.
     const headers = { 'x-orchestrator-request': '1', origin: harness.url, 'content-type': 'application/json' }
     const call = (method: string, path: string, body?: unknown) => fetch(`${harness.url}/orchestrator/api/${path}`,

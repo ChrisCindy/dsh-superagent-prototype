@@ -192,13 +192,13 @@ it('shows a setup warning as a warning that keeps dsh-superagent running, on the
   await mount()
   const row = all('.dt-cards .dt-att').find(item => item.textContent?.includes(zh.problemSetupWarning))!
   expect(row.classList.contains('dt-att-error')).toBe(false)
-  expect(row.textContent).toContain('@agent-bot 可以绕过 main 的审查规则')
+  expect(row.textContent).toContain('@agent-bot 可以绕过 acme/widgets 的 main 的审查规则')
   expect(row.textContent).toContain(zh.problemSetupWarningFix)
   expect([...row.querySelectorAll('button')].some(button => button.textContent === '重新检查')).toBe(true)
   await click(find(zh.problemSetupWarning, 'button'))
   expect(tab(zh['tab.source']).getAttribute('aria-selected')).toBe('true')
   // Only the GitHub Source names it.
   const rows = all('.dt-form > .dt-list > .dt-row')
-  expect(rows.find(item => item.textContent?.includes('GitHub'))!.textContent).toContain('@agent-bot 可以绕过 main 的审查规则')
+  expect(rows.find(item => item.textContent?.includes('GitHub'))!.textContent).toContain('@agent-bot 可以绕过 acme/widgets 的 main 的审查规则')
   expect(rows.find(item => item.textContent?.includes('飞书'))!.textContent).not.toContain('审查规则')
 })

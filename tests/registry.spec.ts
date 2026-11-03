@@ -12,6 +12,8 @@ import { feishuChannel, feishuTrigger, feishuTriggerId } from '../src/sources/fe
 import { testDeployment } from './fixtures/deployment.ts'
 import { feishuKind } from '../src/sources/feishu.ts'
 import { githubKind } from '../src/sources/github.ts'
+import { issueTrigger, pullTrigger } from '../src/sources/github-trigger.ts'
+import { instanceHealth, instanceIdError } from '../src/sources/kind.ts'
 
 const probe: SourceKind<{ interval: number }> = {
   kind: 'probe', title: { zh: '探针', en: 'Probe' }, description: { zh: '', en: '' }, health: [],
@@ -34,7 +36,7 @@ describe('Source registry', () => {
   it('validates submitted instances with the kind schema and refuses kinds that are not installed', () => {
     const sources = new SourceRegistry(() => SettingsSchema.parse({}))
     sources.register(probe)
-    expect(sources.validate('probe', { enabled: true, config: {} })).toEqual({ enabled: true, config: { interval: 5 } })
+    expect(sources.validate('probe', { enabled: true, config: {} })).toEqual({ kind: 'probe', enabled: true, config: { interval: 5 } })
     expect(() => sources.validate('probe', { enabled: true, config: { interval: 0 } })).toThrow()
     expect(() => sources.validate('missing', { enabled: true, config: {} })).toThrow('not installed')
   })
@@ -50,7 +52,7 @@ describe('Source registry', () => {
         return { messages: [{ id: 'm1', from: 'u', at: '1', text: '' }],
           body: { page: cursor ?? 'first' } }
       } } })
-    const commands = {} as Commands
+    const commands = { forSource() { return commands } } as unknown as Commands
     const message = (source: string): OutboundMessage => ({ id: 'r1', channel: { source, thread: 'probe:1', address: { room: 'r' } },
       text: 'hi', kind: 'reply' })
     expect(await sources.send(message('probe'), commands)).toBe('sent')
@@ -83,7 +85,8 @@ describe('Source registry', () => {
     for (const name of ['runtime', 'reply', 'sync:github']) expect(() => sources.register({ ...probe, health: ['probe', name] })).toThrow(name)
     expect(sources.kind('probe')).toBeUndefined()
     sources.register({ ...probe, health: ['probe'] })
-    const context = (kind: { kind: string; health: readonly string[] }) => sourceContextOf({ sources } as unknown as SourceContextDeps, kind)
+    const deps = { sources, commands: { forSource: () => ({}) } } as unknown as SourceContextDeps
+    const context = (kind: { kind: string; health: readonly string[] }) => sourceContextOf(deps, kind)
     const first = context(githubKind)
     first.report('github', { state: 'ready', detail: 'ok' })
     expect(board.all.github).toEqual({ state: 'ready', detail: 'ok' })
@@ -158,5 +161,131 @@ describe('Source registry', () => {
     const reply: OutboundMessage = { id: 'reply-1', channel, text: 'Done', kind: 'reply' }
     expect(await sources.send(reply, commands)).toBe('sent')
     expect(run.mock.calls[0]![1]).toEqual(expect.arrayContaining(['+messages-reply', '--message-id', 'om_dm']))
+  })
+})
+
+describe('Source instances', () => {
+  const twoRepositories = () => SettingsSchema.parse({ sources: {
+    github: { kind: 'github', enabled: true, config: { repository: 'acme/widgets', cli: 'gh' } },
+    'github-docs': { kind: 'github', enabled: true, config: { repository: 'acme/docs', cli: 'gh' } },
+    'github-archive': { kind: 'github', enabled: false, config: { repository: 'acme/archive', cli: 'gh' } },
+  } })
+  it('lists a kind\'s first instance before its other instances and dispatches each by its stored kind', () => {
+    const settings = twoRepositories()
+    const sources = new SourceRegistry(() => settings)
+    sources.register(githubKind); sources.register(feishuKind)
+    expect(sources.instances().map(instance => [instance.id, instance.kind, instance.enabled]))
+      .toEqual([['feishu', 'feishu', true], ['github', 'github', true], ['github-archive', 'github', false], ['github-docs', 'github', true]])
+    expect(sources.kindOf('github-docs')).toBe(githubKind)
+    expect(sources.kindOf('feishu')).toBe(feishuKind)
+    expect(sources.kindOf('github-missing')).toBeUndefined()
+    expect(sources.instance('github-docs')).toMatchObject({ id: 'github-docs', kind: 'github', config: { repository: 'acme/docs' } })
+    // Each instance answers with its own configuration and scope.
+    expect(sources.scope({ source: 'github-archive', meta: {} })).toEqual({ listened: false, reason: 'source_disabled' })
+    expect(sources.channelAllowed({ source: 'github-docs', address: { number: '7' } })).toBe(true)
+    expect(sources.channelAllowed({ source: 'github-archive', address: { number: '7' } })).toBe(false)
+    // A submitted instance validates with its stored kind; a new one names its kind.
+    expect(sources.validate('github-docs', { enabled: true, config: { repository: 'acme/docs' } })).toMatchObject({ kind: 'github', config: { repository: 'acme/docs' } })
+    expect(sources.validate('github-new', { enabled: false, config: {} }, settings, 'github')).toMatchObject({ kind: 'github', enabled: false })
+    expect(() => sources.validate('github-new', { enabled: false, config: {} })).toThrow('not installed: github-new')
+  })
+  it('names the instance a Trigger came from as its home, and the kind\'s first instance for any other Source', () => {
+    const sources = new SourceRegistry(twoRepositories)
+    sources.register(githubKind); sources.register(feishuKind)
+    expect(sources.home('github', 'github-docs')).toBe('github-docs')
+    expect(sources.home('github', 'github')).toBe('github')
+    expect(sources.home('github', 'feishu')).toBe('github')
+    expect(sources.home('github', undefined)).toBe('github')
+    expect(sources.home('feishu', 'github-docs')).toBe('feishu')
+  })
+  it('finds a page of each repository in the instance that receives it, and a bare number in every instance', () => {
+    const sources = new SourceRegistry(twoRepositories)
+    sources.register(githubKind)
+    expect(sources.find('https://github.com/acme/docs/pull/7')).toEqual({ threads: ['github-docs:7'], terms: [] })
+    expect(sources.find('https://github.com/ACME/widgets/issues/3')).toEqual({ threads: ['github:3'], terms: [] })
+    expect(sources.find('#12')).toEqual({ threads: ['github:12', 'github-archive:12', 'github-docs:12'], terms: [] })
+  })
+  it('keeps each instance\'s part of the Policy, validated with its kind', () => {
+    const settings = SettingsSchema.parse({ ...twoRepositories(), policy: { sources: { 'github-docs': { allowed: [{ id: 'carol' }] } } } })
+    const sources = new SourceRegistry(() => settings)
+    sources.register(githubKind)
+    expect(sources.policyPart('github-docs')).toEqual({ allowed: [{ id: 'carol' }], admission: {} })
+    expect(sources.policyPart('github')).toEqual({ allowed: [], admission: {} })
+    expect(() => sources.validatePolicy({ 'github-docs': { allowed: [{ id: 'ou_x y' }] } })).toThrow()
+  })
+  it('sends, and reads thread context, with commands scoped to the Channel\'s instance', async () => {
+    const sources = new SourceRegistry(twoRepositories)
+    sources.register(githubKind)
+    const commands = new Commands(() => testDeployment({ repositories: { github: 'acme/widgets', 'github-docs': 'acme/docs' } }), {}, new AbortController().signal)
+    const run = vi.spyOn(commands, 'run').mockResolvedValue('[]')
+    const message: OutboundMessage = { id: 'r1', channel: { source: 'github-docs', thread: 'github-docs:7', address: { number: '7' } }, text: 'hi', kind: 'reply' }
+    await sources.send(message, commands).catch(() => undefined)
+    // The spy on the unscoped commands sees the calls, made by commands whose repository is the instance's.
+    const paths = run.mock.calls.flatMap(call => call[1]).filter(arg => arg.startsWith('repos/'))
+    expect(paths.length).toBeGreaterThan(0)
+    expect(paths.every(path => path.startsWith('repos/acme/docs/'))).toBe(true)
+    expect(commands.repository).toBe('acme/widgets')
+    expect(commands.forSource('github')).toBe(commands)
+    expect(() => commands.forSource('github-missing').repository).toThrow('The Source github-missing has no repository')
+  })
+  it('contributes the variables of the instance a Ticket came from, and of the first instance for a Ticket from another Source', () => {
+    const sources = new SourceRegistry(twoRepositories)
+    sources.register(githubKind); sources.register(feishuKind)
+    const deployment = testDeployment({ repositories: { github: 'acme/widgets', 'github-docs': 'acme/docs' } })
+    const values = (origin: string | undefined, trigger?: Parameters<NonNullable<typeof githubKind.environment>['values']>[0]['trigger']) => {
+      const found = sources.environments(undefined, origin).find(item => item.kind.kind === 'github')!
+      return found.environment.values({ deployment, instance: found.instance, config: found.config, trigger })
+    }
+    const opened = { number: 7, title: 'Docs', body: '', html_url: 'https://github.com/acme/docs/pull/7', created_at: '2026-01-01T00:00:00Z',
+      user: { login: 'alice', type: 'User' } }
+    const docs = pullTrigger(opened as never, 'agent-bot', 'github-docs')
+    expect(docs.id).not.toBe(pullTrigger(opened as never, 'agent-bot').id)
+    expect(issueTrigger(opened as never, 'agent-bot').id).toBe(pullTrigger(opened as never, 'agent-bot').id)
+    expect(values('github-docs', docs)).toMatchObject({ DSH_SUPERAGENT_GITHUB_REPOSITORY: 'acme/docs', DSH_SUPERAGENT_GITHUB_NUMBER: '7',
+      DSH_SUPERAGENT_GITHUB_PR_HEAD: 'refs/pull/7/head', DSH_SUPERAGENT_GITHUB_ACCOUNT: 'agent-bot' })
+    expect(values('github')).toMatchObject({ DSH_SUPERAGENT_GITHUB_REPOSITORY: 'acme/widgets', DSH_SUPERAGENT_GITHUB_NUMBER: '' })
+    expect(values('feishu')).toMatchObject({ DSH_SUPERAGENT_GITHUB_REPOSITORY: 'acme/widgets', DSH_SUPERAGENT_GITHUB_NUMBER: '' })
+    // A disabled instance contributes nothing.
+    expect(sources.environments(undefined, 'github-archive').some(item => item.kind.kind === 'github')).toBe(false)
+  })
+  it('reports each instance\'s health under its own entry, and keeps its KV records apart', () => {
+    const board = new HealthBoard()
+    const settings = twoRepositories()
+    const sources = new SourceRegistry(() => settings, board)
+    sources.register(githubKind)
+    const records = new Map<string, unknown>()
+    const store = { get: (key: string) => records.get(key), set: (key: string, value: unknown) => { records.set(key, value) },
+      delete: (key: string) => { records.delete(key) }, keys: (prefix: string) => [...records.keys()].filter(key => key.startsWith(prefix)) }
+    const commands = new Commands(() => testDeployment(), {}, new AbortController().signal)
+    const deps = { sources, commands, store } as unknown as SourceContextDeps
+    const first = sourceContextOf(deps, githubKind)
+    const docs = sourceContextOf(deps, githubKind, 'github-docs')
+    expect([first.source, docs.source]).toEqual(['github', 'github-docs'])
+    expect(docs.commands.source).toBe('github-docs')
+    expect(docs.config()).toMatchObject({ repository: 'acme/docs' })
+    expect(docs.config('github-archive')).toBeUndefined()
+    first.report('github', { state: 'ready', detail: 'widgets' })
+    docs.report('github', { state: 'error', detail: 'docs' })
+    expect(board.all.github).toEqual({ state: 'ready', detail: 'widgets' })
+    expect(board.all['github-docs']).toEqual({ state: 'error', detail: 'docs' })
+    expect(sources.healthNames({ id: 'github-docs', kind: 'github' })).toEqual([{ name: 'github', entry: 'github-docs' }])
+    first.state.set('github:poll', 'a'); docs.state.set('github:poll', 'b')
+    expect(Object.fromEntries(records)).toEqual({ 'github:poll': 'a', 'source:github-docs:github:poll': 'b' })
+    expect([first.state.get('github:poll'), docs.state.get('github:poll')]).toEqual(['a', 'b'])
+    expect(docs.state.keys({ prefix: 'github:' } as never)).toEqual(['github:poll'])
+    expect(first.state.keys({ prefix: 'github:' } as never)).toEqual(['github:poll'])
+    docs.state.set('github:poll', undefined)
+    expect(docs.state.get('github:poll')).toBeUndefined()
+    expect(first.state.get('github:poll')).toBe('a')
+  })
+  it('names instance health entries and checks instance IDs', () => {
+    expect(instanceHealth('github', 'github', 'github')).toBe('github')
+    expect(instanceHealth('github', 'github-docs', 'github')).toBe('github-docs')
+    expect(instanceHealth('github', 'github-docs', 'poll')).toBe('github-docs:poll')
+    expect(instanceIdError('github', 'github-docs')).toBeUndefined()
+    expect(instanceIdError('github', 'github-docs-2')).toBeUndefined()
+    for (const id of ['github', 'github-', 'docs', 'github-Docs', 'github-a--b', 'github-a_b', 'github-docs-', 'feishu-docs']) expect(instanceIdError('github', id)).toBe('pattern')
+    expect(instanceIdError('github', `github-${'a'.repeat(34)}`)).toBe('length')
+    expect(instanceIdError('github', `github-${'a'.repeat(33)}`)).toBeUndefined()
   })
 })

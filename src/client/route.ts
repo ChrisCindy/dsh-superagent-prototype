@@ -18,8 +18,9 @@ export type Route = { page: 'overview' | 'source'; id?: undefined; query?: undef
 export const HOME: Route = { page: 'overview' }
 export const settingsRoute = (group: SettingsGroup, query: { source?: string; version?: string } = {}): Route =>
   ({ page: 'settings', query: { group, ...query } })
-export const setupPage = (place: SetupPlace): Route =>
-  place === 'deployment' || place === 'execution' ? settingsRoute(place) : settingsRoute('source', { source: place })
+/** The settings that fix a setup problem: its place, or the Source instance it belongs to (`source`, else the kind its place names). */
+export const setupPage = (place: SetupPlace, source?: string): Route =>
+  place === 'deployment' || place === 'execution' ? settingsRoute(place) : settingsRoute('source', { source: source ?? place })
 export const routeLabel = (t: T, route: Route): string =>
   route.id ? t(route.page === 'trigger' ? 'term.thread' : 'term.ticket') : t(`tab.${route.page}`)
 

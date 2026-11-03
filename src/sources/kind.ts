@@ -22,7 +22,8 @@ export type FieldSpec =
   | FieldBase & { type: 'rows'; columns: ({ key: string; label: Localized; type: 'text'; pattern?: string; optional?: boolean; choose?: Localized; refresh?: Localized } | { key: string; label: Localized; type: 'select'; options: { value: string; label: Localized }[] })[] }
 
 export interface VariableSpec { key: string; description: Localized }
-export interface EnvironmentInput<C> { deployment: Deployment; config: C; trigger?: Trigger }
+/** `instance` is the id of the instance whose values these are: the one the Ticket's Trigger came from, or the kind's first instance. */
+export interface EnvironmentInput<C> { deployment: Deployment; instance: string; config: C; trigger?: Trigger }
 export interface AdmissionRowView { id: string; label: Localized | string; note: Localized; cells: { listedUnaddressed: boolean; unlistedAddressed: boolean; unlistedUnaddressed: boolean } }
 /** Policy extension for a source kind, defining allowed senders, admission table rows, and optional external roster sync. */
 export interface SourcePolicyPart<P extends Record<string, unknown>> {
@@ -41,7 +42,8 @@ export interface SourcePolicyPart<P extends Record<string, unknown>> {
 }
 /** UI link for a channel address; `triggerId` names the Trigger whose own deep link is preferred when available. */
 export interface ChannelLink { url: string; label: Localized; triggerId?: string }
-export type ChannelLinks = Partial<Pick<Deployment, 'repository' | 'feishu'>>
+/** Deployment facts a link needs: the repository of the channel's own Source instance, and the Feishu bot. */
+export interface ChannelLinks { repository?: string; feishu?: Deployment['feishu'] }
 /** Outbound messaging adapter for a source kind's threads. */
 export interface SourceChannel<C> {
   /** Whether a reply may still go to `address`; without it, every address may receive replies. */
@@ -83,8 +85,12 @@ export interface TriggerContext {
 }
 /** Pluggable source kind descriptor registered with SourceRegistry. */
 export interface SourceKind<C extends Record<string, unknown> = Record<string, unknown>> {
-  /** Stable ID; a default instance with the same ID exists when none is stored. */
+  /** Stable ID; the kind's first instance has the same ID and always exists, with defaults when none is stored. */
   kind: string
+  /** Whether more instances of the kind may be added, each with its own ID (`instanceIdError`), configuration, health, state and Threads. */
+  multiple?: true
+  /** Configuration keys that a new instance copies from the kind's first instance, such as an account CLI the instances share. */
+  shared?: readonly string[]
   title: Localized
   description: Localized
   /** Read-only status facts derived from `deployment` (undefined while waiting for setup), keyed by field key. */
@@ -92,7 +98,10 @@ export interface SourceKind<C extends Record<string, unknown> = Record<string, u
   /** Validates stored and submitted configuration and fills defaults. */
   schema: z.ZodType<C>
   fields: FieldSpec[]
-  /** Health entry names owned by this kind under `health[...]`; no other kind or core loop may report them. */
+  /**
+   * Health entry names owned by this kind's first instance under `health[...]`; no other kind or core loop may report them.
+   * Another instance reports them under the names `instanceHealth` gives.
+   */
   health: string[]
   /** Listening rule for a trigger (or recorded Mandate basis) of this kind; kinds without `scope` listen to everything they produce and observe none of it. */
   scope?(input: { meta: Record<string, unknown> }, config: C): ScopeResult
@@ -100,8 +109,8 @@ export interface SourceKind<C extends Record<string, unknown> = Record<string, u
   channel?: SourceChannel<C>
   /** Bounded context reader for assessments; assessments of a kind without `threadContext` read none. */
   threadContext?: ThreadContext<C>
-  /** Maps a search query to candidate Thread keys (such as `github:12`) and Trigger search terms (such as a Feishu `om_` ID). */
-  find?(query: string): { threads: string[]; terms: string[] }
+  /** Maps a search query to an instance's candidate Thread keys (such as `github:12`) and Trigger search terms (such as a Feishu `om_` ID). */
+  find?(query: string, instance: SourceInstance<C>): { threads: string[]; terms: string[] }
   /** Returns the ID of the Trigger whose message this Trigger replies to, when derivable without a network read. */
   repliesTo?(trigger: Trigger): string | undefined
   /** Policy section for kinds whose senders have their own identity. */
@@ -113,3 +122,17 @@ export interface SourceKind<C extends Record<string, unknown> = Record<string, u
 }
 
 export interface SourceInstance<C extends Record<string, unknown> = Record<string, unknown>> { id: string; kind: string; enabled: boolean; config: C }
+
+/** Longest instance ID; it names health entries, KV keys and Thread keys. */
+export const INSTANCE_ID_MAX = 40
+/**
+ * Why `id` cannot name a new instance of `kind`, or undefined when it can: another instance's ID is the kind's ID, a hyphen,
+ * and lowercase letters and digits, which may be joined by single hyphens (such as `github-docs`).
+ */
+export function instanceIdError(kind: string, id: string): 'pattern' | 'length' | undefined {
+  if (id.length > INSTANCE_ID_MAX) return 'length'
+  return id.startsWith(`${kind}-`) && /^[a-z0-9]+(-[a-z0-9]+)*$/.test(id.slice(kind.length + 1)) ? undefined : 'pattern'
+}
+/** The name under which instance `id` of `kind` reports the kind's health entry `name`: unchanged for the kind's first instance. */
+export const instanceHealth = (kind: string, id: string, name: string): string =>
+  id === kind ? name : name === kind ? id : `${id}:${name}`

@@ -10,7 +10,7 @@ import type { Thread, Ticket, Trigger } from '../src/core/index.ts'
 const MEMBER = 'ou_alice'
 const CHAT = 'oc_team'
 const OBSERVED = 'oc_1111111111111111111111111111'
-const feishuSource = (config: { chats: { chatId: string; listen: 'mentions' | 'all' }[]; directMessages: boolean }, enabled = true) => ({ enabled, config })
+const feishuSource = (config: { chats: { chatId: string; listen: 'mentions' | 'all' }[]; directMessages: boolean }, enabled = true) => ({ kind: 'feishu', enabled, config })
 const base = SettingsSchema.parse({
   policy: { sources: { feishu: { allowed: [{ id: MEMBER, name: 'Alice' }], syncChat: CHAT }, github: { allowed: [{ id: 'Alice' }] } } },
   eval: { mode: 'auto' },
@@ -28,6 +28,17 @@ const unaddressed = (overrides: Partial<Trigger> = {}): Trigger => { const { add
 const github = (login: string, addressed?: 'mention'): Trigger => ({ id: 'g', source: 'github', threads: [{ source: 'github', id: '1' }], actor: { source: 'github', id: login }, human: true, at: '', text: 'x', ...addressed ? { addressed } : {}, meta: { number: 1, isPr: true } })
 const ticket = { id: 'ticket', ended: { at: '', by: 'executor', reason: 'closed', outcome: 'closed' } } as Ticket
 
+describe('stored Source instances', () => {
+  it('names each instance\'s kind, the ID\'s own for a Source stored without one, and refuses an ID that does not start with its kind', () => {
+    const config = { enabled: true, config: {} }
+    expect(SettingsSchema.parse({ sources: { github: config, 'github-docs': { kind: 'github', ...config } } }).sources)
+      .toEqual({ github: { kind: 'github', ...config }, 'github-docs': { kind: 'github', ...config } })
+    for (const sources of [{ docs: { kind: 'github', ...config } }, { 'feishu-docs': { kind: 'github', ...config } },
+      { 'GitHub-docs': { kind: 'github', ...config } }]) expect(SettingsSchema.safeParse({ sources }).success).toBe(false)
+    // Without a kind, an ID names its own kind, which may not be installed: the registry lists it as not installed.
+    expect(SettingsSchema.parse({ sources: { 'github-docs': config } }).sources['github-docs']!.kind).toBe('github-docs')
+  })
+})
 describe('source scope', () => {
   it('listens to configured chats, reads every message only where configured, and follows the direct-message switch', () => {
     expect(sources.scope(feishu())).toEqual({ listened: true, observed: false, row: CHAT })
@@ -47,7 +58,7 @@ describe('source scope', () => {
     expect(broken.scope(feishu())).toEqual({ listened: false, reason: 'source_disabled' })
   })
   it('filters everything from a disabled Source', () => {
-    expect(setup({ ...base, sources: { ...base.sources, github: { enabled: false, config: {} } } }).sources.scope(github('anyone'))).toEqual({ listened: false, reason: 'source_disabled' })
+    expect(setup({ ...base, sources: { ...base.sources, github: { kind: 'github', enabled: false, config: {} } } }).sources.scope(github('anyone'))).toEqual({ listened: false, reason: 'source_disabled' })
   })
 })
 describe('gate', () => {
@@ -223,7 +234,7 @@ describe('revalidate and version', () => {
   })
   it('changes the Policy version for rules, accept mode and the Sources\' parts, not for pause, concurrency, models or Source configuration', () => {
     const version = setup().version
-    expect(setup({ ...base, paused: true, executor: { ...base.executor, maxWorkers: 9 }, eval: { ...base.eval, timeoutSeconds: 300 }, sources: { ...base.sources, github: { enabled: true, config: { pollSeconds: 600 } } } }).version).toBe(version)
+    expect(setup({ ...base, paused: true, executor: { ...base.executor, maxWorkers: 9 }, eval: { ...base.eval, timeoutSeconds: 300 }, sources: { ...base.sources, github: { kind: 'github', enabled: true, config: { pollSeconds: 600 } } } }).version).toBe(version)
     expect(setup({ ...base, sources: { feishu: feishuSource({ chats: [], directMessages: false }) } }).version).toBe(version)
     expect(setup({ ...base, eval: { ...base.eval, mode: 'off' } }).version).not.toBe(version)
     expect(setup({ ...base, policy: { ...base.policy, sources: { ...base.policy.sources, github: { allowed: [], admission: {} } } } }).version).not.toBe(version)
@@ -242,7 +253,7 @@ describe('settings migration', () => {
       sources: { feishu: { allowed: [{ id: MEMBER, name: 'Alice' }, { id: 'ou_bob', name: 'Bob' }], syncChat: CHAT, admission: {} }, github: { allowed: [{ id: 'alice' }, { id: 'carol' }], admission: {} } },
     })
     expect(saved).toMatchObject({ paused: false, executor: { model: null, maxWorkers: 2, directory: '', prepare: '', blockedCommands: [] } })
-    expect(saved.sources.feishu).toEqual({ enabled: true, config: { chats: [], directMessages: true } })
+    expect(saved.sources.feishu).toEqual({ kind: 'feishu', enabled: true, config: { chats: [], directMessages: true } })
     expect(SettingsSchema.parse(migrateSettings(saved))).toEqual(saved)
     expect(SettingsSchema.parse(migrateSettings({ executor: { maxWorkers: 2, paused: true } }))).toMatchObject({ paused: true, executor: { maxWorkers: 2 } })
   })
@@ -251,7 +262,7 @@ describe('settings migration', () => {
       models: { orchestrator: { provider: 'p', model: 'm' }, worker: null, admission: null }, admission: { mode: 'auto', chats: [OBSERVED], maxEvaluators: 1, timeoutSeconds: 90, rules: [] } }))
     expect(migrated).toEqual({
       paused: true,
-      sources: { feishu: feishuSource({ chats: [{ chatId: CHAT, listen: 'mentions' }, { chatId: OBSERVED, listen: 'all' }], directMessages: false }), github: { enabled: true, config: { pollSeconds: 120 } } },
+      sources: { feishu: feishuSource({ chats: [{ chatId: CHAT, listen: 'mentions' }, { chatId: OBSERVED, listen: 'all' }], directMessages: false }), github: { kind: 'github', enabled: true, config: { pollSeconds: 120 } } },
       policy: { rules: [], sources: { feishu: { allowed: [{ id: MEMBER, name: 'A' }], admission: {} }, github: { allowed: [{ id: 'a' }], admission: {} } } },
       eval: { mode: 'auto', timeoutSeconds: 90, maxInferredPerHour: 20, model: { provider: 'p', model: 'm' } },
       executor: { model: null, maxWorkers: 5, directory: '', prepare: '', blockedCommands: [], sandbox: 'workspace', writableRoots: [],
