@@ -343,7 +343,7 @@ const TEXT = {
   'basis.admission': ['准入', 'Admission'],
   'basis.followup': ['线程内跟进', 'Follow-up in Thread'],
   'basis.observation': ['接收全部消息的群', 'Chat receiving all messages'],
-  'basis.bot': ['名单内的机器人', 'Listed bot'],
+  'basis.bot': ['名单内的机器人或定时条目', 'Listed bot or schedule entry'],
   'basis.mode': ['接单模式', 'Accept mode'],
   'basis.rules': ['命中规则', 'Matched rules'],
   'basis.legacyAuthority': ['旧版授权', 'Legacy authority'],
@@ -698,6 +698,7 @@ const TEXT = {
   'reason.source_disabled': ['来源已停用', 'Source disabled'],
   'reason.issue_sender_or_admission_disabled': ['Issue 发起人不在名单或主动接单已关闭', 'Issue sender not on the list, or proactive accept off'],
   'reason.source_not_installed': ['来源插件未加载', 'Source plugin not loaded'],
+  'reason.entry_not_listed': ['定时条目已不在来源的设置里', 'The schedule entry is no longer in the Source\'s settings'],
   'reason.issue_unclaimed_less_than_wait': ['Issue 无人认领未满等待时长', 'Issue unclaimed for less than the wait'],
   // Glossary
   glossary: ['术语表', 'Glossary'],

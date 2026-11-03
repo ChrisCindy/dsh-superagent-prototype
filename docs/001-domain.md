@@ -65,8 +65,8 @@ The concepts above and their rules are reusable. The Source implementations, the
 
 | Part | In this repository |
 | --- | --- |
-| Source | Feishu: live events, history recovery, polling of subscribed topics. GitHub: notifications, subscribed Issues and pull requests, CI changes, pull requests merged or closed, and, where switched on, every new Issue, pull request and comment in the repository and the default branch's CI |
-| Policy | Assessment rules, and each Source's allowed list, its sync, its bot list and its admission table |
+| Source | Feishu: live events, history recovery, polling of subscribed topics. GitHub: notifications, subscribed Issues and pull requests, CI changes, pull requests merged or closed, and, where switched on, every new Issue, pull request and comment in the repository and the default branch's CI. Schedule: conditions that need waiting, as GitHub searches run once per interval; each hit is a Trigger on its Issue's or pull request's Thread |
+| Policy | Assessment rules, and each Source's allowed list, its sync, its bot list and its admission table; for the schedule Source, the entries whose hits may become candidates |
 | Executor | A DSH Executor Session and a directory per Ticket, in an execution environment whose variables the Executor and the Sources register |
 | Channel | Feishu topic replies, GitHub comments and review thread replies |
 

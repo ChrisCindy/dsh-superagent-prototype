@@ -5,6 +5,8 @@ import { expect, it, onTestFinished, vi } from 'vitest'
 import { zh } from '../src/client/locales.ts'
 import { usePanel, mount, remount, settle, all, find, tab, click, type, text, field, at } from './fixtures/panel.tsx'
 import { server, problemOf, droppedReply } from './fixtures/panel-server.ts'
+import { scheduleKind } from '../src/sources/schedule.ts'
+import type { SourceKind } from '../src/sources/kind.ts'
 
 usePanel()
 it('shows each Source\'s state on the Source status and opens its settings from a setup problem', async () => {
@@ -320,4 +322,26 @@ it('adds a GitHub Source under an ID checked as the server checks it, and remove
   await click(zh.confirm)
   expect(server.requests.find(request => request.path === 'sources/github-docs/remove')).toMatchObject({ method: 'POST', body: { revision: 1 } })
   expect(card()).toBeNull()
+})
+
+it('edits the schedule Source\'s entries from its kind\'s fields, with the search wider than the other columns', async () => {
+  server.kinds = [scheduleKind as unknown as SourceKind]
+  server.settings.sources.schedule = { kind: 'schedule', enabled: true, config: { entries: [{ id: 'stale', description: '两天没人认领的 Issue',
+    every: '6h', query: 'is:issue is:open no:assignee updated:<{now-48h}', github: 'github' }] } }
+  await mount()
+  await click(tab(zh['tab.settings']))
+  const card = document.getElementById('dt-source-schedule')!
+  expect(card.querySelector('.dt-card-title')?.textContent).toBe('定时条件')
+  const list = card.querySelector<HTMLElement>('.dt-rows')!
+  expect(list.style.getPropertyValue('--dt-row-template')).toBe('minmax(0, 1fr) minmax(0, 2fr) minmax(0, 1fr) minmax(0, 2fr) minmax(0, 1fr)')
+  // A saved entry keeps its id; the rest of the row stays editable.
+  const row = card.querySelector('.dt-rows-item')!
+  expect(row.querySelector('.dt-row-label')?.textContent).toBe('stale')
+  expect([...row.querySelectorAll('input')].map(input => input.value)).toEqual(['两天没人认领的 Issue', '6h', 'is:issue is:open no:assignee updated:<{now-48h}', 'github'])
+  await type(row.querySelector<HTMLInputElement>('input[aria-label="间隔，如 6h"]')!, '1d')
+  await act(async () => { card.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })) }); await settle()
+  expect(server.requests.find(request => request.path === 'settings/source:schedule')).toMatchObject({ method: 'PUT',
+    body: { value: { enabled: true, config: { entries: [expect.objectContaining({ id: 'stale', every: '1d' })] } } } })
+  // A field without a wide column keeps equal columns.
+  expect(document.getElementById('dt-source-feishu')!.querySelector<HTMLElement>('.dt-rows')!.style.getPropertyValue('--dt-row-template')).toBe('')
 })

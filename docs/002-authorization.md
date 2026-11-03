@@ -14,6 +14,7 @@ The Source records whether a message addresses the agent: `mention` for a mentio
 - A person's follow-up on a Thread with Tickets follows the rules below.
 - Other human messages use the admission table for their receiving scope.
 - A bot on the Source's bot list can produce an inferred candidate, never an explicit request. Other bots are not admitted.
+- A hit of a schedule entry on the schedule Source's list is treated like a listed bot's message. See [Schedule entries](#schedule-entries).
 
 ### Subscriptions: continuing existing work
 
@@ -48,8 +49,8 @@ Human messages that reach no Ticket, including Threads whose Tickets were stoppe
 | Strength | Cases |
 | --- | --- |
 | explicit | A person on the list addresses the agent, or follows up on a Thread that already has a Ticket; a cell of the admission table set to explicit request |
-| inferred | A person not on the list follows up on a Thread with a Ticket, unless their cell of the admission table is explicit; a cell of the admission table set to inferred candidate; a message of a bot on the Source's bot list that addresses the agent or arrives where the Source receives every message |
-| not admitted | Any other bot's message, everything the admission table ignores, and every inferred case while the accept mode is `off` |
+| inferred | A person not on the list follows up on a Thread with a Ticket, unless their cell of the admission table is explicit; a cell of the admission table set to inferred candidate; a message of a bot on the Source's bot list that addresses the agent or arrives where the Source receives every message; a hit of a listed schedule entry |
+| not admitted | Any other bot's message, a hit of an unlisted schedule entry, everything the admission table ignores, and every inferred case while the accept mode is `off` |
 
 For an unlisted person, an explicit admission cell takes precedence even on a Thread with Tickets and works in every accept mode. Otherwise their follow-up is inferred and is not admitted in `off` mode. Messages on Threads followed only for context use the admission table instead of follow-up strength.
 
@@ -79,6 +80,14 @@ The admission table is part of the Policy version. Weakening a cell does not imm
 The host recognizes GitHub Apps, logins ending in `[bot]`, and Feishu bots as bots. A Source can list bots such as `dependabot[bot]` whose messages may become inferred candidates. They must either address the agent or post in a scope that receives every message. They cannot make explicit requests or stop Tickets.
 
 An automated reviewer using an ordinary account counts as a person to the host. Its comments reach subscribed Tickets and generate follow-up notices. Team prompt text must identify such accounts as automated reviewers.
+
+### Schedule entries
+
+The optional schedule Source holds conditions that need waiting, such as "an Issue nobody took up for two days". Each entry runs a GitHub search in one GitHub Source's repository once per interval. Each hit becomes a Trigger on that Issue's or pull request's Thread, such as `github:12`. Its actor is the entry, and no person sent it.
+
+The schedule Source's Policy part has no allowed list. It lists the entries whose hits may become candidates, as a bot list does. A hit of a listed entry is an inferred candidate: it must match an enabled rule, `observe` mode only records "would accept", and `off` admits nothing. A hit never makes an explicit request or stops a Ticket. A hit of another entry is ignored. The Mandate holds only while the entry is still configured and listed.
+
+A hit is a candidate on a GitHub Thread, so the proactive limit below counts it for that GitHub Source, not for the schedule Source.
 
 ## Routing candidates
 
@@ -166,7 +175,7 @@ The Source must still listen to the original Thread. The remaining checks depend
 - An explicit follow-up Mandate passes.
 - An inferred Mandate needs `auto` mode and its matched rules still enabled.
 - A Mandate admitted by a table cell must still receive at least its original strength under today's table and sender membership. Removing a sender from the list can therefore revoke a Mandate accepted through the listed-sender cell.
-- A bot's Mandate requires that bot to remain on the Source's bot list. Inferred table and bot Mandates also need `auto` mode and enabled matched rules.
+- A bot's Mandate requires that bot to remain on the Source's bot list. A schedule entry's Mandate also requires the entry to remain configured. Inferred table and bot Mandates also need `auto` mode and enabled matched rules.
 - Other Mandates require the sender to remain on the Source's allowed list.
 
 If revalidation fails, the Ticket stays ended and takes none of its waiting messages. Each message is treated as having reached no Ticket; if no other Ticket owns it, it goes to Eval. The main Session is not told it reached a worker. This also applies after a processing pause. Attaching to the Ticket is refused, and further work requires a new accept.

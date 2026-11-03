@@ -11,7 +11,7 @@ export interface Localized { zh: string; en: string }
 interface FieldBase { key: string; label: Localized; hint?: Localized; advanced?: true }
 /**
  * Configuration field specification; `rows` edits a list of records keyed by its first column, `choose` picks from
- * resolved source labels, and `fact` displays a read-only value from `facts`.
+ * resolved source labels, a `wide` column takes twice the width of the others, and `fact` displays a read-only value from `facts`.
  */
 export type FieldSpec =
   | FieldBase & { type: 'switch' }
@@ -19,7 +19,7 @@ export type FieldSpec =
   | FieldBase & { type: 'number'; min: number; max: number }
   | FieldBase & { type: 'text'; pattern?: string; readonly?: boolean; choose?: Localized }
   | FieldBase & { type: 'fact'; settings?: 'deployment' }
-  | FieldBase & { type: 'rows'; columns: ({ key: string; label: Localized; type: 'text'; pattern?: string; optional?: boolean; choose?: Localized; refresh?: Localized } | { key: string; label: Localized; type: 'select'; options: { value: string; label: Localized }[] })[] }
+  | FieldBase & { type: 'rows'; columns: ({ key: string; label: Localized; type: 'text'; pattern?: string; optional?: boolean; wide?: true; choose?: Localized; refresh?: Localized } | { key: string; label: Localized; type: 'select'; options: { value: string; label: Localized }[] })[] }
 
 export interface VariableSpec { key: string; description: Localized }
 /** `instance` is the id of the instance whose values these are: the one the Ticket's Trigger came from, or the kind's first instance. */

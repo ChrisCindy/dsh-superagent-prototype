@@ -110,6 +110,8 @@ export interface PanelServer {
   failing: Extract<Problem, { kind: 'outgoing' }>['outgoing'][]
   /** The main Session's pending Policy proposal, if any. */
   proposal?: Extract<Problem, { kind: 'policy-proposal' }>['proposal'] | undefined
+  /** Further installed kinds whose settings the panel shows, such as the schedule Source's. */
+  kinds?: SourceKind[]
 }
 export let server: PanelServer
 
@@ -128,7 +130,7 @@ function healthOf(name: string): Health {
 }
 const problemOf_ = (id: string) => [server.setup.problem, server.setup.feishuProblem].find(item => item && (item.source ?? item.place) === id) ?? undefined
 /** Each kind's first instance, then its other stored instances in ID order, as the server lists them. */
-const instancesOf = () => KINDS.flatMap(kind => [{ id: kind.kind, kind }, ...Object.entries(server.settings.sources)
+const instancesOf = () => [...KINDS, ...server.kinds ?? []].flatMap(kind => [{ id: kind.kind, kind }, ...Object.entries(server.settings.sources)
   .filter(([id, stored]) => stored.kind === kind.kind && id !== kind.kind).sort(([a], [b]) => a.localeCompare(b)).map(([id]) => ({ id, kind }))])
 function sourceSettings(): SourceView[] {
   return instancesOf().map(({ id, kind }) => {
