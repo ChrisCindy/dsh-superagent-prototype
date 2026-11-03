@@ -35,6 +35,10 @@ export interface Api {
   'GET tickets/:id': { response: TicketPageView }
   'POST tickets/:id/retry': { response: { retried: true } }
   'POST tickets/:id/stop': { response: { stopped: true } }
+  /** Whether the ticket was held now, false when it was held already. */
+  'POST tickets/:id/hold': { response: { held: boolean } }
+  /** Whether the ticket was held. */
+  'POST tickets/:id/release': { response: { released: boolean } }
   'POST executor/pause': { body: { paused: boolean }; response: { paused: boolean } }
   'PUT settings/:block': { body: { value: unknown; revision: number }; response: { revision: number; restarting: boolean } }
   'GET policy/history': { response: HistoryView }

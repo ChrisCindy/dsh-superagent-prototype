@@ -17,6 +17,8 @@ export const REASONS = {
   senderNotMember: 'The sender is not on the Source\'s list',
   retried: 'Retried by a person',
   budgetSpent: 'The Assignment used up its budget',
+  held: 'A person held the Ticket',
+  humanHold: 'Human asked to stop for now',
   hostRestarted: 'dsh-superagent restarted',
   stopUnknown: 'Stop target is unknown or already ended',
   stopNotExplicit: 'A stop needs an explicit request from a sender on the list',

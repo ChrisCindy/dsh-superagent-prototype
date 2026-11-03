@@ -12,7 +12,7 @@ export function ticketMark(t: T, ticket: TicketStage & Pick<TicketSummary, 'ende
     case 'person': {
       const action = ticket.action
       const icon: IconName = action === 'review' ? 'review' : action === 'failed' ? 'alert' : action === 'blocked' ? 'blocked'
-        : action === 'delivery' ? 'inbox' : 'ask'
+        : action === 'delivery' ? 'inbox' : action === 'held' ? 'pause' : 'ask'
       return { label: t(`stage.${action}`), tone: action === 'failed' ? 'danger' : 'warning', dot: action === 'failed' ? 'error'
         : 'warning', icon }
     }
@@ -48,7 +48,8 @@ export const sourceMark = (t: T, state: SourceStatusRow['state']) => ({ dot: SOU
 type Outcome = DecisionRow['outcome']
 const DECISION_MARKS: Record<Outcome, Omit<Mark, 'label'>> = {
   accept: { dot: 'done', icon: 'decision', tone: 'success' }, reopen: { dot: 'done', icon: 'refresh', tone: 'success' },
-  stop: { dot: 'idle', icon: 'stop', tone: 'danger' }, ignore: { dot: 'idle', icon: 'dismiss', tone: 'neutral' },
+  stop: { dot: 'idle', icon: 'stop', tone: 'danger' }, hold: { dot: 'warning', icon: 'pause', tone: 'warning' },
+  ignore: { dot: 'idle', icon: 'dismiss', tone: 'neutral' },
   unavailable: { dot: 'warning', icon: 'alert', tone: 'warning' }, wouldAccept: { dot: 'idle', icon: 'dismiss', tone: 'warning' },
 }
 /** Maps a Decision outcome to its visual mark, distinguishing `wouldAccept` (an ignore that observe mode would have accepted). */

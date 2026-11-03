@@ -611,6 +611,39 @@ it('relaunches running assignments after a restart with a recovery note', async 
   expect(relays(`worker-${ticket.id}`)).toEqual([{ ticket_id: ticket.id, assignment: 2 }, { text: expect.stringContaining('host restarted') }])
 })
 
+it('holds a ticket from the panel: automatic input waits, the hold survives a restart, and a release resumes it', async () => {
+  const { ticket, sessionId } = await acceptedTicket()
+  await runtime.pump(); await runtime.idle()
+  expect(runtime.store.tickets.get(ticket.id)!.assignments[0]).toMatchObject({ state: 'running' })
+  expect((await api('POST', `tickets/${ticket.id}/hold`)).body).toEqual({ held: true })
+  await runtime.idle()
+  expect((await api('POST', `tickets/${ticket.id}/hold`)).body).toEqual({ held: false })
+  const page = (await api('GET', `tickets/${ticket.id}`)).body
+  expect(page).toMatchObject({ stage: 'person', action: 'held', held: { at: expect.any(String) }, actions: { hold: false, release: true, retry: false } })
+  expect(agents.get(sessionId)!.cancel).toHaveBeenCalled()
+  // A CI result is automatic input: it is kept for later and does not wake the worker.
+  deliveries.mockClear()
+  runtime.engine.note(ticket.id, 'CI failed on master')
+  await runtime.pump(); await runtime.idle()
+  expect(relays(sessionId)).toEqual([])
+  expect(runtime.store.tickets.get(ticket.id)!.assignments.map(item => item.state)).toEqual(['ended'])
+  const next = await restart(); await next.ready
+  runtime.executor.resume()
+  await runtime.pump(); await runtime.idle()
+  const stored = runtime.store.tickets.get(ticket.id)!
+  expect(stored.held).toMatchObject({ at: expect.any(String) })
+  expect(stored.assignments.map(item => item.state)).toEqual(['ended'])
+  expect((await api('GET', `tickets/${ticket.id}`)).body).toMatchObject({ stage: 'person', action: 'held' })
+  expect((await api('POST', `tickets/${ticket.id}/release`)).body).toEqual({ released: true })
+  await runtime.pump(); await runtime.idle()
+  const released = runtime.store.tickets.get(ticket.id)!
+  expect(released.held).toBeUndefined()
+  expect(released.assignments.map(item => item.state)).toEqual(['ended', 'running'])
+  // As while it waits for a person, the CI result is recorded on the ticket and not delivered later.
+  expect(released.inputs).toEqual([expect.objectContaining({ kind: 'note', text: 'CI failed on master' })])
+  expect(relays(sessionId)).not.toContainEqual({ text: expect.stringContaining('CI failed on master') })
+})
+
 it('projects read models for the management page and removes thread subscriptions from the Web surface', async () => {
   const { ticket, trigger } = await acceptedTicket()
   const threadKeyValue = `feishu:${CHAT}:om_1`

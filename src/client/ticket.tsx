@@ -1,7 +1,7 @@
 /** Ticket detail page: stage and actions, Mandate details, undelivered/delivered Inputs, subscribed Threads, and Assignments. */
 import { useState, type ReactNode } from 'react'
 import { ApiError, usePoll, type TicketPageView } from './api.ts'
-import { DisclosureRow, Dot, Icon, Tag, type IconName } from './controls.tsx'
+import { Button, DisclosureRow, Dot, Icon, Tag, type IconName } from './controls.tsx'
 import { decisionMark, reportDot, ticketMark } from './marks.ts'
 import { usePanel } from './provider.tsx'
 import { settingsRoute } from './route.ts'
@@ -131,6 +131,10 @@ export function TicketPage({ id }: { id: string }) {
       {data.actions.retry && <ConfirmButton variant="outline" icon="refresh" label={t('retry')} title={t('retryTitle')}
         message={t('retryConfirm', { title: data.title })}
         onConfirm={() => after(call('POST tickets/:id/retry', { id }))} />}
+      {data.actions.hold && <ConfirmButton variant="outline" icon="pause" label={t('hold')} title={t('holdTitle')}
+        message={t('holdConfirm', { title: data.title })} onConfirm={() => after(call('POST tickets/:id/hold', { id }))} />}
+      {data.actions.release && <Button variant="outline" icon={<Icon name="play" />}
+        onClick={() => { void after(call('POST tickets/:id/release', { id })) }}>{t('release')}</Button>}
       {data.sessionId && <SessionButton variant="outline" sessionId={data.sessionId} />}
     </PageHead>
     {error && <LoadState error={error} loading={false} />}
@@ -141,6 +145,8 @@ export function TicketPage({ id }: { id: string }) {
       <LabelValue label={t('ticketUpdatedLabel')} value={when(data.updatedAt, t('lang'))} />
     </div>
     {ended && <Hint>{ended}</Hint>}
+    {data.held && <p className="dt-banner"><span className="dt-banner-label">{t('heldPrefix')}</span>{t('heldSince',
+      { time: when(data.held.at, t('lang')) })}{data.held.reason ? ` ${data.held.reason}` : ''}</p>}
     {data.attention && <div className="dt-banner"><span className="dt-banner-label">{t('attentionPrefix')}</span><MarkdownLite
       text={data.attention.question} />
       {channel && <div className="dt-banner-actions">

@@ -87,10 +87,10 @@ export function followupOwners(trigger: Pick<Trigger, 'id' | 'human' | 'threads'
   })
 }
 /**
- * Whether a Decision settled what a person's message asks for: a stop on it, taken or refused, decides only that ticket's
+ * Whether a Decision settled what a person's message asks for: a stop or hold on it, taken or refused, decides only that ticket's
  * work, routing it to a ticket leaves it to that ticket's worker, and an unavailable or rate-limited one decided nothing.
  */
-export const settled = (decision: Pick<Decision, 'kind' | 'reason'>): boolean => !['stop', 'unavailable'].includes(decision.kind)
+export const settled = (decision: Pick<Decision, 'kind' | 'reason'>): boolean => !['stop', 'hold', 'unavailable'].includes(decision.kind)
   && !decision.reason.some(reason => ['stopNotExplicit', 'stopUnknown', 'routed', 'rateLimited'].includes(reason.code))
 
 export type Strength = 'explicit' | 'inferred'
@@ -187,7 +187,7 @@ export interface ThreadFact { label?: Text; value: Text; problem?: true }
 /** A thread's facts by id, ordered for display; each writer owns its fact ids. */
 export type ThreadFacts = Record<string, ThreadFact>
 
-export type DecisionKind = 'ignore' | 'accept' | 'reopen' | 'stop' | 'unavailable'
+export type DecisionKind = 'ignore' | 'accept' | 'reopen' | 'stop' | 'hold' | 'unavailable'
 /** Outcome of one eval, recorded on the thread. */
 export interface Decision {
   id: string
@@ -287,6 +287,11 @@ export interface Ticket {
   ended?: { at: string; by: TicketEndBy; outcome: TicketOutcome; reason?: string }
   /** Open question for a person; cleared by the executor or when the ticket ends. */
   attention?: Attention
+  /**
+   * A person held the ticket, by `reason` when they gave one: its Assignment ended, and until a person's message or a release
+   * it takes no automatic Input and starts no Assignment. Cleared when it ends.
+   */
+  held?: { at: string; reason?: string }
   assignments: Assignment[]
   inputs: TicketInput[]
   /** Inputs not yet handed to a running assignment. */

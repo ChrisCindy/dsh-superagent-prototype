@@ -221,6 +221,7 @@ Agents may rely on these routes and fields. The other routes in `src/app/api.ts`
 | `POST policy-proposal/accept`, `POST policy-proposal/dismiss` | Accepts the proposal, saving it as `PUT settings/<block>` would against the revision it was made from (409 when stale, 404 when none waits), or discards it: `dismissed`, whether one was waiting |
 | `GET prompts`, `PUT prompts` with `{"config", "baseRevision"}` | Reads the prompt configuration: `current`, with its `revision` and `config`, `defaults`, `sections`, the team sections in the order Sessions read them, `skillName`, the pattern of a team skill's name, `builtin`, the names a team skill cannot take, and `skillPrefix`, which Sessions load a skill's name under. Or saves it: the new `revision` |
 | `POST tickets/<id>/retry`, `POST tickets/<id>/stop` | Retries or stops a Ticket, as the panel does |
+| `POST tickets/<id>/hold`, `POST tickets/<id>/release` | Holds or releases a Ticket, as the panel does; answers whether it changed |
 
 Health entries are grouped by responsibility:
 

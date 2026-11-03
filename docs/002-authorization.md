@@ -23,7 +23,7 @@ A person's message on a Ticket's own Thread belongs to that Ticket's Executor to
 
 Ownership continues while the Ticket is live, even if a person removes its Subscription. It also covers an ended Ticket that was not stopped by a person and has the message waiting to resume it.
 
-The main Session receives a follow-up notice. While an Executor owns the message, the main Session may only stop work on the person's request; accept, attach, ignore and requeue are refused. A stop still passes through the gate with the follow-up strength described below.
+The main Session receives a follow-up notice. While an Executor owns the message, the main Session may only stop or hold work on the person's request; accept, attach, ignore and requeue are refused. A stop or a hold still passes through the gate with the follow-up strength described below.
 
 ### Handing back and releasing follow-ups
 
@@ -82,7 +82,7 @@ An automated reviewer using an ordinary account counts as a person to the host. 
 
 ## Routing candidates
 
-The main Session routes explicit candidates with `orchestrator_route`. One call can contain several accept, attach, stop or ignore decisions. Each item is processed independently: a refused item or a missing field does not prevent the others from running.
+The main Session routes explicit candidates with `orchestrator_route`. One call can contain several accept, attach, stop, hold or ignore decisions. Each item is processed independently: a refused item or a missing field does not prevent the others from running.
 
 An inferred candidate normally needs a full assessment. There is one shortcut: if its card clearly touches no enabled rule, such as plain chat or unrelated discussion, the main Session may ignore it directly. The Decision records `ignoredFromCard` to distinguish this from a rule assessment. The main Session reads the enabled rules in its Policy prompt section.
 
@@ -149,6 +149,7 @@ The Source must still listen to the original Thread. The remaining checks depend
 If revalidation fails, the Ticket stays ended and takes none of its waiting messages. Each message is treated as having reached no Ticket; if no other Ticket owns it, it goes to Eval. The main Session is not told it reached a worker. This also applies after a processing pause. Attaching to the Ticket is refused, and further work requires a new accept.
 
 - **A person saying "stop" in a Thread is an ordinary Trigger,** and Eval decides stop. An Executor cannot declare that a person asked it to stop.
+- **"Stop for now" is a hold, not a stop.** A person who asks to pause gets a `hold` Decision: the Ticket stays open with its Mandate and takes no automatic Input until a person's message or a release. Like a stop, a hold needs an explicit request.
 - **Stop in the panel is a command.** It acts on the Ticket directly and is recorded as a manual stop.
 - **Waiting conditions belong to Sources.** A condition such as "no assignee for N hours" would be a Source that waits and checks again itself; Eval never waits.
 

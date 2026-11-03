@@ -124,7 +124,7 @@ describe('dsh-superagent on a real DeepSeek Harness', () => {
     expect([200, 400]).toContain(sync.status)
     if (sync.status === 200) expect(sync.body).toHaveProperty('policy')
     else expect(sync.body.error).toEqual(expect.any(String))
-    for (const action of ['retry', 'stop']) expect((await api.request('POST', `tickets/no-such-ticket/${action}`, {})).status).toBe(404)
+    for (const action of ['retry', 'stop', 'hold', 'release']) expect((await api.request('POST', `tickets/no-such-ticket/${action}`, {})).status).toBe(404)
     expect((await api.request('GET', 'no-such-route')).status).toBe(404)
 
     // The same-origin fence: no header, or another Origin, is refused (401 where DeepSeek Harness sign-in guards the API first).
@@ -208,6 +208,8 @@ describe('dsh-superagent on a real DeepSeek Harness', () => {
     debug('ticket-after-result', ended)
     // With no pull request to wait for, a ready report completes the Ticket.
     expect(ended.ended).toMatchObject({ outcome: 'completed' })
+    // An ended Ticket cannot be held or released (docs/003, Hold).
+    for (const action of ['hold', 'release']) expect(await harness.api.request('POST', `tickets/${ticketId}/${action}`, {})).toMatchObject({ status: 400, body: { code: 'ticketEnded' } })
     // Each message went out once, and the bundle asked the fake nothing it does not know.
     expect(writes().filter(write => write.kind === 'comment').map(write => write.body.split('\n')[0])).toEqual([ACKNOWLEDGEMENT, RESULT])
     expect(writes().filter(write => /merge/i.test(String(write.kind)))).toEqual([])

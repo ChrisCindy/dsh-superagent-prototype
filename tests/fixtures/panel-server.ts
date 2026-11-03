@@ -36,7 +36,7 @@ export function actor(source: string, id: string, human = true): Actor {
 }
 type TicketFields = Omit<TicketRow, 'stage' | 'action'>
 const TICKET = {
-  id: 't1', title: '修复回归', state: 'open', actions: { retry: false, stop: true }, strength: 'explicit', ended: undefined,
+  id: 't1', title: '修复回归', state: 'open', actions: { retry: false, stop: true, hold: true, release: false }, strength: 'explicit', ended: undefined, held: undefined,
   attention: undefined, assignments: 1, inputs: 2, undelivered: 0, deliveryError: undefined, sessionId: 'worker-t1', directory: '/w/t1',
   summary: 'working on it', createdAt: '2026-09-22T00:00:00Z', updatedAt: '2026-09-23T00:00:00Z',
   threads: [{ key: 'github:42', source: 'github', title: '#42 Fix login', url: 'https://github.com/acme/widgets/pull/42',
@@ -247,7 +247,7 @@ function initial(): PanelServer {
       github: { enabled: true, config: { repository: 'acme/widgets', cli: 'gh-agent' } } },
     executor: { blockedCommands: ['gh-personal'] },
   })
-  const ended = ticketSummary({ id: 't0', title: '旧工单', state: 'ended', actions: { retry: false, stop: false },
+  const ended = ticketSummary({ id: 't0', title: '旧工单', state: 'ended', actions: { retry: false, stop: false, hold: false, release: false },
     ended: { at: '2026-09-21T00:00:00Z', by: 'human', reason: 'Human asked to stop', outcome: 'stopped' } }, { stage: 'ended' })
   const reply = { source: 'feishu', url: 'https://applink.feishu.cn/client/chat/open?openChatId=oc_1', label: { zh: '飞书消息',
     en: 'Feishu message' } }
@@ -266,7 +266,7 @@ function initial(): PanelServer {
     threads: [threadSummary()], threadPages: threadPage,
     person: [ticketSummary({ attention: { id: 'q1', question: '需要确认按钮颜色' }, note: { text: '需要确认按钮颜色', error: false }, reply },
       { stage: 'person', action: 'answer' }),
-      ticketSummary({ id: 't4', title: '截图工具', actions: { retry: true, stop: true }, sessionId: 'worker-t4',
+      ticketSummary({ id: 't4', title: '截图工具', actions: { retry: true, stop: true, hold: true, release: false }, sessionId: 'worker-t4',
         summary: 'LlmError: no adapter registered for provider "provider-a"',
         note: { text: 'LlmError: no adapter registered for provider "provider-a"', error: true } }, { stage: 'person', action: 'failed' })],
     search: { items: [], threads: [] },
@@ -343,6 +343,19 @@ const ROUTES: { [K in keyof Api]: Route<K> } = {
     if (!ticketOf(params.id)) return refuse(404, 'Ticket not found')
     server.tickets.open = []; server.person = server.person.filter(ticket => ticket.id !== params.id)
     return { stopped: true }
+  } },
+  'POST tickets/:id/hold': { answer: ({ params }) => {
+    const ticket = server.ticketDetails[params.id]
+    if (!ticket) return refuse(404, 'Ticket not found')
+    server.ticketDetails[params.id] = { ...ticket, stage: 'person', action: 'held', held: { at: '2026-09-23T01:00:00Z' },
+      actions: { ...ticket.actions, hold: false, release: true } }
+    return { held: true }
+  } },
+  'POST tickets/:id/release': { answer: ({ params }) => {
+    const ticket = server.ticketDetails[params.id]
+    if (!ticket) return refuse(404, 'Ticket not found')
+    server.ticketDetails[params.id] = { ...ticket, stage: 'working', held: undefined, actions: { ...ticket.actions, hold: true, release: false } } as typeof ticket
+    return { released: true }
   } },
   'POST executor/pause': { body: true, answer: ({ body }) => {
     server.settings = { ...server.settings, paused: body.paused }

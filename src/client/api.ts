@@ -104,7 +104,7 @@ export const DECISION_FILTERS = ['work', 'stop', 'ignore', 'rateLimited', 'unava
 export type DecisionFilter = typeof DECISION_FILTERS[number]
 /** The `GET decisions` query of each filter: its kinds, and the reason code its Decisions carry. */
 export const DECISION_QUERIES: Readonly<Record<DecisionFilter, { kind: string; reason?: string }>> = { work: { kind: 'accept,reopen' },
-  stop: { kind: 'stop' }, ignore: { kind: 'ignore' }, rateLimited: { kind: 'ignore', reason: 'rateLimited' },
+  stop: { kind: 'stop,hold' }, ignore: { kind: 'ignore' }, rateLimited: { kind: 'ignore', reason: 'rateLimited' },
   unavailable: { kind: 'unavailable' }, all: { kind: '' } }
 
 export type Call = <K extends keyof Api>(route: K, ...request: {} extends ApiRequest<K> ? [request?: ApiRequest<K>] : [request: ApiRequest<K>])

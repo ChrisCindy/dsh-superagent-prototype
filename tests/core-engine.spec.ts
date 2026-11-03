@@ -1188,6 +1188,59 @@ describe('ticket commands', () => {
     expect(h.withdrawn).toHaveLength(1)
   })
 })
+describe('hold', () => {
+  const ci = (id: string) => trigger(id, { human: false, actor: { source: 'chat', id: 'ci' } })
+  it('ends the Assignment, takes no automatic Input and starts none until a person\'s message lifts it', () => {
+    const h = harness()
+    const ticketId = accepted(h).ticketId!
+    const ticket = () => h.repo.tickets.get(ticketId)!
+    const first = runningAssignment(ticket())!
+    h.tick(1)
+    expect(h.engine.holdTicket(ticketId, 'until the release')).toBe(true)
+    expect(h.engine.holdTicket(ticketId)).toBe(false)
+    expect(ticket()).toMatchObject({ held: { reason: 'until the release' }, assignments: [{ state: 'ended', endedReason: 'held' }] })
+    expect(ticketStage(ticket())).toEqual({ stage: 'person', action: 'held' })
+    expect(h.executor.stop).toHaveBeenCalledWith(expect.objectContaining({ id: ticketId }), expect.objectContaining({ id: first.id }), 'held')
+    // A CI result reaches it, but wakes no worker and starts no Assignment; a retry is no remedy.
+    h.tick(1); h.engine.receive(ci('5')); h.settle()
+    expect(ticket().inputs.at(-1)).toMatchObject({ kind: 'trigger', triggerId: '5' })
+    expect(ticket().undelivered).toEqual([])
+    expect(ticket().assignments).toHaveLength(1)
+    expect(h.executor.start).toHaveBeenCalledOnce()
+    expect(() => h.engine.retryTicket(ticketId)).toThrow(new UserError('notRetryable'))
+    // A person's message lifts it and goes on with a new Assignment that gets the message.
+    h.tick(1); h.engine.receive(trigger('6', { actor: guest })); h.settle()
+    expect(ticket()).not.toHaveProperty('held')
+    expect(ticket().assignments).toEqual([expect.objectContaining({ endedReason: 'held' }), expect.objectContaining({ state: 'running' })])
+    expect(h.delivered.at(-1)).toEqual([ticketId, ticket().inputs.at(-1)!.id])
+  })
+  it('goes on with a new Assignment on a release, and a stop or the end clears it', () => {
+    const h = harness()
+    const ticketId = accepted(h).ticketId!
+    const ticket = () => h.repo.tickets.get(ticketId)!
+    h.engine.holdTicket(ticketId)
+    expect(h.engine.releaseTicket(ticketId)).toBe(true)
+    expect(h.engine.releaseTicket(ticketId)).toBe(false)
+    h.settle()
+    expect(ticket().assignments.map(item => item.state)).toEqual(['ended', 'running'])
+    h.engine.holdTicket(ticketId)
+    h.engine.stopTicket(ticketId)
+    expect(ticket()).not.toHaveProperty('held')
+    expect(() => h.engine.holdTicket(ticketId)).toThrow(new UserError('ticketEnded'))
+  })
+  it('records a person\'s explicit "stop for now" as a hold that keeps the Mandate, and refuses one an inferred message asks for', () => {
+    const h = harness()
+    const ticketId = accepted(h).ticketId!
+    h.tick(1); h.engine.receive(trigger('5', { actor: guest })); h.settle()
+    expect(h.engine.decide('5', { kind: 'hold', ticketId, reason: 'asked to wait' })).toMatchObject({ kind: 'ignore', reason: [{ code: 'stopNotExplicit' }] })
+    expect(h.repo.tickets.get(ticketId)).not.toHaveProperty('held')
+    // A follow-up a ticket's worker decides may still be held on, as it may be stopped on.
+    h.tick(1); h.engine.receive(trigger('6')); h.settle()
+    expect(h.engine.decide('6', { kind: 'hold', ticketId, reason: 'stop for now' })).toMatchObject({ kind: 'hold', ticketId })
+    expect(h.repo.tickets.get(ticketId)).toMatchObject({ held: { reason: 'stop for now' } })
+    expect(h.repo.tickets.get(ticketId)).not.toHaveProperty('ended')
+  })
+})
 describe('failed deliveries', () => {
   it('forgets a failed delivery once a new Assignment takes over or the ticket ends', () => {
     const h = harness()

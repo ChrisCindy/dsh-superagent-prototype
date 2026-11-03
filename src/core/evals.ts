@@ -162,9 +162,10 @@ export class Evals extends EnginePart {
       return earlier
     }
     // A follow-up that reached a ticket is its worker's to judge: the main Session may only stop the work on it.
-    if (outcome.kind !== 'stop') this.leftToWorkers(trigger)
+    const halts = outcome.kind === 'stop' || outcome.kind === 'hold'
+    if (!halts) this.leftToWorkers(trigger)
     const thread = held ?? this.thread(trigger.threads[0]!)
-    const evaluation = held?.evaluating ?? this.directEval(thread, trigger, outcome.kind, outcome.kind === 'stop' ? outcome.ticketId : undefined)
+    const evaluation = held?.evaluating ?? this.directEval(thread, trigger, outcome.kind, halts ? outcome.ticketId : undefined)
     // An inferred candidate is accepted only on enabled rules its assessment matched, while assessments may accept.
     if (outcome.kind === 'accept' && evaluation.strength !== 'explicit' && !this.policy().admitsInferred(outcome.rules ?? [])) {
       throw new UserError('notExplicit')
@@ -307,14 +308,16 @@ export class Evals extends EnginePart {
     const unassessed = outcome.kind === 'ignore' && evaluation.strength !== 'explicit' && !outcome.audit ? [{ code: 'ignoredFromCard' }] : []
     if (outcome.kind === 'ignore' || outcome.kind === 'unavailable') return this.finish(thread, evaluation, { kind: outcome.kind,
       reason: [...unassessed, ...reasonOf(outcome.reason)], ...audit })
-    if (outcome.kind === 'stop') {
+    if (outcome.kind === 'stop' || outcome.kind === 'hold') {
       const ticket = this.repo.tickets.get(outcome.ticketId)
       if (!ticket || !liveTicket(ticket)) return this.finish(thread, evaluation, { kind: 'ignore', reason: [{ code: 'stopUnknown' }],
         ...audit })
       if (evaluation.strength !== 'explicit') return this.finish(thread, evaluation, { kind: 'ignore',
         reason: [{ code: 'stopNotExplicit' }], ...audit })
-      const decision = this.finish(thread, evaluation, { kind: 'stop', reason: reasonOf(outcome.reason), ticketId: ticket.id, ...audit })
-      this.tickets.end(ticket.id, 'human', 'stopped', this.now(), typeof outcome.reason === 'string' ? outcome.reason : undefined)
+      const decision = this.finish(thread, evaluation, { kind: outcome.kind, reason: reasonOf(outcome.reason), ticketId: ticket.id, ...audit })
+      const words = typeof outcome.reason === 'string' ? outcome.reason : undefined
+      if (outcome.kind === 'hold') this.tickets.hold(ticket.id, words)
+      else this.tickets.end(ticket.id, 'human', 'stopped', this.now(), words)
       return decision
     }
     return this.accept(thread, evaluation, outcome)
