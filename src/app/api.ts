@@ -29,12 +29,16 @@ export interface Api {
   'GET threads/:key': { query?: { limit?: number; before?: string; around?: string }; response: ThreadDetailView }
   'POST threads/:key/unsubscribe': { response: { removed: boolean; thread: string; context_delivery: Delivery } }
   'POST triggers/:id/requeue': { response: { queued: boolean } }
-  'GET decisions': { query?: Paged & { kind?: string; window?: '24h' }; response: DecisionListView }
+  'GET decisions': { query?: Paged & { kind?: string; reason?: string; window?: '24h' }; response: DecisionListView }
   'POST decisions/:id/dismiss': { response: { dismissed: true } }
   'GET tickets': { query?: Paged & { state?: TicketFilter }; response: TicketListView }
   'GET tickets/:id': { response: TicketPageView }
   'POST tickets/:id/retry': { response: { retried: true } }
   'POST tickets/:id/stop': { response: { stopped: true } }
+  /** Whether the ticket was held now, false when it was held already. */
+  'POST tickets/:id/hold': { response: { held: boolean } }
+  /** Whether the ticket was held. */
+  'POST tickets/:id/release': { response: { released: boolean } }
   'POST executor/pause': { body: { paused: boolean }; response: { paused: boolean } }
   'PUT settings/:block': { body: { value: unknown; revision: number }; response: { revision: number; restarting: boolean } }
   'GET policy/history': { response: HistoryView }

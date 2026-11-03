@@ -23,7 +23,7 @@ A person's message on a Ticket's own Thread belongs to that Ticket's Executor to
 
 Ownership continues while the Ticket is live, even if a person removes its Subscription. It also covers an ended Ticket that was not stopped by a person and has the message waiting to resume it.
 
-The main Session receives a follow-up notice. While an Executor owns the message, the main Session may only stop work on the person's request; accept, attach, ignore and requeue are refused. A stop still passes through the gate with the follow-up strength described below.
+The main Session receives a follow-up notice. While an Executor owns the message, the main Session may only stop or hold work on the person's request; accept, attach, ignore and requeue are refused. A stop or a hold still passes through the gate with the follow-up strength described below.
 
 ### Handing back and releasing follow-ups
 
@@ -82,7 +82,7 @@ An automated reviewer using an ordinary account counts as a person to the host. 
 
 ## Routing candidates
 
-The main Session routes explicit candidates with `orchestrator_route`. One call can contain several accept, attach, stop or ignore decisions. Each item is processed independently: a refused item or a missing field does not prevent the others from running.
+The main Session routes explicit candidates with `orchestrator_route`. One call can contain several accept, attach, stop, hold or ignore decisions. Each item is processed independently: a refused item or a missing field does not prevent the others from running.
 
 An inferred candidate normally needs a full assessment. There is one shortcut: if its card clearly touches no enabled rule, such as plain chat or unrelated discussion, the main Session may ignore it directly. The Decision records `ignoredFromCard` to distinguish this from a rule assessment. The main Session reads the enabled rules in its Policy prompt section.
 
@@ -99,6 +99,10 @@ The accept mode is part of the Policy:
 | `auto` | A positive assessment of an inferred candidate accepts it |
 
 Explicit requests work in every mode. Start in `observe` and switch to `auto` after reviewing the recorded Decisions. Each assessment judges every enabled rule exactly once, whether it matches or not. A proactive accept requires at least one matching rule.
+
+### Proactive limit
+
+`eval.maxInferredPerHour` (default 20) caps how many inferred Evals one Source starts in an hour. The host counts the Decisions of the last hour whose Eval asked the main Session for an inferred candidate on that Source's Threads, plus the inferred Evals still running there. A candidate over the limit is recorded as ignore with reason `rateLimited`, and the main Session never sees it. Explicit requests are never limited. The panel's Eval page has a filter for these Decisions, and a person can send such a message to Eval again. Only the panel changes the limit, as with the accept mode.
 
 Each rule describes a kind of proactive work. The Ticket's Mandate records the matched rules, and its Executor receives their names and instructions.
 
@@ -118,7 +122,7 @@ Unaffected Tickets receive no notice. The change does not immediately revoke liv
 
 ### Who changes the Policy
 
-Only a person on the panel changes the Policy version, apart from a Source's sync of its own allowed list. The main Session reads untrusted text, so `Settings.save` refuses its saves (origin `tool`) that change the `policy` block or the accept mode (`panelOnlyPolicy`); it may still change the Eval time limit and model. On a person's request, the main Session calls `orchestrator_policy_propose` with the whole block and its revision instead. The proposal changes nothing. One proposal is kept, the latest, with the request it carries out and the settings paths it changes. The panel's overview shows it to a person, who accepts it, which saves it as a panel save against the revision it was made from, or dismisses it. If the block was saved after the proposal, the proposal is stale and accepting it is refused.
+Only a person on the panel changes the Policy version, apart from a Source's sync of its own allowed list. The main Session reads untrusted text, so `Settings.save` refuses its saves (origin `tool`) that change the `policy` block, the accept mode or the proactive limit (`panelOnlyPolicy`); it may still change the Eval time limit and model. On a person's request, the main Session calls `orchestrator_policy_propose` with the whole block and its revision instead. The proposal changes nothing. One proposal is kept, the latest, with the request it carries out and the settings paths it changes. The panel's overview shows it to a person, who accepts it, which saves it as a panel save against the revision it was made from, or dismisses it. If the block was saved after the proposal, the proposal is stale and accepting it is refused.
 
 Source configuration is separate from Policy. It controls what enters the system: which chats are read and whether a scope receives all messages or only mentions. A Mandate records its Source and receiving scope. Resuming needs the Source to still listen to the Thread, but does not require it to still receive every message there.
 
@@ -145,6 +149,7 @@ The Source must still listen to the original Thread. The remaining checks depend
 If revalidation fails, the Ticket stays ended and takes none of its waiting messages. Each message is treated as having reached no Ticket; if no other Ticket owns it, it goes to Eval. The main Session is not told it reached a worker. This also applies after a processing pause. Attaching to the Ticket is refused, and further work requires a new accept.
 
 - **A person saying "stop" in a Thread is an ordinary Trigger,** and Eval decides stop. An Executor cannot declare that a person asked it to stop.
+- **"Stop for now" is a hold, not a stop.** A person who asks to pause gets a `hold` Decision: the Ticket stays open with its Mandate and takes no automatic Input until a person's message or a release. Like a stop, a hold needs an explicit request.
 - **Stop in the panel is a command.** It acts on the Ticket directly and is recorded as a manual stop.
 - **Waiting conditions belong to Sources.** A condition such as "no assignee for N hours" would be a Source that waits and checks again itself; Eval never waits.
 

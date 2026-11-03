@@ -14,6 +14,9 @@ const ended = { at: '', by: 'executor' as const, reason: 'closed', outcome: 'clo
 // The rows of the docs/003 table, in order; a Ticket that matches several rows takes the first.
 describe('ticketStage', () => {
   it.each([
+    ['a hold', ticket({ held: { at: '' }, assignments: [assignment({ state: 'ended' })] }), { stage: 'person', action: 'held' }],
+    ['a hold before delivery, answer and a failure', ticket({ held: { at: '' }, delivery: { error: 'offline', at: '' }, attention,
+      assignments: [reported('failed', { state: 'ended' })] }), { stage: 'person', action: 'held' }],
     ['an undelivered Input', ticket({ delivery: { error: 'offline', at: '' } }), { stage: 'person', action: 'delivery' }],
     ['delivery before answer and review', ticket({ delivery: { error: 'offline', at: '' }, attention, assignments: [reported('ready')] }), { stage: 'person', action: 'delivery' }],
     ['an Attention', ticket({ attention }), { stage: 'person', action: 'answer' }],
@@ -31,6 +34,7 @@ describe('ticketStage', () => {
     ['a running Assignment', ticket(), { stage: 'working' }],
     ['a progress Report', ticket({ assignments: [reported('progress')] }), { stage: 'working' }],
     ['an ended Ticket', ticket({ ended, attention, assignments: [reported('failed')] }), { stage: 'ended' }],
+    ['a Ticket whose budget was used up', ticket({ assignments: [reported('blocked', { state: 'ended', endedReason: 'budgetSpent' })] }), { stage: 'person', action: 'blocked' }],
   ])('%s', (_name, value, stage) => { expect(ticketStage(value)).toEqual(stage) })
 })
 
@@ -41,6 +45,8 @@ describe('canRetry', () => {
     ['a failed Ticket that also awaits an answer', true, ticket({ attention, assignments: [reported('failed')] })],
     ['a blocked Ticket whose Input is undelivered', true, ticket({ delivery: { error: 'offline', at: '' }, assignments: [reported('blocked')] })],
     ['a failed Ticket that ended', false, ticket({ ended, assignments: [reported('failed')] })],
+    // A person releases a held Ticket instead.
+    ['a failed Ticket a person held', false, ticket({ held: { at: '' }, assignments: [reported('failed', { state: 'ended' })] })],
     ['a Ticket retried already, whose new Assignment is pending', false, ticket({ assignments: [reported('failed', { state: 'ended' }), assignment({ state: 'pending' })] })],
     ['a ready Ticket', false, ticket({ assignments: [reported('ready')] })],
     ['a running Ticket', false, ticket()],

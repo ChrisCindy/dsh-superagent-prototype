@@ -246,6 +246,28 @@ it('lists in the same order in SQLite and in memory, and undoes a failed nested 
   store.close()
 })
 
+it('counts the assessed inferred Decisions of a Source since a time alike in SQLite and in memory', () => {
+  const store = new Store(join(directory, 'orchestrator.sqlite'))
+  const decision = (id: string, threadKey: string, at: string, fields: Partial<Decision> = {}): Decision => ({ id, evalId: id, threadKey, triggerIds: [],
+    policyVersion: '', at, kind: 'ignore', reason: [], strength: 'inferred', assessed: true, ...fields })
+  const run = (repo: Repositories) => {
+    repo.decisions.save(decision('old', 'github:1', '2026-01-01T00:00:00.000Z'))
+    repo.decisions.save(decision('new', 'github:1', '2026-01-01T02:00:00.000Z'))
+    repo.decisions.save(decision('other', 'github:2', '2026-01-01T02:30:00.000Z'))
+    // Explicit, gate-only, and other Sources' Decisions do not count, nor a Source whose name only starts the same.
+    repo.decisions.save(decision('explicit', 'github:1', '2026-01-01T02:00:00.000Z', { strength: 'explicit' }))
+    const { assessed: _assessed, ...gate } = decision('gate', 'github:1', '2026-01-01T02:00:00.000Z')
+    repo.decisions.save(gate)
+    repo.decisions.save(decision('feishu', 'feishu:1', '2026-01-01T02:00:00.000Z'))
+    repo.decisions.save(decision('prefix', 'github-2:1', '2026-01-01T02:00:00.000Z'))
+    return [repo.decisions.inferredSince('github', '2026-01-01T01:00:00.000Z'), repo.decisions.inferredSince('github', '2025-01-01T00:00:00.000Z'),
+      repo.decisions.inferredSince('github-2', '2025-01-01T00:00:00.000Z'), repo.decisions.inferredSince('git', '2025-01-01T00:00:00.000Z')]
+  }
+  expect(run(new MemoryRepositories())).toEqual([2, 3, 1, 0])
+  expect(run(store)).toEqual([2, 3, 1, 0])
+  store.close()
+})
+
 it('creates the state directory for its owner alone, and the database readable by its owner alone', () => {
   const path = join(directory, 'state', 'orchestrator.sqlite')
   new Store(path).close()

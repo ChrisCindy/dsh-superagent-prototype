@@ -189,6 +189,7 @@ export async function startRuntime(seed?: (store: Store) => void) {
   const agents = new Map<string, FakeAgent>()
   /** Each Session's next step, which takes the messages that wait for one. */
   const steps = new Map<string, () => void>(), claims = new Map<string, () => void>()
+  const logs = new Map<string, (type: string, data: unknown) => void>()
   const tools = new Map<string, Map<string, RegisteredTool>>()
   const deliveries = vi.fn<(request: Delivery) => void>()
   let http!: HttpHandler
@@ -236,7 +237,14 @@ export async function startRuntime(seed?: (store: Store) => void) {
         turn++
         take(true)
       })
-      const session = { id: sessionId, snapshotEvents: () => [], requestHeader: () => undefined, append: vi.fn() }
+      // The Session's log holds what `log` appends, which DSH says as it appends it.
+      const events: { type: string; time: number; data: unknown }[] = []
+      const session = { id: sessionId, snapshotEvents: (from = 0) => events.slice(from), requestHeader: () => undefined, append: vi.fn() }
+      logs.set(sessionId, (type, data) => {
+        const event = { type, time: Date.now(), data }
+        events.push(event)
+        ctx.emit('session/event', session as never, event as never)
+      })
       let status = 'idle'
       const idle: (() => void)[] = []
       // A cancel drops the inbox unless kept, and the turn it stops ends a moment later, which DSH says.
@@ -319,7 +327,9 @@ export async function startRuntime(seed?: (store: Store) => void) {
   const step = (sessionId: string) => { steps.get(sessionId)!() }
   /** A step of the worker claims what waits for it, and is cut off before the Session took it. */
   const claim = (sessionId: string) => { claims.get(sessionId)!() }
+  /** The Session's log takes an event, such as a response of its model (`assistant/message`) with its `usage`. */
+  const log = (sessionId: string, type: string, data: unknown = {}) => { logs.get(sessionId)!(type, data) }
   return { runtime, ctx, directory, agents, tools, deliveries, relays, candidates, runTool, route, acceptedTicket, api, controller, subprocess, answers, hooks, resolveDefault, stop,
-    jobs, subagents, step, claim }
+    jobs, subagents, step, claim, log }
 }
 export type Host = Awaited<ReturnType<typeof startRuntime>>

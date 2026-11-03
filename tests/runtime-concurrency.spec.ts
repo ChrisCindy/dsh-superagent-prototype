@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { latestAssignment, waitsForPerson, type Ticket, type Trigger } from '../src/core/index.ts'
 import { Later } from '../src/app/effects.ts'
 import { reportRelay } from '../src/app/notices.ts'
-import { WorkerSlots, inputMessage, mandateInstructions, ticketExecution, transient, triggerMessage } from '../src/executor/dsh.ts'
+import { WorkerSlots, foldBudget, inputMessage, mandateInstructions, overBudget, ticketExecution, transient, triggerMessage } from '../src/executor/dsh.ts'
 import { SettingsSchema } from '../src/policy.ts'
 import { Commands } from '../src/infra/commands.ts'
 import { deferred, waitUntil } from './fixtures/async.ts'
@@ -939,5 +939,73 @@ describe('the Executor\'s parts', () => {
       answers: 'tr9' })!
     expect(ready.id).toMatch(/^report:/)
     expect(JSON.parse(ready.text)).toMatchObject({ kind: 'worker_report', ticket: { ticket_id: 't1' }, trigger_id: 'tr1', state: 'ready', answer_to: 'tr9', summary: 'Done' })
+  })
+})
+
+describe('the budget of an Assignment', () => {
+  const budget = (value: Record<string, number | null>, origin: 'panel' | 'tool' = 'panel') => h.runtime.settings.save('executor',
+    { ...h.runtime.store.settings().executor, budget: { ...h.runtime.store.settings().executor.budget, ...value } },
+    h.runtime.store.blockRevision('executor'), origin)
+  const questions = () => h.relays(h.runtime.masterId).filter(item => item.kind === 'worker_attention')
+  it('stops a worker that runs past its turn limit with one question, holds automatic Inputs, and goes on fresh on a person\'s reply', async () => {
+    await budget({ turns: 3 })
+    const one = await h.acceptedTicket(feishu('1', '@bot 修一'))
+    const ticket = () => h.runtime.store.tickets.get(one.ticket.id)!
+    const agent = h.agents.get(one.sessionId)!
+    for (let turn = 0; turn < 2; turn++) h.log(one.sessionId, 'assistant/message', { usage: { inputTokens: 10, outputTokens: 5 } })
+    await h.runtime.idle()
+    expect(waitsForPerson(ticket())).toBe(false)
+    // The third response uses the budget up; more that come before the turn stops change nothing.
+    for (let turn = 0; turn < 3; turn++) { h.log(one.sessionId, 'assistant/message', {}); await h.runtime.idle() }
+    await vi.waitFor(() => expect(latestAssignment(ticket())).toMatchObject({ state: 'ended', endedReason: 'budgetSpent',
+      report: { state: 'blocked' } }))
+    expect(waitsForPerson(ticket())).toBe(true)
+    expect(ticket().attention?.question).toMatch(/^Budget used up, continue\? This assignment used 3 model turns of 3/)
+    expect(questions()).toHaveLength(1)
+    await vi.waitFor(() => expect(agent.cancel).toHaveBeenCalled())
+    // An automatic Input does not wake it.
+    h.runtime.engine.note(one.ticket.id, 'CI passed'); await h.runtime.idle()
+    expect(ticket().assignments).toHaveLength(1)
+    expect(ticket().undelivered).toEqual([])
+    // A person's reply goes on with a fresh Assignment, which is told why, and the question is withdrawn.
+    await new Promise(resolve => setTimeout(resolve, 5))
+    h.runtime.receive(feishu('2', '继续', { mentions: [], root_id: 'om_1' })); await h.runtime.idle()
+    await vi.waitFor(() => expect(latestAssignment(ticket())?.state).toBe('running'))
+    expect(ticket().assignments).toHaveLength(2)
+    expect(ticket().attention).toBeUndefined()
+    expect(h.deliveries.mock.calls.map(([call]) => call.text).some(text => text.includes('used up its budget'))).toBe(true)
+    h.log(one.sessionId, 'assistant/message', {}); await h.runtime.idle()
+    expect(ticket().assignments).toHaveLength(2)
+    expect(questions()).toHaveLength(1)
+  })
+  it('counts the minutes the worker\'s turns run in the Assignment, not the time it waits, and the responses since it started', () => {
+    const at = (minute: number) => Date.parse('2026-09-01T00:00:00Z') + minute * 60_000
+    const events = [
+      { type: 'assistant/message', time: at(-1), data: {} }, { type: 'turn/start', time: at(1), data: {} },
+      { type: 'assistant/message', time: at(2), data: { usage: { inputTokens: 1, outputTokens: 2, totalTokens: 4 } } },
+      { type: 'turn/end', time: at(11), data: {} }, { type: 'turn/start', time: at(100), data: {} },
+    ] as never[]
+    const use = foldBudget(events, at(0), { offset: 0, turns: 0, tokens: 0, ms: 0 })
+    expect(use).toEqual({ offset: 5, turns: 1, tokens: 4, ms: 10 * 60_000, turnAt: at(100) })
+    const budget = { turns: null, minutes: 15, tokens: null }
+    expect(overBudget(use, budget, at(104))).toBeUndefined()
+    expect(overBudget(use, budget, at(105))).toBe('15 minutes of work of 15')
+    // A turn that started before the Assignment counts from its start.
+    expect(foldBudget([{ type: 'turn/end', time: at(3), data: {} }] as never[], at(1), { offset: 0, turns: 0, tokens: 0, ms: 0 }).ms).toBe(2 * 60_000)
+  })
+  it('counts tokens and lets a Retry go on, and only the panel changes the budget', async () => {
+    await expect(budget({ turns: 5000 }, 'tool')).rejects.toThrow('Assignment budget')
+    await budget({ turns: null, tokens: 1000 })
+    const one = await h.acceptedTicket(feishu('1', '@bot 修一'))
+    const ticket = () => h.runtime.store.tickets.get(one.ticket.id)!
+    h.log(one.sessionId, 'assistant/message', { usage: { inputTokens: 600, outputTokens: 100, totalTokens: 700 } })
+    await h.runtime.idle()
+    expect(waitsForPerson(ticket())).toBe(false)
+    h.log(one.sessionId, 'assistant/message', { usage: { inputTokens: 300, outputTokens: 50 } })
+    await vi.waitFor(() => expect(latestAssignment(ticket())?.endedReason).toBe('budgetSpent'))
+    expect(ticket().attention?.question).toContain('1050 tokens of 1000')
+    h.runtime.engine.retryTicket(one.ticket.id); await h.runtime.idle()
+    expect(ticket().assignments.map(item => item.endedReason)).toEqual(['budgetSpent', undefined])
+    expect(ticket().attention).toBeUndefined()
   })
 })

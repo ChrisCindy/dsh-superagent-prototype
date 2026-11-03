@@ -1,6 +1,6 @@
 /** DSH executor: manages one persistent worker session and workspace directory per ticket. */
 import type { Context } from '@deepseek-ai/cordis'
-import type { SessionId } from '@deepseek-ai/dsh-session'
+import type { SessionEvent, SessionId, SessionLogOffset } from '@deepseek-ai/dsh-session'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { mkdir, rmdir, stat } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
@@ -9,13 +9,13 @@ import type { AssessmentOutcome, Assignment, EngineForExecutor, Execution, Execu
   from '../core/index.ts'
 import type { Machine } from '../deployment.ts'
 import { runAsWorker, verifyDirectory } from '../infra/environment.ts'
-import type { Settings } from '../policy.ts'
+import { ticketBudget, type Budget, type Settings } from '../policy.ts'
 import type { Store } from '../app/store.ts'
 import { Later, type Effects } from '../app/effects.ts'
 import { executionRoot, type Variable } from '../app/execution-environment.ts'
 import type { Sessions } from '../app/sessions.ts'
 import { WorktreeNameSchema } from '../app/assessment.ts'
-import { resultRelay } from '../app/notices.ts'
+import { reportRelay, resultRelay } from '../app/notices.ts'
 import type { HealthEntry } from '../infra/health.ts'
 import { cancelled, collectJob, killJobs, runningJobs, stopBackground, stopSubagents, until, untilQuiet } from './background.ts'
 
@@ -61,7 +61,7 @@ export interface ExecutorHost {
   readonly context: Context
   /** Where the Executor reports what happened to Assignments and Inputs. */
   readonly engine: Pick<EngineForExecutor, 'assignmentStarted' | 'inputsDelivered' | 'inputsRead' | 'turnEnded' | 'deliveryFailed' | 'report'
-    | 'assignmentInterrupted'>
+    | 'budgetSpent' | 'assignmentInterrupted'>
   readonly store: Pick<Store, 'tickets' | 'triggers' | 'set' | 'settings' | 'atomic' | 'afterCommit'>
   /** Durable effect queue through which launches and input deliveries run. */
   readonly effects: Pick<Effects, 'enqueue' | 'handle'>
@@ -134,6 +134,41 @@ const RESUMED = 'This ticket ended earlier and the message that follows, on its 
   + 'for another ticket, hand it back with orchestrator_trigger_handback and report dropped; if it needs nothing, such as thanks, '
   + 'report dropped without a message. Report ready when the follow-up is done. Do not repeat completed work.'
 const RETRIED = 'A person retried this ticket. Continue the assignment from the current worktree, git history and PR state.'
+const RENEWED = 'Your previous assignment of this ticket used up its budget, and a person let you go on with a fresh one. Continue the '
+  + 'assignment from the current worktree, git history and PR state, and do not repeat completed work.'
+
+/**
+ * What an Assignment used of its budget, folded from its worker Session's log: the log `offset` read up to, the model's
+ * `turns` (its responses), the `tokens` they used, and `ms`, the time the worker's turns ran, with `turnAt`, when the turn
+ * that runs started.
+ */
+export interface BudgetUse { offset: number; turns: number; tokens: number; ms: number; turnAt?: number }
+/** Fold more events of a worker Session's log into what the Assignment that started at `since` (epoch ms) used. */
+export function foldBudget(events: readonly Pick<SessionEvent, 'type' | 'time' | 'data'>[], since: number, use: BudgetUse): BudgetUse {
+  const next = { ...use, offset: use.offset + events.length }
+  for (const event of events) {
+    if (event.time < since) continue
+    if (event.type === 'turn/start') next.turnAt = event.time
+    else if (event.type === 'turn/end') { next.ms += event.time - (next.turnAt ?? since); delete next.turnAt }
+    else if (event.type === 'assistant/message') {
+      const usage = (event as SessionEvent<'assistant/message'>).data.usage
+      next.turns++
+      next.tokens += usage ? usage.totalTokens ?? usage.inputTokens + usage.outputTokens : 0
+    }
+  }
+  return next
+}
+/** What an Assignment used beyond its budget at `now` (epoch ms), in words, or undefined while it is within it. */
+export function overBudget(use: BudgetUse, budget: Budget, now: number): string | undefined {
+  const minutes = Math.floor((use.ms + (use.turnAt === undefined ? 0 : now - use.turnAt)) / 60_000)
+  if (budget.turns !== null && use.turns >= budget.turns) return `${use.turns} model turns of ${budget.turns}`
+  if (budget.minutes !== null && minutes >= budget.minutes) return `${minutes} minutes of work of ${budget.minutes}`
+  if (budget.tokens !== null && use.tokens >= budget.tokens) return `${use.tokens} tokens of ${budget.tokens}`
+  return undefined
+}
+/** The question for a person once an Assignment used up its budget, for `spent` as `overBudget` words it. */
+export const budgetQuestion = (spent: string): string => `Budget used up, continue? This assignment used ${spent}; a reply or Retry goes on `
+  + 'with a fresh budget.'
 /** Formats a policy-change input for the worker; inputs recorded before `effect` existed fall back to a general notice. */
 function policyMessage(effect?: PolicyEffect): string {
   if (!effect) return 'Policy change: the access or admission rules changed. Check that the remaining work stays within the assignment.'
@@ -224,6 +259,8 @@ export class DshExecutor implements Executor {
   private readonly personal = new Map<string, string>()
   /** The timers of workers that go on after a passing failure, which dispose clears. */
   private readonly timers = new Set<ReturnType<typeof setTimeout>>()
+  /** What each running Assignment used of its budget, by Assignment, folded from its worker Session's log as it grows. */
+  private readonly spent = new Map<string, BudgetUse>()
   /** Registers the `launch` and `delivery` effect handlers; both are held (concurrency limit 0) while processing is paused. */
   constructor(private readonly host: ExecutorHost) {
     this.slots = new WorkerSlots(() => host.store.tickets.open().filter(ticket => this.running(ticket)).map(ticket => ticket.id),
@@ -355,7 +392,7 @@ export class DshExecutor implements Executor {
    * report with no Input delivered since, and stops its shell jobs and subagents, including jobs it left to a person.
    */
   stop(ticket: Ticket, assignment: Assignment, reason: string): void {
-    this.transient.delete(assignment.id); this.transient.delete(`launch:${assignment.id}`)
+    this.transient.delete(assignment.id); this.transient.delete(`launch:${assignment.id}`); this.spent.delete(assignment.id)
     const report = assignment.report
     const busy = !!assignment.deliveredAt && !!report && assignment.deliveredAt >= report.at
     const ownTurn = (report?.state === 'ready' || report?.state === 'dropped') && !busy
@@ -452,7 +489,8 @@ export class DshExecutor implements Executor {
     const later = ticket.assignments.length > 1
     const told = later && await this.host.sessions.holds(sessionId, first)
     if (!current()) return
-    const retried = ticket.assignments.at(-2)?.endedReason === 'retried' ? { note: RETRIED } : {}
+    const previous = ticket.assignments.at(-2)?.endedReason
+    const retried = previous === 'retried' ? { note: RETRIED } : previous === 'budgetSpent' ? { note: RENEWED } : {}
     const assignmentText = ticket.execution?.assignment ?? ''
     const { text: brief, chars, read } = capped(assignmentText, ASSIGNMENT_CHARS, `ticket/${ticket.id}/assignment`)
     const card = told || !source ? undefined : await this.triggerCard(ticket, source.id)
@@ -491,10 +529,16 @@ export class DshExecutor implements Executor {
       if (ticketId !== undefined && message.source.kind === 'user') this.personal.set(ticketId, now())
     }))
     // The Inputs a message of dsh-superagent's carries, which its worker reads once the Session took the message into its
-    // history: a step that claimed it may be cancelled or fail before, which drops it.
+    // history: a step that claimed it may be cancelled or fail before, which drops it. A response of the worker's model, or a
+    // tool's result, counts against its Assignment's budget.
     this.disposers.push(ctx.on('session/event', (session, event) => {
       const ticketId = ticketOfSession(session.id)
-      if (event.type !== 'user/message' || ticketId === undefined || event.data.source.kind !== 'dsh-superagent' || this.host.closing()) return
+      if (ticketId === undefined || this.host.closing()) return
+      if (event.type === 'assistant/message' || event.type === 'tool/result') {
+        void this.background(Promise.resolve().then(() => { this.budget(ticketId, session) }))
+        return
+      }
+      if (event.type !== 'user/message' || event.data.source.kind !== 'dsh-superagent') return
       const message = event.data
       void this.background(Promise.resolve().then(() => {
         const read = this.host.store.tickets.get(ticketId)?.inputs.filter(input => input.kind === 'trigger' && !input.readAt
@@ -509,6 +553,30 @@ export class DshExecutor implements Executor {
       if (this.retries(assignment.id, error)) { this.resumeAfter(ticket.id, assignment.id, error); return }
       void this.background(Promise.resolve().then(() => { this.failed(ticket.id, String(error)) }))
     }))
+  }
+  /**
+   * Count what the running Assignment of a ticket used of its budget (see `ticketBudget`) from its worker Session's log, and
+   * once it used it up, report blocked with a question for a person, on the worker's behalf, which ends the Assignment and
+   * stops its worker (see `Engine.budgetSpent`). A ticket that waits for a person is left alone.
+   */
+  private budget(ticketId: string, session: { snapshotEvents(from?: SessionLogOffset): readonly SessionEvent[] }): void {
+    const ticket = this.host.store.tickets.get(ticketId)
+    const assignment = ticket && liveTicket(ticket) ? runningAssignment(ticket) : undefined
+    if (!ticket || !assignment?.startedAt || waitsForPerson(ticket)) return
+    const budget = ticketBudget(ticket, this.host.store.settings())
+    if (budget.turns === null && budget.minutes === null && budget.tokens === null) return
+    const before = this.spent.get(assignment.id) ?? { offset: 0, turns: 0, tokens: 0, ms: 0 }
+    const use = foldBudget(session.snapshotEvents(before.offset as SessionLogOffset), Date.parse(assignment.startedAt), before)
+    this.spent.set(assignment.id, use)
+    const spent = overBudget(use, budget, Date.now())
+    if (!spent) return
+    const question = budgetQuestion(spent)
+    this.host.store.atomic(() => {
+      const updated = this.host.engine.budgetSpent(ticketId, assignment.id, question)
+      if (updated.assignments.find(item => item.id === assignment.id)?.endedReason !== 'budgetSpent') return
+      const relay = reportRelay(updated, { state: 'blocked', summary: question, question })
+      if (relay) this.relay(relay)
+    })
   }
   /** Unsubscribes from host agent events and clears any pending transient-retry timers. */
   dispose(): void {

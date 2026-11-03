@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { SettingsSchema, assessmentOutcome, policyEffects, settingsPolicy, policyVersion, allowedSender, anyoneAllowed, type Settings } from '../src/policy.ts'
+import { SettingsSchema, assessmentOutcome, ticketBudget, policyEffects, settingsPolicy, policyVersion, allowedSender, anyoneAllowed, type Settings } from '../src/policy.ts'
 import type { MandateBasis } from '../src/core/index.ts'
 import { migrateSettings } from '../src/app/migration.ts'
 import { SourceRegistry } from '../src/sources/registry.ts'
@@ -253,9 +253,9 @@ describe('settings migration', () => {
       paused: true,
       sources: { feishu: feishuSource({ chats: [{ chatId: CHAT, listen: 'mentions' }, { chatId: OBSERVED, listen: 'all' }], directMessages: false }), github: { enabled: true, config: { pollSeconds: 120 } } },
       policy: { rules: [], sources: { feishu: { allowed: [{ id: MEMBER, name: 'A' }], admission: {} }, github: { allowed: [{ id: 'a' }], admission: {} } } },
-      eval: { mode: 'auto', timeoutSeconds: 90, model: { provider: 'p', model: 'm' } },
+      eval: { mode: 'auto', timeoutSeconds: 90, maxInferredPerHour: 20, model: { provider: 'p', model: 'm' } },
       executor: { model: null, maxWorkers: 5, directory: '', prepare: '', blockedCommands: [], sandbox: 'workspace', writableRoots: [],
-        merge: { cli: '', method: 'squash', maxLines: 200, requireApprovals: 1 } },
+        merge: { cli: '', method: 'squash', maxLines: 200, requireApprovals: 1 }, budget: { turns: 300, minutes: 120, tokens: null } },
     })
     expect(migrateSettings(migrated)).toEqual(migrated)
   })
@@ -342,6 +342,21 @@ describe('rule judgements', () => {
     expect(() => assessmentOutcome(assessment, parsed, 'inferred')).toThrow('Exactly one assessment for every enabled rule')
     const once = { ...assessment, rule_assessments: [assessment.rule_assessments[0]!, { rule_id: 'visual', matched: false, reason: 'no colors' }] }
     expect(assessmentOutcome(once, parsed, 'inferred')).toMatchObject({ kind: 'accept', rules: ['copy'] })
+  })
+})
+describe('ticket budget', () => {
+  it('takes the Executor\'s default, unless the rules the ticket was accepted under set a field, the largest winning, and leaves authorization alone', () => {
+    const rule = (id: string, budget?: Record<string, number | null>) => ({ id, name: id, enabled: true, instruction: 'x', ...budget ? { budget } : {} })
+    const settings = SettingsSchema.parse({ policy: { rules: [rule('a', { turns: 10 }), rule('b', { turns: 40, tokens: null }), rule('c', { minutes: 5 }), rule('d')] },
+      executor: { budget: { turns: 100, minutes: 60, tokens: 5000 } } })
+    const ticket = (rules?: string[]) => ({ mandate: { basis: { via: 'followup' as const, ...rules ? { rules } : {} } } }) as Pick<Ticket, 'mandate'>
+    expect(ticketBudget(ticket(), settings)).toEqual({ turns: 100, minutes: 60, tokens: 5000 })
+    expect(ticketBudget(ticket(['a', 'd']), settings)).toEqual({ turns: 10, minutes: 60, tokens: 5000 })
+    expect(ticketBudget(ticket(['a', 'b', 'c']), settings)).toEqual({ turns: 40, minutes: 5, tokens: null })
+    expect(SettingsSchema.parse({}).executor.budget).toEqual({ turns: 300, minutes: 120, tokens: null })
+    // A rule's budget is no part of the Policy version.
+    const changed = SettingsSchema.parse({ ...settings, policy: { ...settings.policy, rules: [rule('a', { turns: 11 }), ...settings.policy.rules.slice(1)] } })
+    expect(policyVersion(changed)).toBe(policyVersion(settings))
   })
 })
 describe('policy effects', () => {

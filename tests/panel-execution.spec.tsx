@@ -196,7 +196,7 @@ it('gives a Ticket a bot\'s message started its basis, marks a Thread it follows
 })
 
 it('words an ended Ticket by its outcome, on its row and its page, with a person\'s reason after it', async () => {
-  const fields = { id: 't3', title: '已合并的工单', state: 'ended' as const, actions: { retry: false, stop: false },
+  const fields = { id: 't3', title: '已合并的工单', state: 'ended' as const, actions: { retry: false, stop: false, hold: false, release: false },
     ended: { at: '2026-09-21T00:00:00Z', by: 'executor' as const, outcome: 'merged' as const } }
   server.tickets.ended = [ticketSummary(fields, { stage: 'ended' }), ...server.tickets.ended]
   server.ticketDetails.t3 = { ...server.ticketDetails.t1!, ...fields, stage: 'ended' }

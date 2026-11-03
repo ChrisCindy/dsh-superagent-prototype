@@ -71,6 +71,40 @@ function accepted(h: ReturnType<typeof harness>, id = '1', thread = 't1') {
   return decision
 }
 
+describe('proactive limit', () => {
+  const inferred = (t: Trigger) => t.actor.id === 'alice' ? { admissible: true as const, strength: 'explicit' as const, basis: { via: 'listed' as const } }
+    : { admissible: true as const, strength: 'inferred' as const, basis: { via: 'admission' as const, cell: 'unlistedUnaddressed' as const,
+      observation: { mode: 'observe' as const } } }
+  const at = (thread: string, id: string, overrides: Partial<Trigger> = {}) => trigger(id, { actor: guest, threads: [{ source: 'chat', id: thread }], ...overrides })
+  it('records an inferred candidate over its Source\'s hourly limit as rate limited without asking the assessor', () => {
+    const h = harness({ maxInferredPerHour: 2, gate: inferred })
+    h.engine.receive(at('t1', '1')); h.engine.receive(at('t2', '2')); h.pump()
+    expect(h.requests).toHaveLength(2)
+    // A decided Eval still counts for an hour, and one in progress counts too.
+    h.decide(h.requests[0]!, { kind: 'ignore', reason: 'chatter', audit: {} })
+    expect(h.repo.decisions.byThread('chat:t1')).toEqual([expect.objectContaining({ assessed: true, strength: 'inferred' })])
+    h.engine.receive(at('t3', '3')); h.pump()
+    expect(h.assessor.request).toHaveBeenCalledTimes(2)
+    expect(h.repo.decisions.byThread('chat:t3')).toEqual([expect.objectContaining({ kind: 'ignore', triggerIds: ['3'],
+      reason: [{ code: 'rateLimited', values: { limit: '2' } }] })])
+    expect(h.repo.decisions.byThread('chat:t3')[0]).not.toHaveProperty('assessed')
+    expect(h.repo.threads.get('chat:t3')).toMatchObject({ pending: [] })
+    // Explicit requests are never limited, and another Source counts its own.
+    h.engine.receive(at('t4', '4', { actor: member })); h.pump()
+    h.engine.receive(at('t5', '5', { source: 'other', threads: [{ source: 'other', id: 't5' }], actor: { source: 'other', id: 'bob' } })); h.pump()
+    expect(h.requests.map(candidate => candidate.thread.key)).toEqual(['chat:t1', 'chat:t2', 'chat:t4', 'other:t5'])
+    // Rate-limited Decisions count nothing, and an hour later the decided Eval no longer counts.
+    h.tick(3601)
+    h.engine.receive(at('t3', '6')); h.pump()
+    expect(h.requests.at(-1)!.thread.key).toBe('chat:t3')
+  })
+  it('limits nothing without a limit', () => {
+    const h = harness({ gate: inferred })
+    for (const id of ['1', '2', '3']) h.engine.receive(at(`t${id}`, id))
+    h.pump()
+    expect(h.requests).toHaveLength(3)
+  })
+})
 describe('intake', () => {
   it('stores a trigger once and records source filtering', () => {
     const h = harness()
@@ -1129,6 +1163,82 @@ describe('ticket commands', () => {
     expect(retried.assignments).toEqual([expect.objectContaining({ state: 'ended', endedReason: 'retried' }), expect.objectContaining({ state: 'pending' })])
     expect(h.executor.stop).toHaveBeenCalledOnce()
     expect(h.executor.start).toHaveBeenLastCalledWith(expect.objectContaining({ id: ticketId }), retried.assignments[1])
+  })
+  it('ends an Assignment that used up its budget with a question, holds automatic Inputs, and goes on fresh on a person\'s message', () => {
+    const h = harness()
+    const ticketId = accepted(h).ticketId!
+    const ticket = () => h.repo.tickets.get(ticketId)!
+    const first = runningAssignment(ticket())!
+    h.tick(1)
+    h.engine.budgetSpent(ticketId, first.id, 'Budget used up, continue?')
+    expect(ticket().assignments).toEqual([expect.objectContaining({ state: 'ended', endedReason: 'budgetSpent', report: expect.objectContaining({ state: 'blocked' }) })])
+    expect(ticket().attention).toMatchObject({ question: 'Budget used up, continue?' })
+    expect(ticketStage(ticket())).toEqual({ stage: 'person', action: 'answer' })
+    expect(waitsForPerson(ticket())).toBe(true)
+    expect(h.executor.stop).toHaveBeenCalledWith(expect.objectContaining({ id: ticketId }), expect.objectContaining({ id: first.id }), 'budgetSpent')
+    // A second fact about it changes nothing.
+    h.engine.budgetSpent(ticketId, first.id, 'again')
+    expect(ticket().attention).toMatchObject({ question: 'Budget used up, continue?' })
+    // An automatic message waits for the person; theirs starts a new Assignment, and the question is withdrawn.
+    h.tick(1); h.engine.receive(trigger('5', { human: false, actor: { source: 'chat', id: 'ci' } })); h.settle()
+    expect(ticket().assignments).toHaveLength(1)
+    h.tick(1); h.engine.receive(trigger('6', { actor: guest })); h.settle()
+    expect(ticket().assignments).toEqual([expect.objectContaining({ endedReason: 'budgetSpent' }), expect.objectContaining({ state: 'running' })])
+    expect(ticket()).not.toHaveProperty('attention')
+    expect(h.withdrawn).toHaveLength(1)
+  })
+})
+describe('hold', () => {
+  const ci = (id: string) => trigger(id, { human: false, actor: { source: 'chat', id: 'ci' } })
+  it('ends the Assignment, takes no automatic Input and starts none until a person\'s message lifts it', () => {
+    const h = harness()
+    const ticketId = accepted(h).ticketId!
+    const ticket = () => h.repo.tickets.get(ticketId)!
+    const first = runningAssignment(ticket())!
+    h.tick(1)
+    expect(h.engine.holdTicket(ticketId, 'until the release')).toBe(true)
+    expect(h.engine.holdTicket(ticketId)).toBe(false)
+    expect(ticket()).toMatchObject({ held: { reason: 'until the release' }, assignments: [{ state: 'ended', endedReason: 'held' }] })
+    expect(ticketStage(ticket())).toEqual({ stage: 'person', action: 'held' })
+    expect(h.executor.stop).toHaveBeenCalledWith(expect.objectContaining({ id: ticketId }), expect.objectContaining({ id: first.id }), 'held')
+    // A CI result reaches it, but wakes no worker and starts no Assignment; a retry is no remedy.
+    h.tick(1); h.engine.receive(ci('5')); h.settle()
+    expect(ticket().inputs.at(-1)).toMatchObject({ kind: 'trigger', triggerId: '5' })
+    expect(ticket().undelivered).toEqual([])
+    expect(ticket().assignments).toHaveLength(1)
+    expect(h.executor.start).toHaveBeenCalledOnce()
+    expect(() => h.engine.retryTicket(ticketId)).toThrow(new UserError('notRetryable'))
+    // A person's message lifts it and goes on with a new Assignment that gets the message.
+    h.tick(1); h.engine.receive(trigger('6', { actor: guest })); h.settle()
+    expect(ticket()).not.toHaveProperty('held')
+    expect(ticket().assignments).toEqual([expect.objectContaining({ endedReason: 'held' }), expect.objectContaining({ state: 'running' })])
+    expect(h.delivered.at(-1)).toEqual([ticketId, ticket().inputs.at(-1)!.id])
+  })
+  it('goes on with a new Assignment on a release, and a stop or the end clears it', () => {
+    const h = harness()
+    const ticketId = accepted(h).ticketId!
+    const ticket = () => h.repo.tickets.get(ticketId)!
+    h.engine.holdTicket(ticketId)
+    expect(h.engine.releaseTicket(ticketId)).toBe(true)
+    expect(h.engine.releaseTicket(ticketId)).toBe(false)
+    h.settle()
+    expect(ticket().assignments.map(item => item.state)).toEqual(['ended', 'running'])
+    h.engine.holdTicket(ticketId)
+    h.engine.stopTicket(ticketId)
+    expect(ticket()).not.toHaveProperty('held')
+    expect(() => h.engine.holdTicket(ticketId)).toThrow(new UserError('ticketEnded'))
+  })
+  it('records a person\'s explicit "stop for now" as a hold that keeps the Mandate, and refuses one an inferred message asks for', () => {
+    const h = harness()
+    const ticketId = accepted(h).ticketId!
+    h.tick(1); h.engine.receive(trigger('5', { actor: guest })); h.settle()
+    expect(h.engine.decide('5', { kind: 'hold', ticketId, reason: 'asked to wait' })).toMatchObject({ kind: 'ignore', reason: [{ code: 'stopNotExplicit' }] })
+    expect(h.repo.tickets.get(ticketId)).not.toHaveProperty('held')
+    // A follow-up a ticket's worker decides may still be held on, as it may be stopped on.
+    h.tick(1); h.engine.receive(trigger('6')); h.settle()
+    expect(h.engine.decide('6', { kind: 'hold', ticketId, reason: 'stop for now' })).toMatchObject({ kind: 'hold', ticketId })
+    expect(h.repo.tickets.get(ticketId)).toMatchObject({ held: { reason: 'stop for now' } })
+    expect(h.repo.tickets.get(ticketId)).not.toHaveProperty('ended')
   })
 })
 describe('failed deliveries', () => {

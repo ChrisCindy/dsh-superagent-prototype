@@ -163,20 +163,74 @@ export class Tickets extends EnginePart {
   }
   /**
    * Ends the stalled assignment of a retryable open ticket (`failed`, `blocked`, or failed input delivery) and starts a new one.
+   * An Assignment that ended already, such as one that used up its budget, keeps why it ended.
    * @throws UserError when the ticket is unknown or not retryable.
    */
   retry(ticketId: string): Ticket {
     const ticket = this.require(ticketId)
     const latest = latestAssignment(ticket)
     if (!canRetry(ticket) || !latest) throw new UserError('notRetryable')
-    this.endAssignment(ticket, latest, 'retried')
+    const stopping = latest.state !== 'ended'
+    if (stopping) this.endAssignment(ticket, latest, 'retried')
     this.requeueUntaken(ticket, latest)
-    const assignment = this.newAssignment(ticket)
+    const assignment = this.continued(ticket, latest)
     ticket.updatedAt = this.now()
     this.repo.tickets.save(ticket)
-    this.options.executor.stop(ticket, latest, 'retried')
+    if (stopping) this.options.executor.stop(ticket, latest, 'retried')
     this.options.executor.start(ticket, assignment)
     return ticket
+  }
+  /**
+   * A person holds an open ticket: its Assignment ends (see `suspend`), and until a person's message or a release it takes no
+   * automatic Input and starts no Assignment. Holding a held ticket changes nothing.
+   * @returns whether it was held now.
+   * @throws UserError when the ticket is unknown or has ended.
+   */
+  hold(ticketId: string, reason?: string): boolean {
+    const ticket = this.require(ticketId)
+    if (!liveTicket(ticket)) throw new UserError('ticketEnded')
+    if (ticket.held) return false
+    ticket.held = { at: this.now(), ...reason ? { reason } : {} }
+    // Automatic Inputs that wait are held back with it, as they are while a ticket waits for a person.
+    ticket.undelivered = ticket.undelivered.filter(id => !automatic(ticket.inputs.find(input => input.id === id)))
+    const latest = latestAssignment(ticket)
+    if (latest && latest.state !== 'ended') this.suspend(ticket, latest, 'held')
+    else { ticket.updatedAt = this.now(); this.repo.tickets.save(ticket) }
+    this.emit('ticket.held', { ticketId })
+    return true
+  }
+  /**
+   * A person releases a held ticket: it goes on with a new Assignment, unless it still waits for a person.
+   * @returns whether it was held.
+   * @throws UserError when the ticket is unknown or has ended.
+   */
+  release(ticketId: string): boolean {
+    const ticket = this.require(ticketId)
+    if (!liveTicket(ticket)) throw new UserError('ticketEnded')
+    if (!ticket.held) return false
+    this.unhold(ticket)
+    return true
+  }
+  /** Lift a ticket's hold, and start a new Assignment unless one is under way or the ticket still waits for a person. */
+  private unhold(ticket: Ticket): void {
+    delete ticket.held
+    ticket.updatedAt = this.now()
+    const latest = latestAssignment(ticket)
+    const assignment = latest?.state === 'ended' && !waitsForPerson(ticket) ? this.continued(ticket, latest) : undefined
+    this.repo.tickets.save(ticket)
+    this.emit('ticket.released', { ticketId: ticket.id })
+    if (assignment) this.options.executor.start(ticket, assignment)
+  }
+  /**
+   * End the Assignment that runs a ticket, or waits to, for `reason`, with no new one: the ticket stays open, and its worker's
+   * turn and background work stop. A person's message, a retry or a release starts a new Assignment (see `addInput`).
+   */
+  suspend(ticket: Ticket, assignment: Assignment, reason: string): void {
+    this.endAssignment(ticket, assignment, reason)
+    this.requeueUntaken(ticket, assignment)
+    ticket.updatedAt = this.now()
+    this.repo.tickets.save(ticket)
+    this.options.executor.stop(ticket, assignment, reason)
   }
   /**
    * Drops a ticket's Subscription to a Thread its worker found unrelated, and hands back, with `reason`, the person's messages there that the ticket decides.
@@ -229,19 +283,27 @@ export class Tickets extends EnginePart {
   }
   /**
    * Add an Input once (idempotently) and ask the Executor to deliver it, or to launch again a pending Assignment whose launch
-   * failed once no person is waited for: a Policy change alone does not launch it again.
+   * failed once no person is waited for: a Policy change alone does not launch it again. A person's message lifts a hold, and
+   * starts a new Assignment for a ticket whose last one ended without a new one (see `suspend`), once no person is waited for.
    */
   addInput(ticket: Ticket, input: TicketInput): void {
     if (ticket.inputs.some(existing => existing.id === input.id)) return
     ticket.inputs.push(input); ticket.updatedAt = this.now()
-    // Hold back automated inputs while the worker is waiting on a person.
-    const held = liveTicket(ticket) && automatic(input) && waitsForPerson(ticket)
+    const person = input.kind === 'trigger' && !!input.human && !input.context
+    // Hold back automated inputs while the worker is waiting on a person or a person holds the ticket.
+    const held = liveTicket(ticket) && automatic(input) && (waitsForPerson(ticket) || !!ticket.held)
     if (!held) ticket.undelivered.push(input.id)
+    if (liveTicket(ticket) && person && ticket.held) { this.unhold(ticket); return }
     this.repo.tickets.save(ticket)
-    if (!liveTicket(ticket) || held) return
+    if (!liveTicket(ticket) || held || ticket.held) return
     const running = runningAssignment(ticket), latest = latestAssignment(ticket)
     if (running) this.options.executor.deliver(ticket, running)
     else if (latest?.state === 'pending' && !waitsForPerson(ticket)) this.options.executor.start(ticket, latest)
+    else if (latest?.state === 'ended' && person && !waitsForPerson(ticket)) {
+      const assignment = this.continued(ticket, latest)
+      this.repo.tickets.save(ticket)
+      this.options.executor.start(ticket, assignment)
+    }
   }
   /**
    * Resume an ended ticket under its unchanged Mandate when a person's message on one of its Threads waits for it: no Eval
@@ -353,7 +415,7 @@ export class Tickets extends EnginePart {
       && (!readBefore(input, until) || ticket.undelivered.includes(input.id)) ? [input.id] : []))
     // An end dated earlier, such as a PR's merge, does not move the ticket's last change back.
     ticket.ended = { at, by, outcome, ...why }; ticket.undelivered = []; ticket.updatedAt = this.now()
-    delete ticket.attention; delete ticket.delivery
+    delete ticket.attention; delete ticket.delivery; delete ticket.held
     // The Assignments the end stops end with it; the ticket's end says why.
     for (const assignment of stopping) { assignment.state = 'ended'; assignment.endedAt = at }
     this.repo.tickets.save(ticket)
@@ -376,6 +438,17 @@ export class Tickets extends EnginePart {
     const report = latest?.report
     const later = ticket.inputs.some(input => input.kind !== 'policy-changed' && Date.parse(input.at) > Date.parse(report?.at ?? ''))
     return report?.state !== 'ready' || ticket.undelivered.length > 0 || later
+  }
+  /**
+   * A new Assignment after `ended`: one that used up its budget asked a person whether to go on, which now has its answer;
+   * the worker is told why it goes on (see `Executor.start`).
+   */
+  private continued(ticket: Ticket, ended: Assignment): Assignment {
+    if (ended.endedReason === 'budgetSpent' && ticket.attention) {
+      this.replies.withdrawAttention(ticket.attention.id)
+      delete ticket.attention
+    }
+    return this.newAssignment(ticket)
   }
   /** Add a pending Assignment; a failed delivery to the one before it no longer concerns the ticket. */
   private newAssignment(ticket: Ticket): Assignment {

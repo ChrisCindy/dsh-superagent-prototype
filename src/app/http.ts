@@ -144,7 +144,7 @@ const limit = (fallback: number, max: number) => z.coerce.number().int().positiv
 const TicketsQuery = z.object({ state: z.enum(TICKET_FILTERS).catch('open'), offset, limit: limit(20, 1000) })
 const ThreadsQuery = z.object({ filter: z.enum(THREAD_FILTERS).catch('subscribed'), offset, limit: limit(20, 1000) })
 const ThreadQuery = z.object({ limit: limit(50, 100), before: z.string().optional(), around: z.string().optional() })
-const DecisionsQuery = z.object({ kind: z.string().default(''), window: z.literal('24h').optional().catch(undefined), offset,
+const DecisionsQuery = z.object({ kind: z.string().default(''), reason: z.string().default(''), window: z.literal('24h').optional().catch(undefined), offset,
   limit: limit(30, 200) })
 const count = z.coerce.number().int().nonnegative()
 const PromptsQuery = z.object({ revision: count.optional(), offset: count.default(0) })
@@ -184,9 +184,9 @@ function routes(runtime: HttpHost): Routes {
       return { queued }
     },
     'GET decisions': ({ query }) => {
-      const { kind, window, offset, limit } = DecisionsQuery.parse(query)
+      const { kind, reason, window, offset, limit } = DecisionsQuery.parse(query)
       const since = window ? new Date(Date.now() - 86_400_000).toISOString() : ''
-      return decisionList(views(runtime), kind.split(',').filter(Boolean), offset, limit, since)
+      return decisionList(views(runtime), kind.split(',').filter(Boolean), offset, limit, since, reason)
     },
     'POST decisions/:id/dismiss': ({ params }) => { runtime.engine.dismiss(params.id); return { dismissed: true } },
     'GET tickets': ({ query }) => {
@@ -196,6 +196,8 @@ function routes(runtime: HttpHost): Routes {
     'GET tickets/:id': ({ params }) => ticketPage(runtime, params.id),
     'POST tickets/:id/retry': ({ params }) => { const id = ticket(params.id); runtime.engine.retryTicket(id); return { retried: true } },
     'POST tickets/:id/stop': ({ params }) => { const id = ticket(params.id); runtime.engine.stopTicket(id); return { stopped: true } },
+    'POST tickets/:id/hold': ({ params }) => ({ held: runtime.engine.holdTicket(ticket(params.id)) }),
+    'POST tickets/:id/release': ({ params }) => ({ released: runtime.engine.releaseTicket(ticket(params.id)) }),
     'POST executor/pause': async ({ body }) => runtime.settings.pause(z.object({ paused: z.boolean() }).parse(await body()).paused, 'panel'),
     'PUT settings/:block': async ({ params, body }) => {
       const block = SettingsBlockSchema.parse(params.block)

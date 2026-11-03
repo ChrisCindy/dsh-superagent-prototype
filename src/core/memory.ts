@@ -46,5 +46,7 @@ export class MemoryRepositories implements Repositories {
     get: (id: string) => clone(this.decisionRows.get(id)),
     save: (decision: Decision) => { this.decisionRows.set(decision.id, clone(decision)) },
     byThread: (key: string) => [...this.decisionRows.values()].filter(decision => decision.threadKey === key).map(clone),
+    inferredSince: (source: string, since: string) => [...this.decisionRows.values()].filter(decision => decision.assessed
+      && decision.strength === 'inferred' && decision.threadKey.startsWith(`${source}:`) && decision.at >= since).length,
   }
 }

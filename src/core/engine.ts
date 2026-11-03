@@ -164,6 +164,19 @@ export class Engine {
    * @throws UserError when the ticket is unknown, has ended, or is not retryable.
    */
   retryTicket(ticketId: string): Ticket { return this.repo.atomic(() => this.tickets.retry(ticketId)) }
+  /**
+   * A person holds an open ticket: its Assignment ends, and until a person's message or a release it takes no automatic Input
+   * and starts no Assignment; it keeps its Mandate.
+   * @returns whether it was held now, false when it was held already.
+   * @throws UserError when the ticket is unknown or has ended.
+   */
+  holdTicket(ticketId: string, reason?: string): boolean { return this.repo.atomic(() => this.tickets.hold(ticketId, reason)) }
+  /**
+   * A person releases a held ticket: it goes on with a new Assignment, unless it still waits for a person.
+   * @returns whether it was held.
+   * @throws UserError when the ticket is unknown or has ended.
+   */
+  releaseTicket(ticketId: string): boolean { return this.repo.atomic(() => this.tickets.release(ticketId)) }
 
   // The Executor
 
@@ -238,6 +251,14 @@ export class Engine {
    */
   report(ticketId: string, report: WorkerReport): Ticket { return this.repo.atomic(() => this.assignments.report(ticketId, report)) }
   /**
+   * The Executor's fact that the Assignment that runs a ticket used up its budget: it reports blocked with `question` for a
+   * person and ends without a new one; a person's message or a retry starts a new Assignment with a fresh budget (see
+   * `Assignments.budgetSpent`).
+   */
+  budgetSpent(ticketId: string, assignmentId: string, question: string): Ticket {
+    return this.repo.atomic(() => this.assignments.budgetSpent(ticketId, assignmentId, question))
+  }
+  /**
    * Handles an assignment that was running when the host stopped: restarts it with a recovery note unless its latest report is
    * `waiting`, `ready`, `blocked`, or `failed` and no Input reached its worker after that report, in which case it keeps its
    * Session and state and gets the Inputs that wait for it.
@@ -262,9 +283,9 @@ export type EngineForSources = Pick<Engine, 'receive' | 'bindThread' | 'threadCl
 /** What the main Session asks of the Engine. */
 export type EngineForMainSession = Pick<Engine, 'candidate' | 'candidateDelivered' | 'decide' | 'attach' | 'reply' | 'requestStatus' | 'note'>
 /** What people ask of the Engine, through the panel or the main Session. */
-export type EngineForPeople = Pick<Engine, 'stopTicket' | 'retryTicket' | 'reevaluate' | 'unsubscribe' | 'dismiss'>
+export type EngineForPeople = Pick<Engine, 'stopTicket' | 'retryTicket' | 'holdTicket' | 'releaseTicket' | 'reevaluate' | 'unsubscribe' | 'dismiss'>
 /** What Settings tells the Engine. */
 export type EngineForSettings = Pick<Engine, 'policyChanged'>
 /** What the Executor tells the Engine, and what its workers ask of it. */
 export type EngineForExecutor = Pick<Engine, 'assignmentStarted' | 'inputsDelivered' | 'inputsRead' | 'turnEnded' | 'deliveryFailed'
-  | 'assignmentInterrupted' | 'report' | 'markUnrelated' | 'handback' | 'followForContext' | 'reply'>
+  | 'assignmentInterrupted' | 'report' | 'budgetSpent' | 'markUnrelated' | 'handback' | 'followForContext' | 'reply'>

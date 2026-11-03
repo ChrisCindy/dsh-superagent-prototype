@@ -24,6 +24,11 @@ export interface Policy {
   admitsInferred(rules: readonly string[]): boolean
   /** How long an assessor may take before an eval is recorded as unavailable. */
   evalTimeoutMs: number
+  /**
+   * How many inferred Evals the Threads of one Source may start in an hour; one over the limit is ignored as `rateLimited`
+   * without the assessor. Explicit requests are never limited; none sets no limit.
+   */
+  maxInferredPerHour?: number
 }
 
 /** What the assessor receives: bounded facts, never authority. */
@@ -44,6 +49,8 @@ export type AssessmentOutcome =
   | { kind: 'accept'; title: string; scope: string; reason: string | Reason; acknowledgement?: string; rules?: string[]; audit?: Record<string, unknown>;
     name?: string; note?: string }
   | { kind: 'stop'; ticketId: string; reason: string | Reason; audit?: Record<string, unknown> }
+  /** A person asked to stop for now: the ticket is held until a person's message or a release, and keeps its Mandate. */
+  | { kind: 'hold'; ticketId: string; reason: string | Reason; audit?: Record<string, unknown> }
 
 /** Semantic judgement. `request` queues the assessment, idempotently per `evalId`; the outcome returns through `Engine.decide`. */
 export interface Assessor {
@@ -89,6 +96,10 @@ export interface DomainEvents {
   'decision.recorded': { decisionId: string; kind: DecisionKind; threadKey: string }
   'ticket.created': { ticketId: string; decisionId: string; strength: Strength }
   'ticket.resumed': { ticketId: string; triggerId: string }
+  /** A person held the ticket. */
+  'ticket.held': { ticketId: string }
+  /** A person's message or release lifted the ticket's hold. */
+  'ticket.released': { ticketId: string }
   'ticket.ended': { ticketId: string; by: TicketEndBy; outcome: TicketOutcome; reason?: string }
   'assignment.started': { ticketId: string; assignmentId: string }
   'assignment.ended': { ticketId: string; assignmentId: string; reason: string }
@@ -130,5 +141,7 @@ export interface Repositories {
     get(id: string): Decision | undefined
     save(decision: Decision): void
     byThread(key: string): Decision[]
+    /** How many Decisions of inferred Evals that asked the assessor were recorded on a Source's Threads at or after `since`. */
+    inferredSince(source: string, since: string): number
   }
 }

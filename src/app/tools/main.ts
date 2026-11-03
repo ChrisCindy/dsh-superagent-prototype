@@ -45,26 +45,26 @@ const fromDecision = (decision: Decision) => ({ decision: decision.kind, reason:
  * runs (`FIELDS`), so an item that lacks one, or whose value breaks a limit, is refused alone.
  */
 const RouteItemSchema = z.object({
-  kind: z.enum(['accept', 'attach', 'ignore', 'stop']),
+  kind: z.enum(['accept', 'attach', 'ignore', 'stop', 'hold']),
   trigger_id: z.string().describe('The candidate card\'s trigger_id; deciding it decides its batch.'),
-  ticket_id: z.string().nullish().describe('attach and stop: the ticket.'),
+  ticket_id: z.string().nullish().describe('attach, stop and hold: the ticket.'),
   title: z.string().nullish().describe('accept: a short label of at most 200 characters describing the original request; no added requirements or implementation advice.'),
   worktree_name: z.string().nullish().describe(`accept: ${WorktreeNameSchema.description ?? ''}`),
   acknowledgement: z.string().nullish().describe(`accept: one brief sentence of at most ${IM_WORDS} words naming the concrete change and intended result in the source language. It is posted as a reply to the original source on acceptance, so do not quote the source; quote an earlier proposal briefly only when the trigger merely confirms it and the sentence does not already state it. No generic I will handle it.`),
   note: z.string().nullish().describe(`accept and attach: ${RoutingNoteSchema.description ?? ''}`),
-  reason: z.string().nullish().describe('ignore and stop: why, at most 500 characters; an ignore needs it.'),
+  reason: z.string().nullish().describe('ignore, stop and hold: why, at most 500 characters; an ignore needs it.'),
 }).strict()
 type RouteItem = z.infer<typeof RouteItemSchema>
 type Kind = RouteItem['kind']
 type Field = Exclude<keyof RouteItem, 'kind' | 'trigger_id'>
 /** Each field's check, the kinds whose items read it and those that need it; an item of another kind leaves it unread. */
 const FIELDS: Record<Field, { check: z.ZodType; reads: readonly Kind[]; needs: readonly Kind[] }> = {
-  ticket_id: { check: z.string(), reads: ['attach', 'stop'], needs: ['attach', 'stop'] },
+  ticket_id: { check: z.string(), reads: ['attach', 'stop', 'hold'], needs: ['attach', 'stop', 'hold'] },
   title: { check: z.string().max(200), reads: ['accept'], needs: ['accept'] },
   worktree_name: { check: WorktreeNameSchema, reads: ['accept'], needs: ['accept'] },
   acknowledgement: { check: AcknowledgementSchema, reads: ['accept'], needs: ['accept'] },
   note: { check: RoutingNoteSchema, reads: ['accept', 'attach'], needs: [] },
-  reason: { check: z.string().max(500), reads: ['ignore', 'stop'], needs: ['ignore'] },
+  reason: { check: z.string().max(500), reads: ['ignore', 'stop', 'hold'], needs: ['ignore'] },
 }
 /** Why an item cannot run: a field its kind needs is missing, or one it reads breaks its limit. */
 function invalid(item: RouteItem): string | undefined {
@@ -112,6 +112,11 @@ function route(host: MainToolsHost, item: RouteItem, decided: ReadonlyMap<string
       const decision = host.engine.decide(item.trigger_id, { kind: 'stop', ticketId: item.ticket_id!, reason: item.reason || { code: 'humanStop' } })
       return { ...fromDecision(decision), triggerIds: decision.triggerIds }
     }
+    // Likewise: the ticket is held, keeps its Mandate, and goes on at a person's next message or release.
+    case 'hold': {
+      const decision = host.engine.decide(item.trigger_id, { kind: 'hold', ticketId: item.ticket_id!, reason: item.reason || { code: 'humanHold' } })
+      return { ...fromDecision(decision), triggerIds: decision.triggerIds }
+    }
     case 'ignore': {
       const decision = host.engine.decide(item.trigger_id, { kind: 'ignore', reason: item.reason! })
       return { ...fromDecision(decision), triggerIds: decision.triggerIds }
@@ -125,7 +130,7 @@ function route(host: MainToolsHost, item: RouteItem, decided: ReadonlyMap<string
 function routeTool(host: MainToolsHost): Tool {
   return tool({
     name: 'orchestrator_route',
-    description: 'Route candidates, one item each by the card\'s trigger_id, in one call: accept an explicit request as a new ticket, attach a trigger to an existing ticket, stop a ticket on a person\'s stop message, or ignore a candidate that needs no ticket or stop, as dispatch says. Items run in order and each is answered on its own; a refused item leaves the others. An inferred candidate may be ignored here; accepting one goes through orchestrator_eval_decide.',
+    description: 'Route candidates, one item each by the card\'s trigger_id, in one call: accept an explicit request as a new ticket, attach a trigger to an existing ticket, stop a ticket on a person\'s stop message, hold one on stop for now, or ignore a candidate that needs no ticket or stop, as dispatch says. Items run in order and each is answered on its own; a refused item leaves the others. An inferred candidate may be ignored here; accepting one goes through orchestrator_eval_decide.',
     schema: z.object({ decisions: z.array(RouteItemSchema).min(1).max(20) }).strict(),
     execute: async ({ decisions }) => {
       const decided = new Map<string, string>()

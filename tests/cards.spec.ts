@@ -42,7 +42,7 @@ const RULES: [rule: string, file: string, says: string[], gone?: string[]][] = [
     ['arrive to you as candidates too', 'dispatch says when it needs a tool call']],
   ['A person\'s follow-up is its ticket\'s worker\'s to decide; the main Session only stops the work on request', 'dispatch',
     ['A follow_up notice reports a person\'s message that already reached the workers it lists', 'do not forward it a second time',
-      'act on a follow_up only to stop the work when the person asks', 'never accept, attach or requeue it',
+      'act on a follow_up only to stop or hold the work when the person asks', 'never accept, attach or requeue it',
       'arrives as a candidate with handed_back'],
     ['so it needs no decision', 'asks for new work beyond the ticket (orchestrator_ticket_accept']],
   ['A person\'s follow-up is its ticket\'s worker\'s to decide; the main Session only stops the work on request', 'subscriptions',

@@ -3,7 +3,7 @@ import { useState } from 'react'
 import { ADMISSION_DEFAULTS, ADMISSION_OPTIONS, type Admission, type AdmissionCell } from '../admission.ts'
 import type { AdmissionRowView } from '../sources/kind.ts'
 import { LIMITS } from '../limits.ts'
-import { DECISION_FILTERS, DECISION_KINDS, usePoll, type DecisionFilter, type Settings, type SourceView } from './api.ts'
+import { DECISION_FILTERS, DECISION_QUERIES, usePoll, type DecisionFilter, type Settings, type SourceView } from './api.ts'
 import { Button, DisclosureRow, Icon, InfoTip, Input, Pill, SegmentedControl, Switch } from './controls.tsx'
 import { SaveBar } from './draft.tsx'
 import { useAction, usePanel } from './provider.tsx'
@@ -15,7 +15,7 @@ import { Hint, LabelValue, LoadMore, LoadState, Section, StatusHead } from './wi
 export function EvalStatus({ filter, window, paused }: { filter: DecisionFilter; window: '24h' | undefined; paused: boolean }) {
   const { t, call, navigate } = usePanel()
   const [limit, setLimit] = useState(30)
-  const { data, error } = usePoll(() => call('GET decisions', { query: { limit, kind: DECISION_KINDS[filter],
+  const { data, error } = usePoll(() => call('GET decisions', { query: { limit, ...DECISION_QUERIES[filter],
     ...window ? { window } : {} } }), [filter, limit, window])
   const show = (key: DecisionFilter, last24h: boolean) => navigate({ page: 'eval', query: { ...key === 'work' ? {} : { filter: key },
     ...last24h ? { window: '24h' } : {} } }, true)
@@ -192,8 +192,9 @@ function PolicyBlock() {
 function EvalBlock() {
   const { t } = usePanel()
   const block = useSettings().settings.blocks.eval
-  const saved = { ...block.value, timeoutSeconds: String(block.value.timeoutSeconds) }
-  const draft = useBlockDraft('eval', saved, block.revision, value => ({ ...value, timeoutSeconds: numberOf(value.timeoutSeconds) }))
+  const saved = { ...block.value, timeoutSeconds: String(block.value.timeoutSeconds), maxInferredPerHour: String(block.value.maxInferredPerHour) }
+  const draft = useBlockDraft('eval', saved, block.revision, value => ({ ...value, timeoutSeconds: numberOf(value.timeoutSeconds),
+    maxInferredPerHour: numberOf(value.maxInferredPerHour) }))
   const value = draft.value
   const edit = (next: Partial<typeof value>) => draft.edit({ ...value, ...next })
   return <form className="dt-form dt-block" onSubmit={event => { void draft.submit(event) }}>
@@ -207,6 +208,10 @@ function EvalBlock() {
       <Field label={t('evalTimeout')} hint={t('evalTimeoutHint')}>
         <Input type="number" min={LIMITS.evalTimeoutSeconds.min} max={LIMITS.evalTimeoutSeconds.max} required value={value.timeoutSeconds}
           onChange={event => edit({ timeoutSeconds: event.target.value })} />
+      </Field>
+      <Field label={t('maxInferredPerHour')} hint={t('maxInferredPerHourHint')}>
+        <Input type="number" min={LIMITS.maxInferredPerHour.min} max={LIMITS.maxInferredPerHour.max} required value={value.maxInferredPerHour}
+          onChange={event => edit({ maxInferredPerHour: event.target.value })} />
       </Field>
       <Section title={t('assessorModel')} hint={t('assessorModelHint')}>
         <ModelField id="dt-eval-model" value={value.model} onChange={model => edit({ model })} />

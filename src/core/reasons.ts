@@ -16,6 +16,9 @@ export const REASONS = {
   forwarded: 'Forwarded to the worker of the Ticket already on this Thread',
   senderNotMember: 'The sender is not on the Source\'s list',
   retried: 'Retried by a person',
+  budgetSpent: 'The Assignment used up its budget',
+  held: 'A person held the Ticket',
+  humanHold: 'Human asked to stop for now',
   hostRestarted: 'dsh-superagent restarted',
   stopUnknown: 'Stop target is unknown or already ended',
   stopNotExplicit: 'A stop needs an explicit request from a sender on the list',
@@ -23,6 +26,7 @@ export const REASONS = {
   noRuleMatched: 'No enabled admission rule matched',
   ignoredFromCard: 'Ignored from its card, without a rule assessment',
   observed: 'Observe mode: would accept ({text})',
+  rateLimited: 'The Source reached its limit of {limit} proactive Evals an hour',
 } as const
 export type ReasonCode = keyof typeof REASONS
 /** Reason code and template values; `triggerId` identifies the trigger in a batch that the reason applies to. */

@@ -87,8 +87,9 @@ export function search(host: ViewHost, query: string, links: Pick<TextCache, 'en
   return { tickets, items: items.sort((a, b) => b.at.localeCompare(a.at)).slice(0, 20).map(item), threads }
 }
 export type SearchView = ReturnType<typeof search>
-export function decisionList(host: ViewHost, kinds: string[], offset: number, limit: number, since = '') {
-  const { items, more } = host.store.read.decisions({ kinds, since }, offset, limit)
+/** A page of Decisions of `kinds` (any when empty), whose Triggers arrived since `since`, with a reason of code `reason` when given. */
+export function decisionList(host: ViewHost, kinds: string[], offset: number, limit: number, since = '', reason = '') {
+  const { items, more } = host.store.read.decisions({ kinds, reason, since }, offset, limit)
   const view = snapshot(host)
   return { items: items.map(decision => decisionView(view, decision)), next_offset: more ? offset + limit : null }
 }

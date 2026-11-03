@@ -33,6 +33,7 @@ import { policyHistory } from '../src/app/settings-history.ts'
 import { overview } from '../src/app/views/overview.ts'
 import { preview, readable } from '../src/app/views/text.ts'
 import { decisionList, search, threadDetail, threadList } from '../src/app/views/threads.ts'
+import { snapshot, triggerView } from '../src/app/views/records.ts'
 import { executorLoad, ticketDetail, ticketList } from '../src/app/views/tickets.ts'
 import { fakeConnection, PANEL_HEADERS } from './fixtures/connection.ts'
 
@@ -346,6 +347,27 @@ it('assesses a proactive observation in the orchestrator Session and creates the
   expect(await runTool(`worker-${ticket.id}`, 'orchestrator_read', { resource: `ticket/${ticket.id}/assignment` })).toMatchObject({ text: expect.stringContaining('Proactively accepted under copy') })
 })
 
+it('records a proactive candidate over the Source\'s hourly limit as rate limited without a candidate for the main Session, and lists it', async () => {
+  await runtime.settings.save('eval', { ...runtime.store.settings().eval, maxInferredPerHour: 1 }, runtime.store.blockRevision('eval'), 'panel')
+  // A main-Session tool may not raise the limit.
+  await expect(runtime.settings.save('eval', { ...runtime.store.settings().eval, maxInferredPerHour: 50 }, runtime.store.blockRevision('eval'), 'tool'))
+    .rejects.toThrow('proactive Eval limit')
+  await receive(feishu('3', '这个文案好奇怪', { mentions: [] }))
+  const candidates = () => relays(runtime.masterId).filter(item => item.kind === 'candidate')
+  expect(candidates()).toHaveLength(1)
+  const over = feishu('4', '这个按钮也歪了', { mentions: [] })
+  await receive(over)
+  expect(candidates()).toHaveLength(1)
+  expect(runtime.store.decisions.byThread(`feishu:${CHAT}:om_4`)).toEqual([expect.objectContaining({ kind: 'ignore',
+    reason: [{ code: 'rateLimited', values: { limit: '1' } }] })])
+  expect(decisionList(viewsOf(runtime), ['ignore'], 0, 10, '', 'rateLimited').items.map(item => item.triggerIds)).toEqual([[over.id]])
+  // Nothing judged the message, so a person may send it to Eval again.
+  expect(triggerView(snapshot(viewsOf(runtime)), runtime.store.triggers.get(over.id)!).actions.requeue).toBe(true)
+  // An explicit request is never limited.
+  await receive(feishu('5', '@bot 修一下回归'))
+  expect(candidates()).toHaveLength(2)
+})
+
 it('accepts silently under a rule that says so, gives the worker the rule procedure, and closes it as dropped when nothing is left for a human', async () => {
   const policy = runtime.store.settings().policy
   await runtime.settings.save('policy', { ...policy, rules: [...policy.rules, { id: 'silent-bugfix', name: '沉默地复现和修复', enabled: true, instruction: 'Reproduce minimally first; accept silently.' }] }, runtime.store.blockRevision('policy'), 'panel')
@@ -587,6 +609,39 @@ it('relaunches running assignments after a restart with a recovery note', async 
   // The new Assignment's message says only what is new, as the Session holds the first; the launch's own pass delivers the
   // recovery note as it reads.
   expect(relays(`worker-${ticket.id}`)).toEqual([{ ticket_id: ticket.id, assignment: 2 }, { text: expect.stringContaining('host restarted') }])
+})
+
+it('holds a ticket from the panel: automatic input waits, the hold survives a restart, and a release resumes it', async () => {
+  const { ticket, sessionId } = await acceptedTicket()
+  await runtime.pump(); await runtime.idle()
+  expect(runtime.store.tickets.get(ticket.id)!.assignments[0]).toMatchObject({ state: 'running' })
+  expect((await api('POST', `tickets/${ticket.id}/hold`)).body).toEqual({ held: true })
+  await runtime.idle()
+  expect((await api('POST', `tickets/${ticket.id}/hold`)).body).toEqual({ held: false })
+  const page = (await api('GET', `tickets/${ticket.id}`)).body
+  expect(page).toMatchObject({ stage: 'person', action: 'held', held: { at: expect.any(String) }, actions: { hold: false, release: true, retry: false } })
+  expect(agents.get(sessionId)!.cancel).toHaveBeenCalled()
+  // A CI result is automatic input: it is kept for later and does not wake the worker.
+  deliveries.mockClear()
+  runtime.engine.note(ticket.id, 'CI failed on master')
+  await runtime.pump(); await runtime.idle()
+  expect(relays(sessionId)).toEqual([])
+  expect(runtime.store.tickets.get(ticket.id)!.assignments.map(item => item.state)).toEqual(['ended'])
+  const next = await restart(); await next.ready
+  runtime.executor.resume()
+  await runtime.pump(); await runtime.idle()
+  const stored = runtime.store.tickets.get(ticket.id)!
+  expect(stored.held).toMatchObject({ at: expect.any(String) })
+  expect(stored.assignments.map(item => item.state)).toEqual(['ended'])
+  expect((await api('GET', `tickets/${ticket.id}`)).body).toMatchObject({ stage: 'person', action: 'held' })
+  expect((await api('POST', `tickets/${ticket.id}/release`)).body).toEqual({ released: true })
+  await runtime.pump(); await runtime.idle()
+  const released = runtime.store.tickets.get(ticket.id)!
+  expect(released.held).toBeUndefined()
+  expect(released.assignments.map(item => item.state)).toEqual(['ended', 'running'])
+  // As while it waits for a person, the CI result is recorded on the ticket and not delivered later.
+  expect(released.inputs).toEqual([expect.objectContaining({ kind: 'note', text: 'CI failed on master' })])
+  expect(relays(sessionId)).not.toContainEqual({ text: expect.stringContaining('CI failed on master') })
 })
 
 it('projects read models for the management page and removes thread subscriptions from the Web surface', async () => {

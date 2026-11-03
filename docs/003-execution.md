@@ -8,6 +8,7 @@ Each open Ticket has one stage, determined by what it is waiting for. Read the t
 
 | Stage | Condition | Panel label |
 | --- | --- | --- |
+| person / held | A person held it, and no person's message or release has lifted the hold | Held |
 | person / delivery | Delivering an Input to the Executor Session failed; it is retried after 2 seconds, then after a delay that doubles up to a minute, and a success, a new Assignment or the Ticket's end clears it | Input undelivered |
 | person / answer | It has an Attention | Awaiting answer |
 | person / review | The latest Report is `ready` | Awaiting review |
@@ -16,7 +17,7 @@ Each open Ticket has one stage, determined by what it is waiting for. Read the t
 | idle | The latest Report is `waiting`, or the Assignment ended | Waiting for a Trigger |
 | working | Everything else | Working |
 
-A `person` stage means the Ticket cannot continue without human input. A new human message releases a `blocked` or `failed` Ticket to its Executor, so it moves to the next matching stage, usually `working`.
+A `person` stage means the Ticket cannot continue without human input. A new human message releases a `held`, `blocked` or `failed` Ticket to its Executor, so it moves to the next matching stage, usually `working`.
 
 An `idle` Ticket has finished its turn without an outstanding question. A Trigger on a subscribed Thread can continue it.
 
@@ -155,6 +156,29 @@ A launch that failed is not tried again on its own.
 A person's message, a later Report that is neither `blocked` nor `failed`, or a retry ends the hold.
 
 It is worked out from the stored Reports and Inputs, so a restart keeps it.
+
+### Budget
+
+Each Assignment has a budget, `executor.budget`, which only the panel changes:
+
+| Field | Counts | Default |
+| --- | --- | --- |
+| `turns` | Responses of the worker's model | 300 |
+| `minutes` | Time the worker's turns run, not time it waits for a Trigger | 120 |
+| `tokens` | Tokens those responses used, as the model reported them | no limit |
+
+`null` sets no limit. A rule can set its own `budget` for the Tickets accepted under it: each field it sets replaces the default, and of several matched rules the largest wins. A rule's budget is not part of the Policy version.
+
+The Executor reads the counts from the worker Session's log, which records each response with its `usage` and when each turn started and ended, so a restart keeps them. It checks after each response and each tool result. Once the budget is used up, it reports `blocked` for the worker with the Attention "Budget used up, continue?", which the main Session sends once. The Assignment ends with reason `budgetSpent` and the worker's turn and background work stop. The Ticket waits for a person as after any `blocked` Report. A person's message or a retry starts a new Assignment with a fresh budget, withdraws the question if it was not sent, and tells the worker why it goes on.
+
+### Hold
+
+A person holds an open Ticket to stop its work for now without ending it: with the panel's Hold button, `POST tickets/<id>/hold`, or by asking the agent in the conversation to stop for now or pause, which the main Session records as a `hold` Decision. As with `stop`, only an explicit request holds a Ticket.
+
+The current Assignment ends with reason `held`, and the worker's turn and background work stop. Until the hold is lifted the Ticket takes no automatic Input: CI and bot messages are recorded on it, but they are not delivered and do not wake the Session, then or later. It starts no new Assignment, and offers no retry.
+
+A person's message that reaches the Ticket, the panel's Release button or `POST tickets/<id>/release` lifts the hold. A new Assignment then starts in the same Executor Session, unless the Ticket still waits for a person. The hold is stored on the Ticket, so a restart keeps it, and the Ticket's end clears it.
+
 ### Retry
 
 Available while an open Ticket is in `person / delivery`, `person / blocked` or `person / failed`: a new Assignment, which starts its worker again and takes the Inputs that wait, is the remedy for each.

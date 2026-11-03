@@ -70,7 +70,9 @@ it('decodes path parameters and parses each route\'s query', async () => {
   expect(await call('POST', `threads/${encodeURIComponent('feishu:oc_1:om/root')}/unsubscribe`)).toMatchObject({ status: 200, body: { context_delivery: 'injected' } })
   // Invalid offsets default to 0, and limits above the route maximum are clamped.
   expect(await call('GET', 'decisions?kind=accept%2Creopen&limit=500&offset=x&window=24h')).toEqual({ status: 200, body: { items: [], next_offset: null } })
-  expect(seen).toEqual(['feishu:oc_1:om/root', { filter: { kinds: ['accept', 'reopen'], since: expect.any(String) }, offset: 0, limit: 200 }])
+  expect(await call('GET', 'decisions?kind=ignore&reason=rateLimited')).toMatchObject({ status: 200 })
+  expect(seen).toEqual(['feishu:oc_1:om/root', { filter: { kinds: ['accept', 'reopen'], reason: '', since: expect.any(String) }, offset: 0, limit: 200 },
+    { filter: { kinds: ['ignore'], reason: 'rateLimited', since: '' }, offset: 0, limit: 30 }])
 })
 
 it('answers only a same-origin request from the panel on the loopback address', async () => {
