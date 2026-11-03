@@ -12,8 +12,9 @@ pnpm test:e2e
 ```
 
 Requirements: Node.js 22.18+ (the fake CLIs run as `node file.ts` with type stripping), npm with access to the public
-registry, python3, git, and tmux. `jq` is optional. A run takes about 80 s once DSH is cached. Most of that time is one
-GitHub polling interval (60 s, the shortest the Source allows). The first run also installs DSH, which takes about a minute.
+registry, python3, git, and tmux. `jq` is optional. A run takes about three minutes once DSH is cached. Most of that time is
+waiting: a GitHub polling interval (60 s, the shortest the Source allows), the schedule Source's one-minute tick, and
+restarts. The first run also installs DSH, which takes about a minute.
 
 | Variable | Effect |
 | --- | --- |
@@ -33,7 +34,7 @@ GitHub polling interval (60 s, the shortest the Source allows). The first run al
 1. It installs `@deepseek-ai/dsh` (cached) and creates a profile `sae2e-<pid>-<random>` from the Web template in a
    temporary `DSH_HOME`. Then it runs `dsh plugin --profile <p> add link:<checkout>`.
 2. It writes the profile's `cordis.patch.yml` with a free port, a temporary `stateDir`, the `llm-deepseek` route's
-   `baseURL` pointed at the scripted model, and the Feishu plugin enabled.
+   `baseURL` pointed at the scripted model, and the Feishu and schedule plugins enabled.
 3. It starts the service with `scripts/dsh-superagent start` in a tmux server of its own (`TMUX_TMPDIR` is a short
    temporary directory). The service runs with a temporary `HOME` and without the caller's GitHub, DSH or model
    variables.
@@ -43,7 +44,8 @@ GitHub polling interval (60 s, the shortest the Source allows). The first run al
 Fakes (`fakes/`, executed by Node with type stripping):
 
 - `gh.ts`: answers `gh api` for the routes the bundle uses (user, repository, notifications, Issues, comments, pull
-  requests, reviews, commits and checks), plus `auth`, `pr` and `issue` writes. It reads from
+  requests, reviews, commits and checks, and `search/issues` with the qualifiers the schedule Source's searches use), plus
+  `auth`, `pr` and `issue` writes. A search qualifier it does not know fails with 422. It reads from
   `fake-github/state.json`. It appends every call to `calls.jsonl` and every write (comments, pull request operations)
   to `writes.jsonl`. A request it does not know fails with 404 and is marked `unknown`; the suite asserts there are none.
   `--jq` uses `jq` when it is installed.
@@ -64,11 +66,13 @@ Fakes (`fakes/`, executed by Node with type stripping):
 | (e) | Saving the Feishu Source with the fake `lark-cli` restarts the service. Setup resolves the bot (`cli_e2efake` / `ou_e2ebot`), and the event consumer reports `feishu` ready. `status` exits 0 |
 | (f) | `POST sources` adds `github-docs`, switched off, with the first Source's CLI, and restarts nothing. Saving it with the first Source's repository answers 400 `repositoryTwice`. Saving it with `acme/docs`, a second repository of the fake, restarts the service. Setup resolves both repositories on the one agent account with no warning, reads the second one's push access and review rules, and the second Source polls that repository's notifications and reports `github-docs` ready. `POST sources/github-docs/remove` restarts the service without it |
 | (g) | With the panel headers but without the DeepSeek Harness cookie, `GET state` answers 200, and reading the settings, saving the Policy, pausing and accepting a Policy proposal answer 401 |
+| (h) | Saving the schedule Source with one entry (`is:issue is:open no:assignee updated:<{now-48h}`) restarts nothing. Within a minute the entry's search runs through the fake `gh` as `api -X GET search/issues` with `repo:` added, and its one hit, an Issue untouched for three days, becomes a Trigger on that Issue's Thread with `human: false` and the entry as its actor; the recently active Issue gets none. The entry is not on the Policy's list, so the hit is ignored without a candidate for the main Session. After a full `restart` the Source reports the same period again and searches nothing more |
 
 ## Not covered
 
 - Real model behaviour: the script plays both roles, so prompts and model judgement are out of scope. Inferred
-  candidates and Evals (`orchestrator_eval*`, Eval mode `auto`) are not driven.
+  candidates and Evals (`orchestrator_eval*`, Eval mode `auto`) are not driven, so a listed schedule entry's candidate
+  is left to the unit tests.
 - A Ticket from the second repository. The runtime tests check that its workers get that repository in `DSH_SUPERAGENT_GITHUB_REPOSITORY`.
 - Pull requests, CI and git pushes. A worker's `git push` would need GitHub. The fake `gh` refuses `auth git-credential`,
   so no credential would reach one.

@@ -85,6 +85,8 @@ export interface HarnessOptions {
   agent?: string
   /** Enables the bundle's Feishu Source plugin in the profile. */
   feishu?: boolean
+  /** Enables the bundle's schedule Source plugin in the profile. */
+  schedule?: boolean
   script: Script
 }
 
@@ -162,7 +164,8 @@ export class DshHarness implements HarnessFields {
       '- id: webserver', '  config:', '    host: 127.0.0.1', `    port: ${port}`,
       '- id: dsh-superagent', '  config:', `    stateDir: ${dirs.stateDir}`,
       '- id: llm-deepseek', '  config:', `    baseURL: ${llm.baseURL}`,
-      ...options.feishu ? ['- id: dsh-superagent-feishu', '  disabled: false'] : [], ''].join('\n'))
+      ...options.feishu ? ['- id: dsh-superagent-feishu', '  disabled: false'] : [],
+      ...options.schedule ? ['- id: dsh-superagent-schedule', '  disabled: false'] : [], ''].join('\n'))
     return harness
   }
 

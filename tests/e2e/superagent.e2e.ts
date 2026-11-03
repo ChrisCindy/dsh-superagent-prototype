@@ -13,7 +13,7 @@ import { existsSync } from 'node:fs'
 let harness: DshHarness
 const ALLOWED = 'alice'
 
-beforeAll(async () => { harness = await DshHarness.create({ script: superagentScript(), feishu: true }) })
+beforeAll(async () => { harness = await DshHarness.create({ script: superagentScript(), feishu: true, schedule: true }) })
 afterEach(context => { if (context.task.result?.state === 'fail') harness.failed = true })
 afterAll(async () => { await harness?.teardown() })
 
@@ -270,7 +270,7 @@ describe('dsh-superagent on a real DeepSeek Harness', () => {
       return answer.status === 200 && answer.body.setup.accounts && !answer.body.setup.accounts.repositories['github-docs']
         && answer.body.health.runtime?.state === 'ready' && !answer.body.health['github-docs'] ? true : undefined
     }, 90_000)
-    expect((await harness.api.get('settings')).sources.map((source: any) => source.id)).toEqual(['feishu', 'github'])
+    expect((await harness.api.get('settings')).sources.map((source: any) => source.id)).toEqual(['feishu', 'github', 'schedule'])
     const status = await harness.status()
     expect(status.code, status.stdout).toBe(0)
   })
@@ -286,6 +286,58 @@ describe('dsh-superagent on a real DeepSeek Harness', () => {
     expect(await call('POST', 'executor/pause', { paused: true })).toBe(401)
     expect(await call('POST', 'policy-proposal/accept', {})).toBe(401)
     expect((await harness.api.get('state')).paused).toBe(false)
+  })
+
+  it('(h) fires a schedule entry once a period: a Trigger on the hit Issue\'s Thread that no person sent, not again after a restart', async () => {
+    // An Issue nobody touched for three days, by someone not on the list; Issue 1 was active minutes ago.
+    const stale = harness.github.openIssue('carol', 'The install page is out of date', 'Nobody has looked at this.',
+      new Date(Date.now() - 3 * 86_400_000).toISOString())
+    const searches = () => readLog<{ argv: string[] }>(`${harness.runDir}/fake-github`, 'calls').filter(call => call.argv.includes('search/issues'))
+    const entry = { id: 'stale', description: 'Issues nobody took up for two days', every: '30d', query: 'is:issue is:open no:assignee updated:<{now-48h}' }
+    const saved = await harness.api.saveBlock('source:schedule', { enabled: true, config: { entries: [entry] } })
+    expect(saved.status, JSON.stringify(saved.body)).toBe(200)
+    expect(saved.body).toMatchObject({ restarting: false })
+    // The Source looks for due entries once a minute.
+    const detail = await waitFor('the schedule Trigger on the stale Issue\'s Thread', async () => {
+      const answer = await harness.api.request<any>('GET', `threads/${encodeURIComponent(thread(stale.number))}`)
+      return answer.status === 200 && answer.body.timeline.some((item: any) => item.source === 'schedule') ? answer.body : undefined
+    }, 120_000, 1000)
+    debug('thread-after-schedule', detail)
+    const trigger = detail.timeline.find((item: any) => item.source === 'schedule')
+    expect(trigger).toMatchObject({ human: false, url: stale.html_url, threads: [thread(stale.number)] })
+    expect(trigger.text).toContain('Issues nobody took up for two days')
+    expect(JSON.stringify(trigger.actor)).toContain('stale')
+    // The search ran through the agent's gh, limited to the repository, and found only the stale Issue.
+    const [search] = searches()
+    expect(search!.argv.slice(0, 4)).toEqual(['api', '-X', 'GET', 'search/issues'])
+    expect(search!.argv.find(arg => arg.startsWith('q='))).toMatch(new RegExp(`^q=is:issue is:open no:assignee updated:<\\S+Z repo:${harness.repository}$`))
+    expect((await harness.api.get(`threads/${encodeURIComponent(thread(issueNumber))}`)).timeline.some((item: any) => item.source === 'schedule')).toBe(false)
+    // The entry is not on the Policy's list, so its hit is ignored without a candidate for the main Session.
+    const decided = await waitFor('the Decision on the hit', async () => (await harness.api.get(`threads/${encodeURIComponent(thread(stale.number))}`))
+      .decisions.find((decision: any) => decision.triggerIds.includes(trigger.id)), 30_000)
+    expect(decided).toMatchObject({ kind: 'ignore' })
+    expect(harness.llm.byRole('main').flatMap(item => cards(item.latest)).some(card => card.trigger_id === trigger.id)).toBe(false)
+    const fired = await waitFor('the schedule Source to report the period', async () => {
+      const health = (await harness.api.get('state')).health.schedule
+      return health?.state === 'ready' && health.detail.includes('1 fired this period with 1 hits') ? health : undefined
+    }, 60_000)
+    expect(fired.detail).toContain('1 entries')
+
+    // A restart in the same period finds the period recorded and searches nothing.
+    const restarted = await harness.restart()
+    expect(restarted.code, restarted.stdout + restarted.stderr).toBe(0)
+    const after = await waitFor('the schedule Source after the restart', async () => {
+      const answer = await harness.api.request<any>('GET', 'state')
+      const health = answer.status === 200 ? answer.body.health.schedule : undefined
+      return health?.state === 'ready' && Date.parse(health.at) > Date.parse(fired.at) ? health : undefined
+    }, 120_000)
+    expect(after.detail).toContain('1 fired this period with 1 hits')
+    expect(searches()).toHaveLength(1)
+    const timeline = (await harness.api.get(`threads/${encodeURIComponent(thread(stale.number))}`)).timeline
+    expect(timeline.filter((item: any) => item.source === 'schedule')).toHaveLength(1)
+    expect(readLog<{ argv: string[]; unknown?: boolean }>(`${harness.runDir}/fake-github`, 'calls').filter(call => call.unknown)).toEqual([])
+    const status = await harness.status()
+    expect(status.code, status.stdout).toBe(0)
   })
 })
 

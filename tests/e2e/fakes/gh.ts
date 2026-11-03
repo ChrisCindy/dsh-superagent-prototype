@@ -59,9 +59,46 @@ function issueOf(world: GithubWorld, number: string) {
   return issue
 }
 
+/**
+ * `GET search/issues`, for the qualifiers the schedule Source's searches use: `repo:`, `is:open`/`is:closed`,
+ * `is:issue`/`is:pr`, `no:assignee`, and `created:`/`updated:` compared with `<`, `<=`, `>` or `>=`; a bare word matches the
+ * title or body. Another qualifier fails as GitHub's validation does, so a scenario notices a search the fake cannot answer.
+ */
+function searchIssues(world: GithubWorld, q: string, perPage: number, query: URLSearchParams) {
+  const repos: string[] = []
+  const tests: ((issue: GithubWorld['issues'][string]) => boolean)[] = []
+  for (const token of q.split(/\s+/).filter(Boolean)) {
+    const [, name, value] = /^([a-z]+):(.*)$/.exec(token) ?? [undefined, undefined, token]
+    if (name === 'repo') repos.push(value!.toLowerCase())
+    else if (token === 'is:open' || token === 'is:closed') tests.push(issue => issue.state === token.slice(3))
+    else if (token === 'is:issue') tests.push(issue => !issue.pull_request)
+    else if (token === 'is:pr' || token === 'is:pull-request') tests.push(issue => !!issue.pull_request)
+    else if (token === 'no:assignee') tests.push(issue => !(issue as { assignees?: unknown[] }).assignees?.length)
+    else if (name === 'created' || name === 'updated') {
+      const [, op, at] = /^(<=|>=|<|>)(.+)$/.exec(value!) ?? []
+      if (!op) throw new HttpError(422, `Validation Failed: ${token}`)
+      const bound = Date.parse(at!)
+      const compare = { '<': (a: number) => a < bound, '<=': (a: number) => a <= bound, '>': (a: number) => a > bound, '>=': (a: number) => a >= bound }[op]!
+      tests.push(issue => compare(Date.parse(name === 'created' ? issue.created_at : issue.updated_at)))
+    } else if (name) throw new HttpError(422, `Validation Failed: the fake does not know ${token}`)
+    else tests.push(issue => `${issue.title}\n${issue.body}`.toLowerCase().includes(token.toLowerCase()))
+  }
+  const repository = world.repository.full_name
+  const issues = repos.every(name => name === repository.toLowerCase()) ? Object.values(world.issues) : []
+  const items = issues.filter(issue => tests.every(test => test(issue)))
+    .sort((a, b) => (query.get('order') ?? 'desc') === 'asc' ? a.updated_at.localeCompare(b.updated_at) : b.updated_at.localeCompare(a.updated_at))
+  return { total_count: items.length, incomplete_results: false,
+    items: items.slice(0, perPage).map(issue => ({ ...issue, repository_url: `https://api.github.com/repos/${repository}` })) }
+}
+
 /** Answers one REST request; returns the JSON body. Writes mutate `world` and are logged by the caller. */
 function route(world: GithubWorld, request: Request, write: (entry: Record<string, unknown>) => void): unknown {
   const { method, path, query, fields } = request
+  if (path === 'search/issues' && method === 'GET') {
+    // `gh api -X GET` sends its fields as the query string.
+    const params = new URLSearchParams([...query, ...Object.entries(fields)])
+    return searchIssues(world, params.get('q') ?? '', Number(params.get('per_page') ?? 30), params)
+  }
   if (path === 'user') {
     if (!world.signedIn) throw new HttpError(401, 'Requires authentication')
     return world.agent
