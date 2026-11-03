@@ -52,19 +52,41 @@ function membership(error: unknown): unknown {
   const hint = 'The Feishu bot is not a member of the chat. Add the bot in the chat settings, then retry.'
   return new CliError(hint, error.code, error.exitCode)
 }
+/** The ID of the GitHub Source's first instance, whose repository unscoped commands call. */
+export const GITHUB = 'github'
 /**
  * Executes gh, lark-cli, and git subprocesses with deployment account credentials, timeouts, and abort signals.
- * Restricts GitHub API calls to the configured repository and translates CLI failures into CliError instances for Sources, MasterAssessor, Outbox, and Settings.
+ * Restricts GitHub API calls to the repository of one GitHub Source instance and translates CLI failures into CliError instances for Sources, MasterAssessor, Outbox, and Settings.
  */
 export class Commands {
   /**
    * @param resolved - returns the resolved deployment setup, or throws while setup is still pending.
    * @param environment - variables overriding `process.env` for every command (such as isolated git settings).
+   * @param source - the Source instance whose repository GitHub calls go to; the GitHub Source's first instance by default.
    */
-  constructor(private readonly resolved: () => Deployment, private readonly environment: Record<string, string | undefined>, private readonly signal: AbortSignal) {}
+  constructor(private readonly resolved: () => Deployment, private readonly environment: Record<string, string | undefined>, private readonly signal: AbortSignal,
+    readonly source = GITHUB) {}
   get deployment(): Deployment { return this.resolved() }
-  get repository(): string { return this.deployment.repository }
-  withSignal(signal?: AbortSignal): Commands { return signal ? new Commands(this.resolved, this.environment, AbortSignal.any([this.signal, signal])) : this }
+  /**
+   * The repository of this commands' Source instance.
+   * @throws when setup resolved none for it, such as for a Feishu instance or a GitHub instance that is off.
+   */
+  get repository(): string {
+    const repository = this.deployment.repositories[this.source]
+    if (!repository) throw new Error(`The Source ${this.source} has no repository`)
+    return repository
+  }
+  withSignal(signal?: AbortSignal): Commands {
+    return signal ? new Commands(this.resolved, this.environment, AbortSignal.any([this.signal, signal]), this.source) : this
+  }
+  /**
+   * These commands with GitHub calls scoped to the repository of Source instance `source`. The scoped commands inherit from these,
+   * so they share their signal and everything else.
+   */
+  forSource(source: string): Commands {
+    if (source === this.source) return this
+    return Object.defineProperty(Object.create(this) as Commands, 'source', { value: source, enumerable: true })
+  }
   async run(program: string, args: string[], cwd?: string): Promise<string> {
     try {
       const { stdout } = await exec(program, args, { cwd, signal: this.signal, timeout: TIMEOUT_MS, maxBuffer: 16 * 1024 * 1024,
@@ -72,10 +94,10 @@ export class Commands {
       return stdout
     } catch (error) { throw commandError(error, program) }
   }
-  /** Runs the agent's GitHub CLI and parses its JSON output; callers should prefer `api`, which is restricted to the configured repository and validates output. */
+  /** Runs the agent's GitHub CLI and parses its JSON output; callers should prefer `api`, which is restricted to the instance's repository and validates output. */
   async gh<T>(args: string[]): Promise<T> { return JSON.parse(await this.run(this.deployment.github.cli, args)) as T }
   /**
-   * Calls the GitHub API on a path within the configured repository, validating JSON output when a schema is provided
+   * Calls the GitHub API on a path within the instance's repository, validating JSON output when a schema is provided
    * or returning raw CLI output (such as raw files or `--include` headers) when omitted.
    * @throws CliError with GitHub's HTTP status as `code` on failure.
    */
@@ -86,7 +108,7 @@ export class Commands {
     const [path = '', ...flags] = rest
     return schema.parse(await this.gh(['api', this.path(path), ...flags]))
   }
-  /** Fetches all pages of a GitHub API list within the configured repository, skipping items that fail schema validation. */
+  /** Fetches all pages of a GitHub API list within the instance's repository, skipping items that fail schema validation. */
   async pages<T>(item: z.ZodType<T>, path: string, tally?: Tally): Promise<T[]> {
     const pages = z.array(z.array(z.unknown())).parse(await this.gh(['api', this.path(path), '--paginate', '--slurp']))
     return validItems(item, pages.flat(), tally)

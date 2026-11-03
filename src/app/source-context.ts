@@ -18,7 +18,7 @@ export interface SourceContextDeps {
   readonly deployment: Deployment
   readonly ready: Promise<void>
   configured(): boolean
-  /** Setup problem whose `place` matches the Source kind receives it on `context.problem`. */
+  /** Setup problem whose `place` matches the Source kind, and whose `source` (or `place`) the instance, receives it on `context.problem`. */
   readonly setupProblem?: SetupProblem | undefined
   /** Why setup found no Feishu bot even though the Feishu Source names a CLI. */
   readonly feishuProblem?: SetupProblem | undefined
@@ -26,29 +26,36 @@ export interface SourceContextDeps {
   receive(trigger: Trigger): ReceiveResult | Promise<ReceiveResult>
 }
 
+/** KV prefix of an instance's own records; the kind's first instance keeps the unprefixed keys it always had. */
+export const instanceState = (kind: string, id: string): string => id === kind ? '' : `source:${id}:`
 /**
- * Builds the context for one Source kind. Health reports are restricted to entries declared by the kind and
- * bound to the active registration, becoming no-ops once unregistered.
+ * Builds the context for instance `instance` of one Source kind. Its commands, KV records and health entries are the instance's
+ * own; health reports are restricted to entries declared by the kind and bound to the active registration, becoming no-ops once
+ * unregistered.
  */
-export function sourceContextOf(deps: SourceContextDeps, kind: { kind: string; health: readonly string[] }): SourceContext {
+export function sourceContextOf(deps: SourceContextDeps, kind: { kind: string; health: readonly string[] }, instance = kind.kind): SourceContext {
   const { store } = deps
-  const health = deps.sources.healthEntries(kind.health)
+  const health = deps.sources.healthEntries(kind, instance)
+  const prefix = instanceState(kind.kind, instance)
   return {
+    source: instance,
     get deployment() { return deps.deployment },
-    commands: deps.commands,
+    commands: deps.commands.forSource(instance),
     ready: deps.ready,
     configured: () => deps.configured(),
-    get problem() { return [deps.feishuProblem, deps.setupProblem].find(problem => problem?.place === kind.kind) },
-    config: <C extends Record<string, unknown>>(id: string) => {
-      const instance = deps.sources.instance<C>(id)
-      return instance?.enabled ? instance.config : undefined
+    get problem() {
+      return [deps.feishuProblem, deps.setupProblem].find(problem => problem?.place === kind.kind && (problem.source ?? problem.place) === instance)
+    },
+    config: <C extends Record<string, unknown>>(id = instance) => {
+      const found = deps.sources.instance<C>(id)
+      return found?.enabled ? found.config : undefined
     },
     receive: trigger => deps.receive(trigger),
     atomic: work => store.atomic(work),
     state: {
-      get: name => store.get(name),
-      set: (name, value) => { if (value === undefined) store.delete(name); else store.set(name, value) },
-      keys: prefix => store.keys(prefix),
+      get: name => store.get(`${prefix}${name}`),
+      set: (name, value) => { if (value === undefined) store.delete(`${prefix}${name}`); else store.set(`${prefix}${name}`, value) },
+      keys: family => store.keys(`${prefix}${family.prefix}`).map(name => name.slice(prefix.length)),
     },
     threads: {
       get: key => store.threads.get(key),

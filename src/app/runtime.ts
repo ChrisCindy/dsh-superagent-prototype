@@ -16,7 +16,7 @@ import { lockSync } from 'proper-lockfile'
 import { Engine, key, reasonText, type EngineForSettings, type ReceiveResult, type Ticket, type Trigger } from '../core/index.ts'
 import { allowedSender, settingsPolicy } from '../policy.ts'
 import { SourceRegistry } from '../sources/registry.ts'
-import { Commands } from '../infra/commands.ts'
+import { Commands, GITHUB } from '../infra/commands.ts'
 import type { Deployment, Machine } from '../deployment.ts'
 import { environmentOf, ticketEnvironment, type Variable } from './execution-environment.ts'
 import type { SetupProblem, SetupWarning } from '../setup.ts'
@@ -50,6 +50,8 @@ import { executorTools, type ExecutorToolsHost } from './tools/executor.ts'
 // Source plugins interact with dsh-superagent exclusively through the `SourceHost` service interface.
 declare module '@deepseek-ai/cordis' { interface Context { orchestrator: SourceHost } }
 const now = (): string => new Date().toISOString()
+/** The GitHub kind's identity for a context built by the host, such as the one a worker's merge request goes through. */
+const GITHUB_KIND = { kind: GITHUB, health: [GITHUB] } as const
 
 /**
  * Composition root of dsh-superagent that connects `Store`, `Setup`, `Engine`, `SourceRegistry`, `Effects`, `Outbox`, `Passes`, `Sessions`, `Settings`, `Prompts`, `DshExecutor`, and `MasterAssessor`.
@@ -117,7 +119,13 @@ export class Runtime extends Service implements SourceHost {
       const environment = (ticket: Ticket) => this.ticketEnvironment(ticket)
       const resources: ResourceHost = { store, pages: new TextCache(4_000_000), prompts, commands, masterId, context: ctx,
         promptVersion: id => this.sessions.promptVersion(id), mayRead: (id, revision) => this.sessions.mayRead(id, revision),
-        feishuPageSize: () => feishuSettings(sources).readPageSize, sourceLink: link }
+        feishuPageSize: () => feishuSettings(sources).readPageSize, sourceLink: link,
+        githubSource: (resource, ticketId) => {
+          const prefix = resource.slice(0, Math.max(resource.indexOf('/'), 0))
+          const ticket = ticketId ? store.tickets.get(ticketId) : undefined
+          if (prefix === GITHUB) return sources.home(GITHUB, ticket && this.originSource(ticket))
+          return prefix && sources.kindOf(prefix)?.kind === GITHUB ? prefix : undefined
+        } }
       const sessions = this.sessions = new Sessions({ context: ctx, store, prompts, effects, health: board.claim('models'), masterId,
         lifetime: this.lifetime,
         closing: () => this.closing(), environment,
@@ -130,6 +138,7 @@ export class Runtime extends Service implements SourceHost {
         repliedTo: trigger => repliedTo({ store, sources }, trigger) })
       this.assessor = new MasterAssessor({ get engine() { return runtime.engine }, commands, get deployment() { return setup.deployment }, effects,
         settings: () => store.settings(), paused: () => this.paused(), threadContext: trigger => sources.threadContext(trigger),
+        githubSource: trigger => sources.home(GITHUB, trigger.source),
         deliver: (id, text) => sessions.prompt(masterId, id, text, 'steer'), candidateCard: candidate => candidateCard(links, candidate) })
       const outbox = this.outbox = new Outbox({ store, effects, sources, commands, paused: () => this.paused() })
       const { assessor, executor } = this
@@ -148,7 +157,7 @@ export class Runtime extends Service implements SourceHost {
           const ended = event.type === 'ticket.ended' ? store.tickets.get(event.data.ticketId) : undefined
           if (ended && setup.configured()) {
             const request = store.triggers.get(ended.origin.triggerId)?.text ?? ''
-            for (const message of pullEndNotices(ended, request, setup.deployment.repository)) outbox.send(message)
+            for (const message of pullEndNotices(ended, request, setup.deployment.repositories)) outbox.send(message)
           }
         } })
       // Update the `evals` health entry on every pass if an evaluation failed as unavailable within the last hour.
@@ -160,7 +169,7 @@ export class Runtime extends Service implements SourceHost {
         get deployment() { return setup.deployment }, configured: () => setup.configured(),
         get setupProblem() { return setup.problem }, get feishuProblem() { return setup.feishuProblem }, receive: trigger => passes.receive(trigger) }
       this.toolHost = { context: ctx, engine, store, prompts, sessions, settings: this.settings, assessor, resources,
-        get github() { return runtime.context({ kind: 'github', health: ['github'] }) },
+        github: ticket => runtime.context(GITHUB_KIND, sources.home(GITHUB, runtime.originSource(ticket))),
         requestPass: () => { passes.request() }, sendReplies: () => outbox.sent(),
         quietly: run => { this.quiet++; try { return run() } finally { this.quiet-- } } }
       this.ready = this.initialize()
@@ -173,7 +182,9 @@ export class Runtime extends Service implements SourceHost {
   get health(): Readonly<Record<string, Health>> { return this.board.all }
   /** Aborted when dsh-superagent stops or loses its state directory lock, cancelling running reads and subprocesses. */
   get lifetime(): AbortSignal { return this.stopped.signal }
-  context(kind: { kind: string; health: readonly string[] }): SourceContext { return sourceContextOf(this.sourceDeps, kind) }
+  context(kind: { kind: string; health: readonly string[] }, instance?: string): SourceContext { return sourceContextOf(this.sourceDeps, kind, instance) }
+  /** The Source instance a Ticket's origin Trigger came from, which decides its GitHub repository; undefined when it is gone. */
+  originSource(ticket: Pick<Ticket, 'origin'>): string | undefined { return this.store.triggers.get(ticket.origin.triggerId)?.source }
   /** Resolved deployment; throws while waiting for setup (`!configured()`). */
   get deployment(): Deployment { return this.setup.deployment }
   configured(): boolean { return this.setup.configured() }
@@ -182,10 +193,13 @@ export class Runtime extends Service implements SourceHost {
   get feishuProblem(): SetupProblem | undefined { return this.setup.feishuProblem }
   /** Setup findings that leave dsh-superagent running, such as merges GitHub does not gate on a review. */
   get setupWarnings(): readonly SetupWarning[] { return this.setup.warnings }
+  /** Links each channel through its Source instance, with that instance's repository. */
   links(): LinkTarget {
     const resolved = this.setup.configured() ? this.setup.deployment : undefined
-    const links = resolved ? { repository: resolved.repository, ...(resolved.feishu ? { feishu: resolved.feishu } : {}) } : {}
-    return channel => this.sources.link(channel, links)
+    return channel => {
+      const repository = resolved?.repositories[channel.source]
+      return this.sources.link(channel, { ...repository ? { repository } : {}, ...resolved?.feishu ? { feishu: resolved.feishu } : {} })
+    }
   }
   ticketEnvironment(ticket: Ticket): Variable[] {
     const trigger = sourceTrigger(this, ticket)

@@ -9,7 +9,7 @@ import { z } from 'zod'
 import type { SubprocessRuntime } from '@deepseek-ai/dsh-subprocess'
 import { runAsWorker, sameDirectory, withoutDirectory, workerBin } from './infra/environment.ts'
 import { sameName } from './infra/text.ts'
-import { SetupError, setupWarning, type SetupWarning } from './setup.ts'
+import { SetupError, setupWarning, type SetupCode, type SetupWarning } from './setup.ts'
 
 const reason = (error: unknown): string => error instanceof Error ? error.message : String(error)
 const absolute = (description: string) => s.string().pattern(/^\//).description(`${description} Absolute path.`)
@@ -51,12 +51,25 @@ export const GithubAccountsSchema = z.object({
   cli: z.string().trim().default(''),
 })
 export const FeishuBotSchema = z.object({ cli: z.string().trim().default('') })
-/** Source configuration keys that affect deployment setup and trigger a restart when changed. */
+/** Source configuration keys, by kind, that affect deployment setup and trigger a restart when changed. */
 export const SETUP_FIELDS: Readonly<Record<string, readonly string[]>> = { github: Object.keys(GithubAccountsSchema.shape), feishu: Object.keys(FeishuBotSchema.shape) }
+type StoredSources = Readonly<Record<string, { kind: string; enabled: boolean; config: Record<string, unknown> }>>
+/**
+ * The GitHub Source instances setup resolves: the first instance (`github`) always, as the one every installation needs, and
+ * each other GitHub instance while it is on, in ID order.
+ */
+export function githubInstances(sources: StoredSources): { id: string; config: unknown }[] {
+  const others = Object.entries(sources).filter(([id, stored]) => stored.kind === 'github' && id !== 'github' && stored.enabled)
+    .sort(([a], [b]) => a.localeCompare(b))
+  return [{ id: 'github', config: sources.github?.config }, ...others.map(([id, stored]) => ({ id, config: stored.config }))]
+}
 
+/** The agent's GitHub account, which every GitHub Source instance shares, and the CLI signed in to it. */
+export interface GithubAccount { cli: string; login: string; noreply: string }
 export interface Deployment extends Machine {
-  repository: string
-  github: { cli: string; login: string; noreply: string }
+  /** The canonical owner/name of each resolved GitHub Source instance, by instance ID; the first instance's ID is `github`. */
+  repositories: Record<string, string>
+  github: GithubAccount
   feishu?: FeishuBot
 }
 export interface FeishuBot { cli: string; appId: string; brand: 'feishu' | 'lark'; botId: string; name: string }
@@ -87,26 +100,55 @@ function parsed<T>(schema: z.ZodType<T>, text: string): T | undefined {
   const result = schema.safeParse(value)
   return result.success ? result.data : undefined
 }
-/** Verify the agent's GitHub CLI identity and push access to the configured repository. */
-export async function resolveDeployment(machine: Machine, github: unknown, probe: Probe, path = process.env.PATH ?? ''): Promise<Deployment> {
-  const { stateDir } = machine
-  const accounts = GithubAccountsSchema.parse(github ?? {})
+/**
+ * Verifies one GitHub Source instance: its CLI's account, and that account's push access to its repository, whose canonical
+ * name it returns.
+ * @throws SetupError naming the instance as its `source`.
+ */
+export async function resolveGithub(machine: Machine, instance: { id: string; config: unknown }, probe: Probe, path = process.env.PATH ?? ''): Promise<{ repository: string; account: GithubAccount }> {
+  const fail = (code: SetupCode, values: Record<string, string> = {}) => new SetupError(code, values).in(instance.id)
+  const accounts = GithubAccountsSchema.parse(instance.config ?? {})
   const remote = accounts.repository
-  if (!remote) throw new SetupError('repositoryUnset')
-  if (!accounts.cli) throw new SetupError('agentCliUnset')
+  if (!remote) throw fail('repositoryUnset')
+  if (!accounts.cli) throw fail('agentCliUnset')
   let cli: string
-  try { cli = executable(accounts.cli, path, workerBin(stateDir)) } catch (error) { throw new SetupError('agentCliMissing', { output: reason(error) }) }
-  const text = await probe([cli, 'api', 'user']).catch((error: unknown) => { throw new SetupError('agentCliSignedOut', { output: reason(error) }) })
+  try { cli = executable(accounts.cli, path, workerBin(machine.stateDir)) } catch (error) { throw fail('agentCliMissing', { output: reason(error) }) }
+  const text = await probe([cli, 'api', 'user']).catch((error: unknown) => { throw fail('agentCliSignedOut', { output: reason(error) }) })
   const agent = parsed(GithubUser, text)
-  if (!agent) throw new SetupError('agentCliNoAccount')
+  if (!agent) throw fail('agentCliNoAccount')
   // Use the canonical repository name returned by GitHub so renamed repositories match incoming notifications.
   const access = parsed(RepositoryAccess, await probe([cli, 'api', `repos/${remote}`, '--jq', '{name: .full_name, push: .permissions.push}']).catch((error: unknown) => {
-    throw new SetupError('repositoryUnreadable', { account: agent.login, repository: remote, output: reason(error) })
+    throw fail('repositoryUnreadable', { account: agent.login, repository: remote, output: reason(error) })
   }))
-  if (!access) throw new SetupError('repositoryUnreported', { repository: remote })
+  if (!access) throw fail('repositoryUnreported', { repository: remote })
   const repository = access.name
-  if (access.push !== true) throw new SetupError('repositoryReadOnly', { account: agent.login, repository })
-  return { ...machine, repository, github: { cli, login: agent.login, noreply: `${agent.id}+${agent.login}@users.noreply.github.com` } }
+  if (access.push !== true) throw fail('repositoryReadOnly', { account: agent.login, repository })
+  return { repository, account: { cli, login: agent.login, noreply: `${agent.id}+${agent.login}@users.noreply.github.com` } }
+}
+/**
+ * Refuses an instance whose account is not `account`, since all GitHub instances share the agent's account, or whose repository
+ * another instance already receives.
+ */
+export function sameAccount(id: string, resolved: { repository: string; account: GithubAccount }, other: { repository: string; account: GithubAccount }): void {
+  if (!sameName(resolved.account.login, other.account.login)) {
+    throw new SetupError('agentAccountMismatch', { account: resolved.account.login, agent: other.account.login }).in(id)
+  }
+  if (sameName(resolved.repository, other.repository)) throw new SetupError('repositoryTwice', { repository: resolved.repository }).in(id)
+}
+/**
+ * Verifies each GitHub Source instance (`githubInstances`) in order: the agent's GitHub CLI identity, which every instance
+ * shares, and push access to each instance's repository. The first instance's CLI is the one workers call as gh.
+ */
+export async function resolveDeployment(machine: Machine, instances: readonly { id: string; config: unknown }[], probe: Probe, path = process.env.PATH ?? ''): Promise<Deployment> {
+  const resolved: { id: string; repository: string; account: GithubAccount }[] = []
+  for (const instance of instances) {
+    const found = await resolveGithub(machine, instance, probe, path)
+    for (const other of resolved) sameAccount(instance.id, found, other)
+    resolved.push({ id: instance.id, ...found })
+  }
+  const [first] = resolved
+  if (!first) throw new SetupError('repositoryUnset').in('github')
+  return { ...machine, repositories: Object.fromEntries(resolved.map(item => [item.id, item.repository])), github: first.account }
 }
 
 const DefaultBranch = z.object({ branch: z.string().min(1), admin: z.boolean().nullish() })
@@ -124,7 +166,7 @@ const Protection = z.looseObject({
  * It never fails setup: it returns the warnings to show, and one that it cannot verify when the account may not read the rules,
  * as an account without admin rights may not read branch protection.
  */
-export async function checkMerging(deployment: Pick<Deployment, 'repository' | 'github'>, probe: Probe): Promise<SetupWarning[]> {
+export async function checkMerging(deployment: { repository: string; github: Pick<GithubAccount, 'cli' | 'login'> }, probe: Probe): Promise<SetupWarning[]> {
   const { repository, github: { cli, login } } = deployment
   const read = async <T>(schema: z.ZodType<T>, path: string, ...flags: string[]): Promise<T> => {
     const value = parsed(schema, await probe([cli, 'api', path, ...flags]))
@@ -132,7 +174,7 @@ export async function checkMerging(deployment: Pick<Deployment, 'repository' | '
     return value
   }
   let branch = 'the default branch'
-  const unverified = () => [setupWarning('mergeUnverified', { account: login, branch })]
+  const unverified = () => [setupWarning('mergeUnverified', { account: login, branch, repository })]
   try {
     const repo = await read(DefaultBranch, `repos/${repository}`, '--jq', '{branch: .default_branch, admin: .permissions.admin}')
     branch = repo.branch

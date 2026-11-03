@@ -19,7 +19,7 @@ function setup(strength: 'explicit' | 'inferred' = 'inferred', bodies = Array.fr
   const gate = { issue: undefined as Promise<void> | undefined }
   const commands = {
     repository: 'acme/widgets', deployment: testDeployment(),
-    withSignal() { return commands },
+    withSignal() { return commands }, forSource() { return commands },
     gh: vi.fn(async (args: string[]) => {
       await gate.issue
       const number = Number(/issues\/(\d+)/.exec(args[1]!)?.[1])
@@ -38,7 +38,7 @@ function setup(strength: 'explicit' | 'inferred' = 'inferred', bodies = Array.fr
   let engine!: Engine
   const host: AssessorHost = {
     get engine() { return engine }, commands, deployment: testDeployment(), settings: () => SettingsSchema.parse({}),
-    threadContext: threadContext ?? (trigger => sources.threadContext(trigger)),
+    threadContext: threadContext ?? (trigger => sources.threadContext(trigger)), githubSource: () => 'github',
     effects: { enqueue: () => {}, handle: () => {} }, paused: () => false, deliver: async () => {}, candidateCard: async candidate => ({ eval_id: candidate.evalId }),
   }
   const assessor = new MasterAssessor(host)

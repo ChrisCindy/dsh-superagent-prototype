@@ -2,7 +2,7 @@
 import { cloneElement, createContext, useContext, useEffect, useId, useLayoutEffect, useRef, useState, type ReactElement,
   type ReactNode } from 'react'
 import type { ApiResponse } from '../app/api.ts'
-import type { FieldSpec, Localized } from '../sources/kind.ts'
+import { INSTANCE_ID_MAX, instanceIdError, type FieldSpec, type Localized } from '../sources/kind.ts'
 import { usePoll, type HistoryView, type Settings, type SettingsView, type SourceView } from './api.ts'
 import { Button, DisclosureRow, Icon, InfoTip, Input, SegmentedControl, Switch } from './controls.tsx'
 import { useDraft } from './draft.tsx'
@@ -11,6 +11,15 @@ import { settingsRoute } from './route.ts'
 import { errorText, localized, valueLabel, when, type T } from './text.ts'
 import { Hint, LoadState } from './widgets.tsx'
 
+/**
+ * Why `id` cannot name a new instance of `kind`, in the interface language, or undefined when it can: the pattern and length
+ * the server checks (`instanceIdError`), and an ID another Source already has.
+ */
+export function instanceIdText(t: T, kind: string, id: string, taken: readonly string[]): string | undefined {
+  if (taken.includes(id)) return t('sourceIdError.taken')
+  const error = instanceIdError(kind, id)
+  return error && t(`sourceIdError.${error}`, { kind, max: INSTANCE_ID_MAX })
+}
 /** Parse a numeric input string, returning `null` when empty so the server rejects blank required numbers instead of coercing to 0. */
 export const numberOf = (text: string): number | null => text.trim() ? Number(text) : null
 interface SettingsData { settings: SettingsView; reload: () => Promise<void> }

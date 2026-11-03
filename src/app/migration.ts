@@ -1,5 +1,5 @@
 /**
- * Migrates a schema 10 database to schema 11 in a single transaction so runtime readers never convert legacy shapes.
+ * Migrates a schema 10 or 11 database to schema 12 in a single transaction so runtime readers never convert legacy shapes.
  * Databases older than schema 10 are rejected: this version cannot migrate them.
  */
 import { basename } from 'node:path'
@@ -17,7 +17,7 @@ import type { SettingsVersion, Store } from './store.ts'
 import { Versions } from './versions.ts'
 import { KV, type Key } from '../kv.ts'
 
-export const SCHEMA_VERSION = 11
+export const SCHEMA_VERSION = 12
 /** The oldest database schema version this build can open and migrate directly. */
 export const OLDEST_SCHEMA = 10
 /** Returns an error message explaining why `version` cannot be opened: older schemas need a new state directory. */
@@ -31,6 +31,24 @@ const text = (value: unknown): string | undefined => typeof value === 'string' &
 /** Runs one migration step, prefixing any thrown error with the name of the record that failed. */
 function step<T>(record: string, work: () => T): T {
   try { return work() } catch (error) { throw new Error(`${record}: ${error instanceof Error ? error.message : String(error)}`, { cause: error }) }
+}
+/**
+ * Rewrite schema 11 records into their schema 12 shapes in place: every stored Source instance, in the current settings and in
+ * each historical revision, names its `kind`. Each instance stored so far is its kind's first, whose ID is the kind's, so
+ * Thread keys, Trigger IDs and the Source's records keep their names. A revision that is not settings-shaped stays as it is.
+ */
+export function migrateTo12(store: Store): void {
+  for (const name of store.keys(KV.settings.version.prefix)) {
+    step(`settings revision ${name.slice(KV.settings.version.prefix.length)}`, () => {
+      const version = store.get<unknown>(name)
+      if (!isObject(version) || !isObject(version.settings)) return
+      const { settings } = version
+      if (!isObject(settings.sources)) return
+      const sources = Object.fromEntries(Object.entries(settings.sources).map(([id, stored]) =>
+        [id, isObject(stored) && !('kind' in stored) ? { kind: id, ...stored } : stored]))
+      store.set(name, { ...version, settings: { ...settings, sources } })
+    })
+  }
 }
 /** Rewrite all schema 10 records into their schema 11 shapes in place. */
 export function migrateTo11(store: Store): void {

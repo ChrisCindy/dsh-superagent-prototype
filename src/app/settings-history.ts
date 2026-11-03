@@ -40,7 +40,7 @@ function fieldChanges(id: string, fields: readonly FieldSpec[], a: Record<string
   return changes
 }
 function sourceChanges(id: string, before: SourceSettings | undefined, after: SourceSettings | undefined, sources: SourceRegistry): SettingsChange[] {
-  const kind = sources.kind(id)
+  const kind = sources.kind(after?.kind ?? before?.kind ?? id)
   const changes: SettingsChange[] = []
   if ((before?.enabled ?? true) !== (after?.enabled ?? true)) changes.push({ code: after?.enabled === false ? 'sourceDisabled' : 'sourceEnabled', source: id })
   const fill = (value: SourceSettings | undefined) => kind ? kind.schema.parse(value?.config ?? {}) : value?.config ?? {}
@@ -58,7 +58,7 @@ function settingsChanges(before: SettingsVersion['settings'], after: SettingsVer
   }
   for (const rule of before.policy.rules) if (!after.policy.rules.some(item => item.id === rule.id)) changes.push({ code: 'ruleRemoved', name: rule.name })
   for (const id of new Set([...Object.keys(before.policy.sources), ...Object.keys(after.policy.sources)])) {
-    const policy = sources.kind(id)?.policy
+    const policy = sources.kind(after.sources[id]?.kind ?? before.sources[id]?.kind ?? id)?.policy
     // Validate source-specific policy fields separately from the shared admission table.
     const fill = (value: Record<string, unknown> | undefined) => { const { admission: _admission, ...rest } = value ?? {}; return policy ? policy.schema.parse(rest) : rest }
     changes.push(...fieldChanges(id, policy?.fields ?? [], fill(before.policy.sources[id]), fill(after.policy.sources[id]), true))

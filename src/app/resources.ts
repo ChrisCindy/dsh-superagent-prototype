@@ -51,7 +51,7 @@ export const RESOURCES: readonly { name: string; holds: string; executor?: true 
   { name: 'models', holds: 'model providers, the DSH default and each role\'s model' },
   { name: 'models/<provider>', holds: 'one provider\'s models' },
   { name: 'feishu/<trigger-id>/…', holds: 'a Feishu original, as the dsh-superagent-feishu skill describes', executor: true },
-  { name: 'github/…', holds: 'a GitHub original, as the dsh-superagent-github skill describes', executor: true },
+  { name: 'github/…', holds: 'a GitHub original, as the dsh-superagent-github skill describes; another GitHub Source\'s under its id, such as github-docs/…', executor: true },
 ]
 export const resourceGrammar = (executor: boolean): string => RESOURCES.filter(resource => !executor || resource.executor)
   .map(resource => `${resource.name}: ${resource.holds}`).join('; ')
@@ -67,6 +67,11 @@ export interface ResourceHost {
   /** Whether a Session may read `revision` (the revision it currently runs under or any revision it ran under previously). */
   mayRead(sessionId: string, revision: number): boolean
   feishuPageSize(): number
+  /**
+   * The GitHub Source instance whose repository a resource reads: for `github/…`, a worker's ticket's own instance or else the
+   * first; for `<id>/…`, GitHub instance `id`; undefined for anything else.
+   */
+  githubSource(resource: string, ticketId?: string): string | undefined
   sourceLink(trigger: Trigger, signal?: AbortSignal): Promise<{ source_url?: string; source_url_read?: string }>
 }
 export interface MainResourceHost extends ResourceHost {
@@ -107,6 +112,12 @@ async function sourcePage(read: Read, source: string, fetch: () => Promise<unkno
   if (body === undefined) throw new Error(`Read this ${source === 'feishu' ? 'Feishu' : 'GitHub'} resource from offset 0 first`)
   if (offset === 0) host.pages.set(`${sessionId}:${resource}`, body)
   return text(read, body)
+}
+/** Reads a GitHub resource from the repository of the instance it names (`ResourceHost.githubSource`). */
+function githubPage(read: Read, prefix: string) {
+  const source = read.host.githubSource(read.resource, read.ticketId)
+  if (!source) throw new Error('Unknown context resource')
+  return sourcePage(read, 'github', () => readGithub(read.host.commands.forSource(source).withSignal(read.signal), read.resource, prefix))
 }
 const THREAD_DECISIONS = 5
 const triggerLine = (trigger: Trigger) => ({ trigger_id: trigger.id, actor: trigger.actor.id, human: trigger.human, at: trigger.at,
@@ -206,7 +217,7 @@ const ROUTES: readonly Route[] = [
     const commands = read.host.commands.withSignal(read.signal)
     return sourcePage(read, 'feishu', () => feishuRead(commands, ref, read.resource, read.host.feishuPageSize()))
   }],
-  ['github/', read => sourcePage(read, 'github', () => readGithub(read.host.commands.withSignal(read.signal), read.resource))],
+  ['github/', read => githubPage(read, 'github')],
   ['trigger/', async read => {
     const { host, rest, ticketId, offset, signal } = read
     if (!rest || rest.includes('/')) throw new Error('Unknown context resource')
@@ -299,7 +310,10 @@ const ROUTES: readonly Route[] = [
 export async function readResource(host: ResourceHost, resource: string, offset: number, limit: number | undefined, ticketId?: string,
   signal?: AbortSignal) {
   const name = resource.replace(/^event\//, 'trigger/').replace(/^task\//, 'ticket/').replace(/^observation\//, 'decision/')
-  const route = ROUTES.find(([route]) => route.endsWith('/') ? name.startsWith(route) : name === route)
+  // Another GitHub instance's originals are named by its ID, such as `github-docs/issues/12`.
+  const prefix = name.slice(0, Math.max(name.indexOf('/'), 0))
+  const other = prefix && prefix !== 'github' && host.githubSource(name, ticketId) ? [`${prefix}/`, (read: Read) => githubPage(read, prefix)] as const : undefined
+  const route = other ?? ROUTES.find(([route]) => route.endsWith('/') ? name.startsWith(route) : name === route)
   if (!route) throw new Error('Unknown context resource')
   const sessionId = ticketId ? workerSessionId(ticketId) : host.masterId
   const rest = route[0].endsWith('/') ? name.slice(route[0].length) : ''

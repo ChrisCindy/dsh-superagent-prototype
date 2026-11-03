@@ -163,10 +163,24 @@ export const ExecutorConfigSchema = z.object({
   merge: MergeConfigSchema.default(() => MergeConfigSchema.parse({})),
   budget: BudgetSchema.default(() => BudgetSchema.parse({})),
 }).strict()
-export const SourceInstanceSchema = z.object({ enabled: z.boolean().default(true), config: z.record(z.string(), z.unknown()).default({}) }).strict()
+/** A stored Source instance: the kind that runs it, whether it is on, and its configuration, which the kind validates. */
+export const SourceInstanceSchema = z.object({ kind: z.string().regex(/^[a-z][a-z0-9-]*$/), enabled: z.boolean().default(true),
+  config: z.record(z.string(), z.unknown()).default({}) }).strict()
+/**
+ * Source instances by ID. An instance stored without `kind` is its kind's first instance, whose ID is the kind's; another
+ * instance's ID starts with its kind and a hyphen.
+ */
+export const SourcesSchema = z.preprocess(value => value && typeof value === 'object' && !Array.isArray(value)
+  ? Object.fromEntries(Object.entries(value).map(([id, stored]) =>
+    [id, stored && typeof stored === 'object' && !Array.isArray(stored) && !('kind' in stored) ? { kind: id, ...stored } : stored]))
+  : value, z.record(z.string().regex(/^[a-z][a-z0-9-]*$/), SourceInstanceSchema).superRefine((sources, ctx) => {
+  for (const [id, { kind }] of Object.entries(sources)) {
+    if (id !== kind && !id.startsWith(`${kind}-`)) ctx.addIssue({ code: 'custom', path: [id], message: `The ID of a ${kind} Source instance starts with ${kind}-` })
+  }
+}))
 export const SettingsSchema = z.object({
   paused: z.boolean().default(false),
-  sources: z.record(z.string().regex(/^[a-z][a-z0-9-]*$/), SourceInstanceSchema).default({}),
+  sources: SourcesSchema.default({}),
   policy: PolicyConfigSchema.default(() => PolicyConfigSchema.parse({})),
   eval: EvalConfigSchema.default(() => EvalConfigSchema.parse({})),
   executor: ExecutorConfigSchema.default(() => ExecutorConfigSchema.parse({})),

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { Config, checkMerging, executable, machineOf, resolveDeployment, resolveFeishuBot, type Machine, type Probe } from '../src/deployment.ts'
+import { Config, checkMerging, executable, githubInstances, machineOf, resolveDeployment, resolveFeishuBot, type Machine, type Probe } from '../src/deployment.ts'
 import { setupWarning } from '../src/setup.ts'
 import { gitEnv } from './fixtures/git.ts'
 
@@ -60,16 +60,43 @@ describe('configuration schema', () => {
 
 describe('setup', () => {
   it('reads the repository from the GitHub Source and the accounts from their CLIs, skipping the worker shims', async () => {
-    const deployment = await resolveDeployment(machine(), { repository: 'acme/widgets', cli: 'gh' }, probe, path)
-    expect(deployment).toMatchObject({ repository: 'acme/widgets', github: { cli: join(dir, 'bin', 'gh'), login: 'Agent-Bot', noreply: '7+Agent-Bot@users.noreply.github.com' } })
+    const deployment = await resolveDeployment(machine(), [{ id: 'github', config: { repository: 'acme/widgets', cli: 'gh' } }], probe, path)
+    expect(deployment).toMatchObject({ repositories: { github: 'acme/widgets' }, github: { cli: join(dir, 'bin', 'gh'), login: 'Agent-Bot', noreply: '7+Agent-Bot@users.noreply.github.com' } })
     expect(deployment.github).toEqual({ cli: join(dir, 'bin', 'gh'), login: 'Agent-Bot', noreply: '7+Agent-Bot@users.noreply.github.com' })
     expect(deployment).not.toHaveProperty('feishu')
     // A renamed repository is still resolved by its old name; notifications carry GitHub's current full_name.
-    expect((await resolveDeployment(machine(), { repository: 'acme/gadgets', cli: 'gh' }, probe, path)).repository).toBe('acme/widgets')
+    expect((await resolveDeployment(machine(), [{ id: 'github', config: { repository: 'acme/gadgets', cli: 'gh' } }], probe, path)).repositories)
+      .toEqual({ github: 'acme/widgets' })
+  })
+  it('resolves each GitHub Source instance\'s repository under its ID, all with the one agent account', async () => {
+    // A second stand-in, signed in to the same account, may push to acme/docs.
+    program(join(dir, 'bin', 'gh-docs'), `case "$*" in\n  "api user") echo '{"login":"agent-bot","id":7}' ;;\n  "api repos/acme/docs --jq {name: .full_name, push: .permissions.push}") echo '{"name":"acme/Docs","push":true}' ;;\n  *) exit 1 ;;\nesac`)
+    const instances = (docs: Record<string, unknown>) => [{ id: 'github', config: { repository: 'acme/widgets', cli: 'gh' } },
+      { id: 'github-docs', config: { repository: 'acme/docs', cli: 'gh', ...docs } }]
+    // The first instance's CLI is the one workers call; both instances share its account.
+    const twoRepositories = await resolveDeployment(machine(), instances({ cli: 'gh-docs' }), probe, path)
+    expect(twoRepositories.repositories).toEqual({ github: 'acme/widgets', 'github-docs': 'acme/Docs' })
+    expect(twoRepositories.github.cli).toBe(join(dir, 'bin', 'gh'))
+    // A problem of another instance names it as its source, so the panel shows it on that instance's card.
+    await expect(resolveDeployment(machine(), instances({ repository: '' }), probe, path).catch((error: { problem: unknown }) => error.problem))
+      .resolves.toMatchObject({ place: 'github', code: 'repositoryUnset', source: 'github-docs' })
+    // Another account, or a repository another instance receives, is refused.
+    gh(join(dir, 'bin', 'gh-other'), 'someone-else')
+    await expect(resolveDeployment(machine(), instances({ cli: 'gh-other' }), probe, path)).rejects
+      .toMatchObject({ code: 'agentAccountMismatch', values: { account: 'someone-else', agent: 'Agent-Bot' }, source: 'github-docs' })
+    await expect(resolveDeployment(machine(), instances({ repository: 'acme/gadgets' }), probe, path)).rejects
+      .toMatchObject({ code: 'repositoryTwice', values: { repository: 'acme/widgets' }, source: 'github-docs' })
+  })
+  it('resolves the first GitHub instance always, and another one only while it is on', () => {
+    const stored = (enabled: boolean) => ({ github: { kind: 'github', enabled: false, config: { repository: 'acme/widgets' } },
+      'github-docs': { kind: 'github', enabled, config: { repository: 'acme/docs' } }, feishu: { kind: 'feishu', enabled: true, config: {} } })
+    expect(githubInstances(stored(true)).map(item => item.id)).toEqual(['github', 'github-docs'])
+    expect(githubInstances(stored(false))).toEqual([{ id: 'github', config: { repository: 'acme/widgets' } }])
+    expect(githubInstances({})).toEqual([{ id: 'github', config: undefined }])
   })
   it('names what setup needs and where it is set', async () => {
     const needs = (place: string, code: string, values: Record<string, unknown>, github: unknown) =>
-      expect(resolveDeployment(machine(), github, probe, path)).rejects.toEqual(setupError(place, code, values))
+      expect(resolveDeployment(machine(), [{ id: 'github', config: github }], probe, path)).rejects.toEqual(setupError(place, code, values))
     const repository = 'acme/widgets'
     await needs('github', 'repositoryUnset', {}, { cli: 'gh' })
     await needs('github', 'agentCliUnset', {}, { repository })
@@ -155,6 +182,6 @@ describe('merge check', () => {
     // Without the rulesets, a branch without protection may still have a ruleset.
     expect(await warnings({ [PROTECTION]: NOT_PROTECTED })).toEqual(['mergeUnverified'])
     expect(await checkMerging(deployment, probeOf({ [BRANCH]: 'not json' }))).toEqual([setupWarning('mergeUnverified', { account: 'agent-bot',
-      branch: 'the default branch' })])
+      branch: 'the default branch', repository: 'acme/widgets' })])
   })
 })

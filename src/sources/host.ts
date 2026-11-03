@@ -22,26 +22,32 @@ export function health(state: Health['state'], code: HealthCode, values: Record<
 }
 export interface SourceHost {
   readonly sources: SourceRegistry
-  /** Returns the context for one Source kind; its `report` writes only the health entries declared by the kind. */
-  context(kind: { kind: string; health: readonly string[] }): SourceContext
+  /**
+   * Returns the context for instance `instance` (by default the kind's first instance) of one Source kind; its `report` writes
+   * only that instance's health entries for the names the kind declares.
+   */
+  context(kind: { kind: string; health: readonly string[] }, instance?: string): SourceContext
 }
 /** Display label, URL, and facts (`null` removes a fact) that a Source publishes on a Thread. */
 export interface ThreadDescription { label?: string; url?: string; facts?: Record<string, ThreadFact | null> }
 /** Application capabilities exposed to a Source kind for reading state, ingesting triggers, managing threads/tickets, and reporting health. */
 export interface SourceContext {
+  /** The ID of the Source instance this context belongs to, which its Triggers, Threads and replies name as their source. */
+  readonly source: string
   readonly deployment: Deployment
+  /** Commands scoped to this instance, so its GitHub calls go to its own repository. */
   readonly commands: Commands
   readonly ready: Promise<void>
   /** True once setup resolved the repository and accounts; Sources poll only then. */
   configured(): boolean
   /** Setup problem keeping this Source's account from running; only the Feishu bot check reports one. */
   readonly problem?: SetupProblem | undefined
-  /** Returns a Source's configuration while enabled, or undefined while disabled or uninstalled. */
-  config<C extends Record<string, unknown>>(kind: string): C | undefined
+  /** Returns this instance's configuration (or instance `id`'s) while enabled, or undefined while disabled or uninstalled. */
+  config<C extends Record<string, unknown>>(id?: string): C | undefined
   /** Ingests a trigger into the Engine and schedules the next evaluation pass; callers should await completion before advancing read cursors. */
   receive(trigger: Trigger): ReceiveResult | Promise<ReceiveResult>
   atomic<T>(work: () => T): T
-  /** Source-scoped KV records (such as read cursors); setting `undefined` removes an entry. */
+  /** Records of this instance (such as read cursors), kept apart from every other instance's; setting `undefined` removes an entry. */
   state: { get<V>(key: Key<V>): V | undefined; set<V>(key: Key<V>, value: V | undefined): void; keys<V>(family: Family<V, never>): Key<V>[] }
   threads: {
     get(key: string): Thread | undefined
@@ -64,4 +70,5 @@ export interface SourceContext {
   /** Reports the state of one of this kind's declared health entries; throws for undeclared entry names. */
   report(entry: string, health: Health): void
 }
-export const sourceContext = (host: SourceHost, kind: { kind: string; health: readonly string[] }): SourceContext => host.context(kind)
+export const sourceContext = (host: SourceHost, kind: { kind: string; health: readonly string[] }, instance?: string): SourceContext =>
+  host.context(kind, instance)
