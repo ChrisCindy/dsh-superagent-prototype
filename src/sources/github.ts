@@ -9,7 +9,8 @@ import { branchCiTrigger, ciTrigger, commentTrigger, CommentSchema, githubAddres
   from './github-trigger.ts'
 import { githubLink, sendGithub } from './github-channel.ts'
 import type { GithubComment, PullRef } from './github-trigger.ts'
-import { observePull, pullsOf, readPull, type Pull } from './github-pull.ts'
+import { claimPull, observePull, pullOf, pullsOf, readPull, readyChanges, type Pull } from './github-pull.ts'
+import { requestMerge } from './github-merge.ts'
 import { health, sourceContext, type Health, type SourceContext } from './host.ts'
 import { KV } from '../kv.ts'
 import { cursorAt, pause, POLL_HORIZON_MS, pollThreads as pollEach } from './poll.ts'
@@ -76,6 +77,18 @@ export const githubKind: SourceKind<GithubConfig> = {
     const page = /github\.com\/([^/]+\/[^/]+)\/(?:pull|issues)\/(\d+)/.exec(query)
     const number = page && (!config.repository || sameName(page[1]!, config.repository)) ? page[2] : page ? undefined : /^#?(\d+)$/.exec(query.trim())?.[1]
     return { threads: number ? [`${id}:${number}`] : [], terms: [] }
+  },
+  // A ticket claims its source PR, or a PR of the agent account from a branch named after it; the host checks a merge request.
+  claim: {
+    account: ctx => ctx.deployment.github.login,
+    pull: ticket => pullOf(ticket),
+    async report(ctx, ticket, report, signal) {
+      const pull = report.pull !== undefined ? await readPull(ctx, report.pull, signal) : undefined
+      // The host reads what each PR the ticket opened changes, so a ready report beyond the Mandate's paths waits for a person.
+      const changes = await readyChanges(ctx, ticket, report.state, pull, signal)
+      return { changes, bind: () => pull ? claimPull(ctx, ticket.id, pull) : undefined }
+    },
+    merge: (ctx, ticket, pull, merge, signal) => requestMerge(ctx, ticket, pull, merge, signal),
   },
   policy: {
     schema: z.object({ allowed: z.array(z.object({ id: z.string().regex(/^[A-Za-z0-9-]+$/) }).strict()).default([]),

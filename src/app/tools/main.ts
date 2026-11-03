@@ -37,7 +37,7 @@ function routed(host: MainToolsHost, result: { decision?: DecisionKind; reason: 
   host.requestPass()
   const ticket = result.ticketId ? host.store.tickets.get(result.ticketId) : undefined
   return { ...(result.decision ? { decision: result.decision } : {}), reason: result.reason,
-    ...(ticket ? { ticket: ticketCard(ticket) } : {}) }
+    ...(ticket ? { ticket: ticketCard(ticket, item => host.resources.pull(item)) } : {}) }
 }
 const fromDecision = (decision: Decision) => ({ decision: decision.kind, reason: reasonText(decision.reason), ticketId: decision.ticketId })
 /**
@@ -144,7 +144,7 @@ function routeTool(host: MainToolsHost): Tool {
           for (const id of result.triggerIds ?? []) if (!decided.has(id)) decided.set(id, item.trigger_id)
           const ticket = result.ticketId ? host.store.tickets.get(result.ticketId) : undefined
           return { ...head, ...(result.decision ? { decision: result.decision } : {}), reason: result.reason,
-            ...(ticket ? { ticket: ticketCard(ticket) } : {}) }
+            ...(ticket ? { ticket: ticketCard(ticket, item => host.resources.pull(item)) } : {}) }
         } catch (error) {
           if (error instanceof UserError) return { ...head, refused: error.message }
           host.context.logger.warn('dsh-superagent could not route trigger %s: %s', item.trigger_id, String(error))

@@ -1,9 +1,10 @@
 /** SourceKind plugin contract: configuration schema, UI form fields, policy integration, channel adapter, and thread context reader. */
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { z } from 'zod'
-import type { OutboundMessage, ScopeResult, Trigger } from '../core/index.ts'
+import type { OutboundMessage, PullChanges, ScopeResult, Ticket, Trigger } from '../core/index.ts'
 import type { Deployment } from '../deployment.ts'
 import type { Commands } from '../infra/commands.ts'
+import type { MergeConfig } from '../policy.ts'
 import type { SourceContext, SourceHost } from './host.ts'
 
 export interface Localized { zh: string; en: string }
@@ -116,6 +117,25 @@ export interface SourceResources<C> {
   /** Resources that read around a Trigger of this kind, which `trigger/<id>` shows as `context`; undefined for none. */
   references?(trigger: Trigger): Record<string, string> | undefined
 }
+/**
+ * How a kind binds the changes an Executor reports, such as pull requests, to its ticket, and merges one. The host calls it
+ * with the context of the kind's instance the ticket came from (`SourceRegistry.home`), else the first.
+ */
+export interface SourceClaim {
+  /** The account whose changes from a branch named after the ticket the ticket may claim, which the report tool names. */
+  account(ctx: SourceContext): string
+  /** The number of the change a ticket card shows: the newest open one it follows on the kind's first instance, else the newest. */
+  pull(ticket: Pick<Ticket, 'follows'>): number | undefined
+  /**
+   * Prepares a report before its transaction: reads change `pull` when one is reported, and for a `ready` report under a
+   * Mandate with paths, the files of each open change the ticket opened, as `changes`. `bind`, which the host calls in the
+   * report's transaction before recording it, binds the reported change, or returns why it cannot.
+   */
+  report(ctx: SourceContext, ticket: Ticket, report: { state: string; pull?: number }, signal: AbortSignal):
+    Promise<{ changes: PullChanges[]; bind(): string | undefined }>
+  /** Checks change `pull` against the merge settings and the ticket's limits, and enables its auto-merge or lists each failed check. */
+  merge(ctx: SourceContext, ticket: Ticket, pull: number, merge: MergeConfig, signal: AbortSignal): Promise<unknown>
+}
 export interface TriggerContext {
   readonly messageId: string
   read(commands: Commands, part: ContextPartName, cursor?: string): Promise<ContextPart>
@@ -156,6 +176,8 @@ export interface SourceKind<C extends Record<string, unknown> = Record<string, u
   find?(query: string, instance: SourceInstance<C>): { threads: string[]; terms: string[] }
   /** Returns the ID of the Trigger whose message this Trigger replies to, when derivable without a network read. */
   repliesTo?(trigger: Trigger): string | undefined
+  /** Binding and merging of the changes an Executor reports; the first installed kind with `claim`, in ID order, provides it. */
+  claim?: SourceClaim
   /** Policy section for kinds whose senders have their own identity. */
   policy?: SourcePolicyPart<Record<string, unknown> & { allowed: { id: string; name?: string }[] }>
   /** Rereads display names for row keys (such as chat names), stores the resolved names in `KV.sources.labels(kind)`, and returns them. */

@@ -3,7 +3,7 @@ import { handbacksOf, reachedTickets, type Candidate, type Thread, type Ticket, 
 import type { Commands } from '../infra/commands.ts'
 import type { SourceRegistry } from '../sources/registry.ts'
 import { triggerMessage } from '../executor/dsh.ts'
-import { CORRELATED, correlatedCard, relatedTickets, ticketCard, triggerCard } from './cards.ts'
+import { CORRELATED, correlatedCard, relatedTickets, ticketCard, triggerCard, type PullOf } from './cards.ts'
 import type { Store } from './store.ts'
 import type { TextCache } from './cache.ts'
 import { attribute } from './views/text.ts'
@@ -79,10 +79,11 @@ export async function candidateCard(host: LinkHost, candidate: Candidate) {
     .map(item => ({ trigger_id: trigger.id, ticket_id: item.ticketId, reason: item.reason })))
   // Format the primary trigger like a worker input (including the message it replies to) and summarize earlier batch triggers as cards.
   const others = candidate.triggers.filter(trigger => trigger.id !== primary.id)
+  const pullOf: PullOf = ticket => host.sources.pull(ticket)
   return { ...triggerMessage(primary, await sourceLink(host, primary), undefined, repliedTo(host, primary)), strength: candidate.strength,
     mode: settings.eval.mode, ...others.length ? { batch: others.map(trigger => triggerCard(trigger)) } : {},
-    ...handedBack.length ? { handed_back: handedBack } : {}, ...relatedTickets(candidate.tickets),
-    ...(delivered.length ? { delivered_to: delivered } : {}), ...(referenced.length ? { referenced_tickets: referenced.map(ticketCard) } : {}),
+    ...handedBack.length ? { handed_back: handedBack } : {}, ...relatedTickets(candidate.tickets, pullOf),
+    ...(delivered.length ? { delivered_to: delivered } : {}), ...(referenced.length ? { referenced_tickets: referenced.map(ticket => ticketCard(ticket, pullOf)) } : {}),
     ...correlatedThreads(host.store, candidate.thread),
     next_action: candidate.strength === 'explicit' ? 'Route it with orchestrator_route as dispatch says: accept, attach, stop or ignore.'
       : 'Ignore it with orchestrator_route if the card shows it touches no enabled rule; else assess it with orchestrator_eval, orchestrator_eval_read, then orchestrator_eval_decide.' }

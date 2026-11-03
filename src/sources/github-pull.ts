@@ -1,10 +1,11 @@
 /** Pull request binding, lifecycle observation, and terminal IM notification helpers. */
 import { z } from 'zod'
-import { actionAllowed, key, liveTicket, type Follow, type OutboundMessage, type ThreadFact, type Ticket } from '../core/index.ts'
+import { actionAllowed, key, liveTicket, type Follow, type OutboundMessage, type PullChanges, type ThreadFact, type Ticket } from '../core/index.ts'
 import type { Deployment } from '../deployment.ts'
 import { sameName } from '../infra/text.ts'
 import type { SourceContext } from './host.ts'
 import { githubPage, SOURCE, UserSchema } from './github-trigger.ts'
+import { pullFiles } from './github-read.ts'
 
 const PullSchema = z.looseObject({
   title: z.string().optional(), state: z.string(), html_url: z.string(), user: UserSchema,
@@ -61,6 +62,17 @@ export function claimPull(ctx: SourceContext, ticketId: string, pr: Pull): strin
   const follow = ticket.follows?.find(item => item.thread === `${ctx.source}:${pr.number}`)
   if (pr.state === 'open' && (!follow || follow.closed || (opened && !follow.own))) bind(ctx, ticketId, pr, opened)
   return undefined
+}
+/**
+ * The files of each open PR the ticket opened, counting `pull` when the report binds one it opened, for a `ready` report under a
+ * Mandate that limits paths; none otherwise.
+ */
+export async function readyChanges(ctx: SourceContext, ticket: Ticket, state: string, pull: Pull | undefined, signal: AbortSignal): Promise<PullChanges[]> {
+  if (state !== 'ready' || !ticket.mandate.limits?.paths) return []
+  const own = new Set((ticket.follows ?? []).filter(item => item.own && !item.closed).flatMap(item => pullsOf({ follows: [item] }, false, ctx.source)))
+  if (pull && pull.state === 'open' && agentPull(pull, ctx.deployment.github, ctx.commands.repository) && ticketBranch(ticket, pull.head.ref)) own.add(pull.number)
+  const commands = ctx.commands.withSignal(signal)
+  return Promise.all([...own].map(number => pullFiles(commands, number)))
 }
 /**
  * Reconciles a polled PR's open/merged/closed state and auto-merge fact with any bound or branch-matching ticket.

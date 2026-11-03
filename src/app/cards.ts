@@ -1,7 +1,6 @@
 /** Compact, bounded model-facing projections of triggers, tickets, threads, and decisions; full texts stay behind readable resources. */
 import { latestReport, reachedTickets, reasonText, threadKey, ticketStage, type Decision, type Mandate, type Thread, type Ticket, type TicketInput,
   type Trigger, type TriggerDisposition } from '../core/index.ts'
-import { pullOf } from '../sources/github-pull.ts'
 import { batchLine, inputResource } from '../executor/dsh.ts'
 
 /** Collapses whitespace and truncates text for display previews while keeping code, angle brackets, and links intact for model readers. */
@@ -17,17 +16,20 @@ export function triggerCard(trigger: Trigger, disposition?: TriggerDisposition) 
 export const TICKET_STATES = ['person/held', 'person/delivery', 'person/answer', 'person/review', 'person/blocked', 'person/failed', 'working', 'working/queued', 'idle',
   'completed', 'merged', 'closed', 'dropped', 'stopped'] as const
 export type TicketCardState = typeof TICKET_STATES[number]
-function cardState(ticket: Ticket): TicketCardState {
+export function cardState(ticket: Ticket): TicketCardState {
   if (ticket.ended) return ticket.ended.outcome
   const stage = ticketStage(ticket)
   if (stage.stage === 'person') return `person/${stage.action}`
   return stage.stage === 'idle' ? 'idle' : stage.stage === 'working' && stage.action ? 'working/queued' : 'working'
 }
-export function ticketCard(ticket: Ticket) {
+/** The number of the change a ticket card shows, such as its pull request, as the claiming Source kind gives it (`SourceRegistry.pull`). */
+export type PullOf = (ticket: Pick<Ticket, 'follows'>) => number | undefined
+export function ticketCard(ticket: Ticket, pullOf: PullOf) {
   const ended = ticket.ended && { at: ticket.ended.at, by: ticket.ended.by, reason: ticket.ended.reason ?? ticket.ended.outcome }
   const { attention } = ticket
+  const pull = pullOf(ticket)
   return { ticket_id: ticket.id, title: ticket.title, state: cardState(ticket), strength: ticket.mandate.strength,
-    ...(pullOf(ticket) ? { pr_number: pullOf(ticket) } : {}), ...(ended ? { ended } : {}),
+    ...(pull ? { pr_number: pull } : {}), ...(ended ? { ended } : {}),
     ...(attention ? { attention: { question: attention.question, ...attention.triggerId ? { trigger_id: attention.triggerId } : {} } } : {}),
     preview: preview(latestReport(ticket)?.summary ?? ''), read: `ticket/${ticket.id}` }
 }
@@ -56,9 +58,9 @@ export function newestPage<T, L>(items: readonly T[], offset: number, size: numb
 }
 export interface TicketThread { thread: string; context?: true; bound?: true }
 /** Projects a ticket with its linked triggers, threads, and first pages of assignments and inputs, omitting decision IDs for workers. */
-export function ticketDetails(ticket: Ticket, threads: TicketThread[], batch: readonly Trigger[], worker = false) {
+export function ticketDetails(ticket: Ticket, threads: TicketThread[], batch: readonly Trigger[], pullOf: PullOf, worker = false) {
   // Drop card preview because the latest report's preview is already shown on the first assignment entry.
-  const { preview: _preview, ...card } = ticketCard(ticket)
+  const { preview: _preview, ...card } = ticketCard(ticket, pullOf)
   return { ...card, trigger_id: ticket.origin.triggerId, ...batch.length ? { batch: batch.map(batchLine) } : {},
     ...worker ? {} : { decision_id: ticket.decisionId }, threads, directory: ticket.execution?.directory,
     scope: ticket.mandate.scope, ...(ticket.mandate.limits ? { limits: ticket.mandate.limits } : {}), requested_by: ticket.mandate.actor.id,
@@ -100,7 +102,7 @@ export function correlatedCard(thread: Thread, label: string, url: string | unde
     ...(decision ? { decision: { decision_id: decision.id, kind: decision.kind, at: decision.at } } : {}),
     ...(ticket ? { ticket: { ticket_id: ticket.id, title: ticket.title, state: cardState(ticket) } } : {}), read: `thread/${thread.key}` }
 }
-export function relatedTickets(tickets: readonly Ticket[]) {
+export function relatedTickets(tickets: readonly Ticket[], pullOf: PullOf) {
   const order = [...tickets].sort((a, b) => Number(!a.ended) === Number(!b.ended) ? b.createdAt.localeCompare(a.createdAt) : a.ended ? 1 : -1)
-  return { related_tickets: order.slice(0, 8).map(ticketCard), tickets_total: tickets.length }
+  return { related_tickets: order.slice(0, 8).map(ticket => ticketCard(ticket, pullOf)), tickets_total: tickets.length }
 }

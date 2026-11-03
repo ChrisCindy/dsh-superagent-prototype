@@ -1,5 +1,5 @@
 /** Registry of installed Source kinds, their configured instances, and the Engine's SourceScope implementation. */
-import type { ChannelRef, OutboundMessage, ScopeResult, SourceScope, Trigger } from '../core/index.ts'
+import type { ChannelRef, OutboundMessage, ScopeResult, SourceScope, Ticket, Trigger } from '../core/index.ts'
 import type { Commands } from '../infra/commands.ts'
 import { HealthBoard, type HealthEntry } from '../infra/health.ts'
 import { AdmissionTableSchema, type Settings } from '../policy.ts'
@@ -181,6 +181,16 @@ export class SourceRegistry implements SourceScope {
     const id = prefix === kind.kind ? this.home(kind.kind, origin, settings) : prefix
     return { id, title: kind.title.en, resources: kind.resources, config: this.resolve(kind, id, settings.sources[id]).config }
   }
+  /**
+   * The installed kind that binds the changes Executors report (the first with `claim`, in ID order) and its instance that
+   * `origin` has (see `home`), or undefined when no installed kind has `claim`.
+   */
+  claimant(origin?: string | Pick<Trigger, 'source' | 'threads'>, settings = this.settings()): { kind: SourceKind; id: string } | undefined {
+    const kind = [...this.kinds.values()].sort((a, b) => a.kind.localeCompare(b.kind)).find(item => item.claim)
+    return kind && { kind, id: this.home(kind.kind, origin, settings) }
+  }
+  /** The number of the change a ticket card shows, as the claiming kind's `claim.pull` gives it. */
+  pull(ticket: Pick<Ticket, 'follows'>): number | undefined { return this.claimant()?.kind.claim!.pull(ticket) }
   find(query: string): { threads: string[]; terms: string[] } {
     const found = this.instances().flatMap(instance => {
       const kind = instance.installed ? this.kinds.get(instance.kind) : undefined

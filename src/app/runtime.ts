@@ -51,8 +51,6 @@ import { executorTools, type ExecutorToolsHost } from './tools/executor.ts'
 // Source plugins interact with dsh-superagent exclusively through the `SourceHost` service interface.
 declare module '@deepseek-ai/cordis' { interface Context { orchestrator: SourceHost } }
 const now = (): string => new Date().toISOString()
-/** The GitHub kind's identity for a context built by the host, such as the one a worker's merge request goes through. */
-const GITHUB_KIND = { kind: GITHUB, health: [GITHUB] } as const
 
 /**
  * Composition root of dsh-superagent that connects `Store`, `Setup`, `Engine`, `SourceRegistry`, `Effects`, `Outbox`, `Passes`, `Sessions`, `Settings`, `Prompts`, `DshExecutor`, `MasterAssessor`, and the daily prune.
@@ -122,7 +120,7 @@ export class Runtime extends Service implements SourceHost {
       const environment = (ticket: Ticket) => this.ticketEnvironment(ticket)
       const resources: ResourceHost = { store, pages: new TextCache(4_000_000), prompts, commands, masterId, context: ctx,
         promptVersion: id => this.sessions.promptVersion(id), mayRead: (id, revision) => this.sessions.mayRead(id, revision),
-        sourceLink: link, repliesTo: trigger => sources.repliesTo(trigger), sourceResourceNames: () => sources.resourceNames(),
+        sourceLink: link, repliesTo: trigger => sources.repliesTo(trigger), pull: ticket => sources.pull(ticket), sourceResourceNames: () => sources.resourceNames(),
         sourceResources: (prefix, ticketId) => {
           const ticket = ticketId ? store.tickets.get(ticketId) : undefined
           return sources.resources(prefix, ticket && this.originTrigger(ticket))
@@ -136,10 +134,10 @@ export class Runtime extends Service implements SourceHost {
         sourceHost: this, setup, requestPass: () => { this.passes.request() } })
       this.executor = new DshExecutor({ context: ctx, get engine() { return runtime.engine }, store, effects, health: board.claim('worker'), machine,
         lifetime: this.lifetime, sessions, closing: () => this.closing(), paused: () => this.paused(), environment, sourceLink: link,
-        repliedTo: trigger => repliedTo({ store, sources }, trigger) })
+        repliedTo: trigger => repliedTo({ store, sources }, trigger), pullOf: ticket => sources.pull(ticket) })
       this.assessor = new MasterAssessor({ get engine() { return runtime.engine }, commands, get deployment() { return setup.deployment }, effects,
         settings: () => store.settings(), paused: () => this.paused(), threadContext: trigger => sources.threadContext(trigger),
-        githubSource: trigger => sources.home(GITHUB, trigger),
+        githubSource: trigger => sources.home(GITHUB, trigger), pull: ticket => sources.pull(ticket),
         deliver: (id, text) => sessions.prompt(masterId, id, text, 'steer'), candidateCard: candidate => candidateCard(links, candidate),
         correlatedThreads: thread => correlatedThreads(store, thread) })
       const outbox = this.outbox = new Outbox({ store, effects, sources, commands, paused: () => this.paused() })
@@ -159,7 +157,7 @@ export class Runtime extends Service implements SourceHost {
         outbox, prepareTicket: (ticket, outcome) => executor.prepare(ticket, outcome), emit: event => {
           this.record(event)
           // Notify the main Session only about domain events it did not initiate itself.
-          const notice = this.quiet ? undefined : eventNotice(event, id => store.tickets.get(id))
+          const notice = this.quiet ? undefined : eventNotice(event, id => store.tickets.get(id), ticket => sources.pull(ticket))
           if (notice) sessions.notify(...notice)
           // A person's message that reached an open ticket is the ticket's; the main Session hears of it in the same transaction,
           // and of one for an ended ticket once it resumes, unless it routed the message there itself.
@@ -182,7 +180,10 @@ export class Runtime extends Service implements SourceHost {
         get deployment() { return setup.deployment }, configured: () => setup.configured(),
         get setupProblem() { return setup.problem }, get feishuProblem() { return setup.feishuProblem }, receive: trigger => passes.receive(trigger) }
       this.toolHost = { context: ctx, engine, store, prompts, sessions, settings: this.settings, assessor, resources,
-        github: ticket => runtime.context(GITHUB_KIND, sources.home(GITHUB, runtime.originTrigger(ticket))),
+        claims: ticket => {
+          const claimant = sources.claimant(runtime.originTrigger(ticket))
+          return claimant && { context: runtime.context(claimant.kind, claimant.id), claim: claimant.kind.claim! }
+        },
         requestPass: () => { passes.request() }, sendReplies: () => outbox.sent(),
         quietly: run => { this.quiet++; try { return run() } finally { this.quiet-- } } }
       this.ready = this.initialize()
