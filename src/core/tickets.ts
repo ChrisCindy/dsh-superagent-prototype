@@ -1,7 +1,8 @@
 /** Tickets: their lifecycle from an accept to their end, their Subscriptions and their Inputs. */
 import { key } from './ids.ts'
 import { UserError } from './errors.ts'
-import { latestAssignment, latestReport, liveTicket, readUntil, runningAssignment, settled, threadKey, waitsForPerson } from './model.ts'
+import { DEFAULT_EXECUTOR, executorOf, latestAssignment, latestReport, liveTicket, readUntil, runningAssignment, settled, threadKey, waitsForPerson }
+  from './model.ts'
 import type { Assignment, ChannelRef, Evaluation, Follow, Mandate, PolicyEffect, ThreadRef, Ticket, TicketEndBy, TicketInput, TicketOutcome,
   Trigger, TriggerDisposition } from './model.ts'
 import type { AssessmentOutcome } from './ports.ts'
@@ -47,7 +48,7 @@ export class Tickets extends EnginePart {
       if (channel && !ticket.channels.some(item => sameChannel(item, channel))) ticket.channels.push(channel)
     }
     ticket = this.options.prepareTicket?.(ticket, outcome) ?? ticket
-    const assignment = this.newAssignment(ticket)
+    const assignment = this.newAssignment(ticket, this.options.executorFor?.(ticket, outcome) ?? DEFAULT_EXECUTOR)
     this.repo.tickets.save(ticket)
     for (const triggerId of triggerIds) for (const ref of this.repo.triggers.get(triggerId)?.threads ?? []) this.subscribe(id, ref)
     if (outcome.acknowledgement && primary) this.replies.acknowledgeAccepted(id, primary, outcome.acknowledgement)
@@ -162,18 +163,19 @@ export class Tickets extends EnginePart {
     return this.require(ticketId)
   }
   /**
-   * Ends the stalled assignment of a retryable open ticket (`failed`, `blocked`, or failed input delivery) and starts a new one.
-   * An Assignment that ended already, such as one that used up its budget, keeps why it ended.
+   * Ends the stalled assignment of a retryable open ticket (`failed`, `blocked`, or failed input delivery) and starts a new one,
+   * run by `executor` when it names one, else by the Executor that ran the stalled one. An Assignment that ended already, such
+   * as one that used up its budget, keeps why it ended.
    * @throws UserError when the ticket is unknown or not retryable.
    */
-  retry(ticketId: string): Ticket {
+  retry(ticketId: string, executor?: string): Ticket {
     const ticket = this.require(ticketId)
     const latest = latestAssignment(ticket)
     if (!canRetry(ticket) || !latest) throw new UserError('notRetryable')
     const stopping = latest.state !== 'ended'
     if (stopping) this.endAssignment(ticket, latest, 'retried')
     this.requeueUntaken(ticket, latest)
-    const assignment = this.continued(ticket, latest)
+    const assignment = this.continued(ticket, latest, executor)
     ticket.updatedAt = this.now()
     this.repo.tickets.save(ticket)
     if (stopping) this.options.executor.stop(ticket, latest, 'retried')
@@ -440,19 +442,23 @@ export class Tickets extends EnginePart {
     return report?.state !== 'ready' || ticket.undelivered.length > 0 || later
   }
   /**
-   * A new Assignment after `ended`: one that used up its budget asked a person whether to go on, which now has its answer;
-   * the worker is told why it goes on (see `Executor.start`).
+   * A new Assignment after `ended`, run by `executor` or else by the Executor that ran `ended`: one that used up its budget
+   * asked a person whether to go on, which now has its answer; the worker is told why it goes on (see `Executor.start`).
    */
-  private continued(ticket: Ticket, ended: Assignment): Assignment {
+  private continued(ticket: Ticket, ended: Assignment, executor = executorOf(ended)): Assignment {
     if (ended.endedReason === 'budgetSpent' && ticket.attention) {
       this.replies.withdrawAttention(ticket.attention.id)
       delete ticket.attention
     }
-    return this.newAssignment(ticket)
+    return this.newAssignment(ticket, executor)
   }
-  /** Add a pending Assignment; a failed delivery to the one before it no longer concerns the ticket. */
-  private newAssignment(ticket: Ticket): Assignment {
-    const assignment: Assignment = { id: key('assignment', ticket.id, String(ticket.assignments.length)), state: 'pending', createdAt: this.now() }
+  /**
+   * Add a pending Assignment, run by `executor`, else by the Executor that ran the one before it; a failed delivery to the one
+   * before it no longer concerns the ticket.
+   */
+  private newAssignment(ticket: Ticket, executor = executorOf(latestAssignment(ticket) ?? {})): Assignment {
+    const assignment: Assignment = { id: key('assignment', ticket.id, String(ticket.assignments.length)), executor, state: 'pending',
+      createdAt: this.now() }
     ticket.assignments.push(assignment)
     delete ticket.delivery
     return assignment

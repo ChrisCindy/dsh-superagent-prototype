@@ -39,7 +39,8 @@ export interface Api {
     response: { items: StoredEvent[]; next_before: number | null } }
   'GET tickets': { query?: Paged & { state?: TicketFilter }; response: TicketListView }
   'GET tickets/:id': { response: TicketPageView }
-  'POST tickets/:id/retry': { response: { retried: true } }
+  /** `executor` names the Executor the new Assignment runs on; without it, the one the stalled Assignment ran on. */
+  'POST tickets/:id/retry': { body?: { executor?: string }; response: { retried: true } }
   'POST tickets/:id/stop': { response: { stopped: true } }
   /** Whether the ticket was held now, false when it was held already. */
   'POST tickets/:id/hold': { response: { held: boolean } }

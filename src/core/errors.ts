@@ -37,6 +37,8 @@ export const USER_ERRORS = {
   noChannel: ['refused', 'No reply channel for this ticket or trigger'],
   panelOnlyEnvironment: ['refused', 'The execution environment (ticket directory, prepare command, blocked commands), merging and the Assignment budget can only be changed in the management panel'],
   panelOnlyAccounts: ['refused', 'Source fields that setup reads, such as account CLIs, can only be changed in the management panel'],
+  panelOnlyExecutor: ['refused', 'The Executor that runs a Source\'s tickets can only be changed in the management panel'],
+  unknownExecutor: ['refused', 'No Executor named {executor} is available'],
   panelOnlyPolicy: ['refused', 'The Policy, the accept mode and the proactive Eval limit change only when a person accepts them on the management panel; propose the change with orchestrator_policy_propose'],
   setupComplete: ['refused', 'Setup is complete'],
   mergeCliFailed: ['refused', 'The merge CLI {cli} cannot read its account: {error}'],

@@ -603,3 +603,25 @@ it('writes the Decisions and Inputs of a follow-up that reopened a ticket in a s
   expect(Number(kinds!.n)).toBe(0)
   store.close()
 })
+
+it('names the DshExecutor in the kinds of the effects a schema 13 database queued, and keeps Assignments without an Executor', () => {
+  const path = join(directory, 'db.sqlite')
+  new Store(path).close()
+  const db = new DatabaseSync(path)
+  db.prepare("UPDATE kv SET value = '13' WHERE key = 'schema'").run()
+  const insert = db.prepare('INSERT INTO effect (kind, key, value, seq, attempts, error, due, since) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+  insert.run('launch', 'a1', JSON.stringify({ ticketId: 't1', assignmentId: 'a1' }), 1, 2, 'offline', 0, '')
+  insert.run('delivery', 't1', JSON.stringify({ ticketId: 't1' }), 2, 0, '', 0, '')
+  insert.run('relay', 'r1', JSON.stringify({ text: 'x' }), 3, 0, '', 0, '')
+  const ticket = { id: 't1', title: 'Fix', decisionId: 'd1', channels: [], inputs: [], undelivered: [], createdAt: '', updatedAt: '',
+    origin: { triggerId: 'x', triggerIds: ['x'] }, mandate: mandate({ via: 'followup' }), assignments: [{ id: 'a1', state: 'pending', createdAt: '' }] }
+  db.prepare('INSERT INTO ticket VALUES (?,?)').run(ticket.id, JSON.stringify(ticket))
+  db.close()
+  const store = new Store(path)
+  expect(store.get(KV.store.schema)).toBe(SCHEMA_VERSION)
+  expect(store.db.prepare('SELECT kind, key, attempts, error FROM effect ORDER BY seq').all().map(row => ({ ...row })))
+    .toEqual([{ kind: 'dsh.launch', key: 'a1', attempts: 2, error: 'offline' }, { kind: 'dsh.delivery', key: 't1', attempts: 0, error: '' },
+      { kind: 'relay', key: 'r1', attempts: 0, error: '' }])
+  expect(store.tickets.get('t1')).toEqual(ticket)
+  store.close()
+})

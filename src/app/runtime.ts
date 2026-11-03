@@ -20,7 +20,8 @@ import { Commands, GITHUB } from '../infra/commands.ts'
 import type { Deployment, Machine } from '../deployment.ts'
 import { environmentOf, ticketEnvironment, type Variable } from './execution-environment.ts'
 import type { SetupProblem, SetupWarning } from '../setup.ts'
-import { DshExecutor, sourceTrigger, triggerMessage, workerSessionId } from '../executor/dsh.ts'
+import { DSH_EXECUTOR, DshExecutor, sourceTrigger, triggerMessage, workerSessionId } from '../executor/dsh.ts'
+import { Executors, chosenExecutor } from './executors.ts'
 import { ticketCard } from './cards.ts'
 import { MasterAssessor } from './assessment.ts'
 import { KV } from '../kv.ts'
@@ -68,6 +69,8 @@ export class Runtime extends Service implements SourceHost {
   readonly sessions: Sessions
   readonly settings: Settings
   readonly executor: DshExecutor
+  /** Every Executor by name, the DshExecutor's among them; the Engine's Executor port dispatches through it. */
+  readonly executors: Executors
   readonly assessor: MasterAssessor
   readonly outbox: Outbox
   readonly engine: Engine
@@ -143,8 +146,17 @@ export class Runtime extends Service implements SourceHost {
         correlatedThreads: thread => correlatedThreads(store, thread) })
       const outbox = this.outbox = new Outbox({ store, effects, sources, commands, paused: () => this.paused() })
       const { assessor, executor } = this
+      const executors = this.executors = new Executors((ticket, assignment, name) => { store.afterCommit(() => {
+        // A ticket whose Assignment names an Executor no plugin provides fails it, for a person to retry with another.
+        const current = store.tickets.get(ticket.id)
+        if (!current?.assignments.some(item => item.id === assignment.id && item.state === 'pending') || current.assignments.at(-1)?.id !== assignment.id) return
+        try { this.engine.report(ticket.id, { state: 'failed', summary: `No Executor named ${name} is available; retry the ticket with another Executor.` }) }
+        catch (error) { ctx.logger.warn('dsh-superagent: %s', String(error)) }
+      }) })
+      executors.register(DSH_EXECUTOR, executor)
       const policy = () => settingsPolicy(store.settings(), sources)
-      const engine = this.engine = new Engine({ repo: store, scope: sources, policy, assessor, executor,
+      const engine = this.engine = new Engine({ repo: store, scope: sources, policy, assessor, executor: executors,
+        executorFor: (ticket, outcome) => chosenExecutor(store.settings(), outcome.rules ?? [], this.originTrigger(ticket)?.source),
         outbox, prepareTicket: (ticket, outcome) => executor.prepare(ticket, outcome), emit: event => {
           this.record(event)
           // Notify the main Session only about domain events it did not initiate itself.
@@ -258,8 +270,8 @@ export class Runtime extends Service implements SourceHost {
   }
   private httpHost(): HttpHost {
     const runtime = this
-    const { store, sources, prompts, sessions, settings, engine, executor, health, machine, masterId, ready, sourceLinks, setup, passes } = this
-    return { store, sources, prompts, sessions, settings, engine, executor, health, machine, masterId, ready, sourceLinks,
+    const { store, sources, prompts, sessions, settings, engine, executor, executors, health, machine, masterId, ready, sourceLinks, setup, passes } = this
+    return { store, sources, prompts, sessions, settings, engine, executor, executors, health, machine, masterId, ready, sourceLinks,
       get deployment() { return setup.deployment },
       get setupProblem() { return setup.problem }, get feishuProblem() { return setup.feishuProblem },
       get setupWarnings() { return setup.warnings },

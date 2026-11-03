@@ -156,6 +156,27 @@ it('says why an Input was not delivered on its Ticket\'s page, in either languag
   expect(text()).toContain(en.inputRetryHint)
 })
 
+it('retries a Ticket on another Executor when there are several, and on the same one by default', async () => {
+  const t1 = server.ticketDetails.t1!
+  server.ticketDetails.t1 = { ...t1, actions: { ...t1.actions, retry: true }, executors: ['dsh', 'fake'] }
+  at({ page: 'execution', id: 't1' })
+  await mount()
+  await click(zh.retry)
+  await click(zh.confirm)
+  expect(server.requests.filter(request => request.path === 'tickets/t1/retry').map(request => request.body)).toEqual([undefined])
+  await click(zh.retry)
+  const executor = field<HTMLSelectElement>(zh.retryExecutor)
+  expect([...executor.options].map(option => option.value)).toEqual(['dsh', 'fake'])
+  await type(executor, 'fake')
+  await click(zh.confirm)
+  expect(server.requests.filter(request => request.path === 'tickets/t1/retry').map(request => request.body)).toEqual([undefined, { executor: 'fake' }])
+  // With one Executor there is nothing to choose.
+  server.ticketDetails.t1 = { ...t1, actions: { ...t1.actions, retry: true } }
+  await remount()
+  await click(zh.retry)
+  expect(all('.dt-modal select')).toEqual([])
+})
+
 it('tells a Ticket or Thread that does not exist from a dsh-superagent that is not answering', async () => {
   at({ page: 'execution', id: 't9' })
   await mount()

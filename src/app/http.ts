@@ -15,6 +15,8 @@ import { SetupError, type SetupProblem, type SetupWarning } from '../setup.ts'
 import { UserError, isoTime, type EngineForPeople, type Ticket } from '../core/index.ts'
 import type { Deployment, Machine } from '../deployment.ts'
 import type { DshExecutor } from '../executor/dsh.ts'
+import type { Executors } from './executors.ts'
+import { ExecutorNameSchema } from '../policy.ts'
 import type { Health } from '../sources/host.ts'
 import type { SourceRegistry } from '../sources/registry.ts'
 import type { Sessions } from './sessions.ts'
@@ -40,6 +42,8 @@ export interface HttpHost {
     | 'addSource' | 'removeSource'>
   readonly engine: EngineForPeople
   readonly executor: Pick<DshExecutor, 'activeCount'>
+  /** The Executors a retry may name. */
+  readonly executors: Pick<Executors, 'has' | 'names'>
   readonly health: Record<string, Health>
   readonly machine: Machine
   readonly masterId: string
@@ -70,6 +74,8 @@ async function readBody(req: IncomingMessage, maxBytes = 128 * 1024): Promise<un
     if (size > maxBytes) throw new RouteError(400, `Request exceeds ${maxBytes} bytes`)
     chunks.push(bytes)
   }
+  // A request without a body, such as a retry that names no Executor, reads as none.
+  if (!size) return undefined
   try { return JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown }
   catch { throw new RouteError(400, 'The request body is not JSON') }
 }
@@ -122,7 +128,7 @@ export type StateView = ReturnType<typeof stateView>
 function ticketPage(runtime: HttpHost, id: string) {
   const detail = ticketDetail(views(runtime), id), ticket = runtime.store.tickets.get(id)
   if (!detail || !ticket) throw new RouteError(404, 'Ticket not found')
-  return { ...detail, environment: runtime.configured() ? runtime.ticketEnvironment(ticket) : [] }
+  return { ...detail, environment: runtime.configured() ? runtime.ticketEnvironment(ticket) : [], executors: runtime.executors.names() }
 }
 export type TicketPageView = ReturnType<typeof ticketPage>
 function promptsView(runtime: HttpHost, revision: number | undefined, offset: number) {
@@ -209,7 +215,13 @@ function routes(runtime: HttpHost): Routes {
       return ticketList(views(runtime), state, offset, limit)
     },
     'GET tickets/:id': ({ params }) => ticketPage(runtime, params.id),
-    'POST tickets/:id/retry': ({ params }) => { const id = ticket(params.id); runtime.engine.retryTicket(id); return { retried: true } },
+    'POST tickets/:id/retry': async ({ params, body }) => {
+      const id = ticket(params.id)
+      const { executor } = z.object({ executor: ExecutorNameSchema.optional() }).strict().optional().parse(await body()) ?? {}
+      if (executor && !runtime.executors.has(executor)) throw new UserError('unknownExecutor', { executor })
+      runtime.engine.retryTicket(id, executor)
+      return { retried: true }
+    },
     'POST tickets/:id/stop': ({ params }) => { const id = ticket(params.id); runtime.engine.stopTicket(id); return { stopped: true } },
     'POST tickets/:id/hold': ({ params }) => ({ held: runtime.engine.holdTicket(ticket(params.id)) }),
     'POST tickets/:id/release': ({ params }) => ({ released: runtime.engine.releaseTicket(ticket(params.id)) }),

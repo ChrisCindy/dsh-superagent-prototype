@@ -118,7 +118,7 @@ it('keeps a launch that a pause cut short queued, and finishes it once processin
   prepare.resolve(); await h.runtime.idle()
   const [ticket] = h.runtime.store.tickets.list()
   expect(ticket!.assignments).toEqual([expect.objectContaining({ state: 'pending' })])
-  expect(h.runtime.effects.pending('launch')).toBe(true)
+  expect(h.runtime.effects.pending('dsh.launch')).toBe(true)
   vi.useFakeTimers({ toFake: ['Date'], now: Date.now() + 6000 })
   try { await h.runtime.settings.pause(false, 'panel'); await h.runtime.idle() } finally { vi.useRealTimers() }
   expect(h.runtime.store.tickets.get(ticket!.id)!.assignments).toEqual([expect.objectContaining({ state: 'running' })])

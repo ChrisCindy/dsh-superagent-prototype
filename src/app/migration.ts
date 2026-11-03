@@ -1,5 +1,5 @@
 /**
- * Migrates a schema 10, 11 or 12 database to schema 13 in a single transaction so runtime readers never convert legacy shapes.
+ * Migrates a schema 10, 11, 12 or 13 database to schema 14 in a single transaction so runtime readers never convert legacy shapes.
  * Databases older than schema 10 are rejected: this version cannot migrate them.
  */
 import { basename } from 'node:path'
@@ -17,7 +17,7 @@ import type { SettingsVersion, Store } from './store.ts'
 import { Versions } from './versions.ts'
 import { KV, type Key } from '../kv.ts'
 
-export const SCHEMA_VERSION = 13
+export const SCHEMA_VERSION = 14
 /** The oldest database schema version this build can open and migrate directly. */
 export const OLDEST_SCHEMA = 10
 /** Returns an error message explaining why `version` cannot be opened: older schemas need a new state directory. */
@@ -79,6 +79,14 @@ export function migrateTo13(store: Store): void {
       store.tickets.save({ ...ticket, inputs })
     })
   }
+}
+/**
+ * Rewrite schema 13 records into their schema 14 shapes in place: the effects the DshExecutor queued under the kinds `launch`
+ * and `delivery` take its name as their prefix. Assignments recorded before they named their Executor stay as they are,
+ * since one without a name is the DshExecutor's (`executorOf`).
+ */
+export function migrateTo14(store: Store): void {
+  store.db.exec("UPDATE effect SET kind = 'dsh.' || kind WHERE kind IN ('launch', 'delivery')")
 }
 /** Rewrite all schema 10 records into their schema 11 shapes in place. */
 export function migrateTo11(store: Store): void {

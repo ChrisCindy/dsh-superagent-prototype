@@ -4,7 +4,8 @@ import type { SessionEvent, SessionId, SessionLogOffset } from '@deepseek-ai/dsh
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { mkdir, rmdir, stat } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
-import { key, latestAssignment, latestReport, liveTicket, MANDATE_ACTIONS, runningAssignment, threadKey, waitsForPerson } from '../core/index.ts'
+import { DEFAULT_EXECUTOR, executorOf, key, latestAssignment, latestReport, liveTicket, MANDATE_ACTIONS, runningAssignment, threadKey, waitsForPerson }
+  from '../core/index.ts'
 import type { AssessmentOutcome, Assignment, EngineForExecutor, Execution, Executor, Mandate, MandateLimits, PolicyEffect, Ticket, TicketInput, Trigger }
   from '../core/index.ts'
 import type { Machine } from '../deployment.ts'
@@ -20,6 +21,8 @@ import type { HealthEntry } from '../infra/health.ts'
 import { cancelled, collectJob, killJobs, runningJobs, stopBackground, stopSubagents, until, untilQuiet } from './background.ts'
 
 const now = (): string => new Date().toISOString()
+/** The name the DshExecutor runs Assignments under, which is the default Executor's. */
+export const DSH_EXECUTOR = DEFAULT_EXECUTOR
 /** Returns the worker session ID (`worker-<ticketId>`) for a ticket. */
 export const workerSessionId = (ticketId: string): string => `worker-${ticketId}`
 /** Returns the ticket ID for a worker session ID (`worker-<ticketId>`), or undefined for non-worker sessions. */
@@ -269,15 +272,15 @@ export class DshExecutor implements Executor {
   private readonly timers = new Set<ReturnType<typeof setTimeout>>()
   /** What each running Assignment used of its budget, by Assignment, folded from its worker Session's log as it grows. */
   private readonly spent = new Map<string, BudgetUse>()
-  /** Registers the `launch` and `delivery` effect handlers; both are held (concurrency limit 0) while processing is paused. */
+  /** Registers the `dsh.launch` and `dsh.delivery` effect handlers; both are held (concurrency limit 0) while processing is paused. */
   constructor(private readonly host: ExecutorHost) {
     this.slots = new WorkerSlots(() => host.store.tickets.open().filter(ticket => this.running(ticket)).map(ticket => ticket.id),
       () => host.store.settings().executor.maxWorkers)
     // Each launch reserves a worker slot so launches run concurrently while slots are free.
-    host.effects.handle('launch', payload => this.launchQueued(payload), { limit: () => host.paused() ? 0 : this.slots.launches(),
+    host.effects.handle('dsh.launch', payload => this.launchQueued(payload), { limit: () => host.paused() ? 0 : this.slots.launches(),
       retry: [5000, 300_000] })
-    // Failed input deliveries are recorded on the ticket itself rather than reported through the `delivery` effect health entry (`quiet: true`).
-    host.effects.handle('delivery', payload => this.deliverQueued(payload.ticketId), { limit: () => host.paused() ? 0 : 4, quiet: true })
+    // Failed input deliveries are recorded on the ticket itself rather than reported through the `delivery` health entry (`quiet: true`).
+    host.effects.handle('dsh.delivery', payload => this.deliverQueued(payload.ticketId), { limit: () => host.paused() ? 0 : 4, quiet: true })
   }
   /** Populates a newly accepted ticket's `execution` attributes (worktree name, workspace directory, and assignment text). */
   prepare(ticket: Ticket, outcome: Extract<AssessmentOutcome, { kind: 'accept' }>): Ticket {
@@ -307,10 +310,10 @@ export class DshExecutor implements Executor {
   }
   /** Enqueues a `launch` effect for an accepted or resumed assignment; launches start in queue order as worker slots free up. */
   start(ticket: Ticket, assignment: Assignment): void {
-    this.host.effects.enqueue('launch', assignment.id, { ticketId: ticket.id, assignmentId: assignment.id })
+    this.host.effects.enqueue('dsh.launch', assignment.id, { ticketId: ticket.id, assignmentId: assignment.id })
   }
   /** Enqueues a `delivery` effect to steer pending inputs into `ticket`'s running worker session. */
-  deliver(ticket: Ticket, _assignment: Assignment): void { this.host.effects.enqueue('delivery', ticket.id, { ticketId: ticket.id }) }
+  deliver(ticket: Ticket, _assignment: Assignment): void { this.host.effects.enqueue('dsh.delivery', ticket.id, { ticketId: ticket.id }) }
   /** Launches a queued assignment unless its ticket ended or a newer assignment replaced it meanwhile. */
   private async launchQueued({ ticketId, assignmentId }: { ticketId: string; assignmentId: string }): Promise<void> {
     const ticket = this.host.store.tickets.get(ticketId)
@@ -595,12 +598,13 @@ export class DshExecutor implements Executor {
   /**
    * Reconciles running and pending assignments across open tickets after a host restart: notifies Engine of interrupted
    * running assignments and re-queues pending launches (which earlier versions may have kept outside the effect queue),
-   * while failed launches (`waitsForPerson`) wait for a person's message or a retry.
+   * while failed launches (`waitsForPerson`) wait for a person's message or a retry. It reconciles only the Assignments it runs.
    */
   resume(): void {
     // Launch pending tickets oldest first (in acceptance order).
     for (const ticket of this.host.store.tickets.open().sort((a, b) => a.createdAt.localeCompare(b.createdAt))) {
       const running = runningAssignment(ticket), latest = latestAssignment(ticket)
+      if (!latest || executorOf(latest) !== DSH_EXECUTOR) continue
       if (running) {
         // A restart within this process left DSH's Sessions, jobs and subagents running: they stop first. The inbox keeps an
         // Input that was handed over but not yet taken.

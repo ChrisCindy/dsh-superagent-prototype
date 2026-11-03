@@ -2,7 +2,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { z } from 'zod'
 import { UserError, type EngineForSettings, type Ticket } from '../core/index.ts'
-import { EvalConfigSchema, ExecutorConfigSchema, PolicyConfigSchema, SettingsSchema, policyEffects, policyVersion } from '../policy.ts'
+import { EvalConfigSchema, ExecutorConfigSchema, ExecutorNameSchema, PolicyConfigSchema, SettingsSchema, policyEffects, policyVersion } from '../policy.ts'
 import type { Settings as SettingsValue, SettingsBlock, SettingsOrigin, SettingsSave } from '../policy.ts'
 import type { SourceHost } from '../sources/host.ts'
 import type { HealthBoard, HealthEntry } from '../infra/health.ts'
@@ -54,7 +54,7 @@ interface Block {
   /** `kind` is the Source kind of a `source` block's instance, which a new instance names. */
   parse(value: unknown, sources: SourceRegistry, id: string, kind?: string): unknown
   merge(settings: SettingsValue, value: unknown, id: string): SettingsValue
-  guard?(current: SettingsValue, candidate: SettingsValue, origin: SettingsOrigin): void
+  guard?(current: SettingsValue, candidate: SettingsValue, origin: SettingsOrigin, id: string): void
 }
 const BLOCKS: Record<'policy' | 'eval' | 'executor' | 'source', Block> = {
   policy: {
@@ -76,10 +76,14 @@ const BLOCKS: Record<'policy' | 'eval' | 'executor' | 'source', Block> = {
     guard: (current, candidate, origin) => { if (origin !== 'panel' && environment(current) !== environment(candidate)) throw new UserError('panelOnlyEnvironment') },
   },
   source: {
-    parse: (value, sources, id, kind) => sources.validate(id, z.object({ enabled: z.boolean(), config: z.unknown() }).parse(value), undefined, kind),
+    parse: (value, sources, id, kind) => sources.validate(id, z.object({ enabled: z.boolean(), config: z.unknown(), executor: ExecutorNameSchema.optional() })
+      .parse(value), undefined, kind),
     merge: (settings, value, id) => ({ ...settings, sources: { ...settings.sources, [id]: value as SettingsValue['sources'][string] } }),
-    // Only the management panel may switch source accounts.
-    guard: (current, candidate, origin) => { if (origin !== 'panel' && setupChanged(current, candidate)) throw new UserError('panelOnlyAccounts') },
+    // Only the management panel may switch source accounts, or the Executor that runs a Source's tickets.
+    guard: (current, candidate, origin, id) => {
+      if (origin !== 'panel' && setupChanged(current, candidate)) throw new UserError('panelOnlyAccounts')
+      if (origin !== 'panel' && current.sources[id]?.executor !== candidate.sources[id]?.executor) throw new UserError('panelOnlyExecutor')
+    },
   },
 }
 
@@ -199,7 +203,7 @@ export class Settings {
       try { await resolveRoleModel(this.host.context, model) }
       catch (error) { throw new UserError('modelUnavailable', { block, error: error instanceof Error ? error.message : String(error) }) }
     }
-    rules.guard?.(current, candidate, origin)
+    rules.guard?.(current, candidate, origin, id)
     if (setupChanged(current, candidate)) await this.host.setup.checkAccounts(block, candidate)
     if (confinement(current) !== confinement(candidate)) this.host.setup.checkConfinement(candidate)
     // A changed merge CLI is checked before it is saved; it takes effect at the next merge request, without a restart.

@@ -64,7 +64,8 @@ export interface Assessor {
 
 /**
  * Executes assignments; concurrency and workspace management are its own concern. The Engine calls it inside its
- * commands, so each method only queues work, which reports back through the Engine's callbacks.
+ * commands, so each method only queues work, which reports back through the Engine's callbacks. Each Assignment names the
+ * Executor that runs it (`Assignment.executor`); the Engine's port dispatches to that one.
  */
 export interface Executor {
   /** Queue a pending assignment for launch; reports back through `Engine.assignmentStarted` or a `failed` report. */
