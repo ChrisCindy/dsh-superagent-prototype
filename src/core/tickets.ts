@@ -368,7 +368,9 @@ export class Tickets extends EnginePart {
       // The main Session that stopped this ticket on the message decides the rest of it itself, unless a ticket handed it back.
       const stopped = decision?.kind === 'stop' && decision.ticketId === ticketId && !disposition?.handbacks?.length
       const decided = !!decision && (settled(decision) || stopped)
-      if (!this.owners(trigger).length && !disposition?.acked?.length && !decided) this.queueForEval(trigger)
+      // A ticket that took it up and then handed it back took nothing up.
+      const taken = disposition?.acked?.some(id => !disposition.handbacks?.some(item => item.ticketId === id))
+      if (!this.owners(trigger).length && !taken && !decided) this.queueForEval(trigger)
     }
   }
   /** An ended ticket that cannot resume takes none of the messages that waited for it (see `letGo`). */

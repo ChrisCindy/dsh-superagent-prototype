@@ -447,8 +447,9 @@ const rows: Row[] = [
       h.receive('2'); h.ack(a, '2')
       h.engine.handback(a, '2', 'For the other ticket')
       h.report(b, 'dropped')
-      // Locked as found: the acknowledgement of the ticket that handed it back still keeps it from Eval.
-      expect(h.queued('2')).toBe(false)
+      // The hand-back undoes the take-up: no ticket decides it, so it goes to Eval as it would have had the ticket that
+      // handed it back been the only one.
+      expect(h.queued('2')).toBe(true)
     } },
   { from: 'none', event: 'a ticket it did not reach acknowledges it, and the ticket that decides it ends without taking it up', to: 'none',
     doc: '002', check: h => {

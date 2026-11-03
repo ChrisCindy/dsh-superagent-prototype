@@ -92,7 +92,8 @@ export function triggerView(view: Snapshot, trigger: Trigger, threadDecisions?: 
   const delivered = view.owners(trigger).length > 0
   const queued = !!home?.pending.includes(trigger.id) && !delivered
   const evaluating = !!home?.evaluating?.triggerIds.includes(trigger.id)
-  const decided = !!disposition?.acked?.length || (!!decision && settled(decision))
+  const taken = disposition?.acked?.some(id => !disposition.handbacks?.some(item => item.ticketId === id))
+  const decided = !!taken || (!!decision && settled(decision))
   const unjudged = !!disposition?.filtered || decision?.kind === 'unavailable' || delivered || (!!disposition?.fanout.length && !decided)
     || (!!decision && !decided)
   const requeue = trigger.human && !queued && !evaluating && unjudged
