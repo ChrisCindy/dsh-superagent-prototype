@@ -46,6 +46,8 @@ export interface ChannelLink { url: string; label: Localized; triggerId?: string
 export interface ChannelLinks { repository?: string; feishu?: Deployment['feishu'] }
 /** Outbound messaging adapter for a source kind's threads. */
 export interface SourceChannel<C> {
+  /** Most words a reply may have; Outbox refuses a longer reply before queueing it. Without it, replies have no limit. */
+  limit?: number
   /** Whether a reply may still go to `address`; without it, every address may receive replies. */
   allowed?(address: Record<string, string>, config: C): boolean
   /**
