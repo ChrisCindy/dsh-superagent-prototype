@@ -121,7 +121,7 @@ it('answers every route but GET state only for a request DeepSeek Harness signed
   const refused = { status: 401, body: { error: expect.stringContaining('DeepSeek Harness sign-in required') } }
   // Writes, reads that carry configuration or messages, unknown routes and malformed paths all need the session cookie.
   for (const [method, path] of [['PUT', 'settings/executor'], ['POST', 'tickets/t1/retry'], ['POST', 'executor/pause'], ['PUT', 'prompts'],
-    ['GET', 'settings'], ['GET', 'sources'], ['GET', 'prompts'], ['GET', 'tickets'], ['GET', 'nothing/here'], ['GET', 'threads/%E0']] as const) {
+    ['GET', 'settings'], ['GET', 'sources'], ['GET', 'prompts'], ['GET', 'tickets'], ['GET', 'metrics'], ['GET', 'nothing/here'], ['GET', 'threads/%E0']] as const) {
     expect(await call(method, path, { value: {}, revision: 0 }, anonymous), `${method} ${path}`).toEqual(refused)
     expect(await call(method, path, { value: {}, revision: 0 }, { cookie: 'dsh_session=forged' }), `${method} ${path}`).toEqual(refused)
   }

@@ -11,6 +11,7 @@ import { snapshot, threadSummary, ticketSummary, triggerView } from '../src/app/
 import { basisFacts, ticketDetail } from '../src/app/views/tickets.ts'
 import { threadDetail } from '../src/app/views/threads.ts'
 import { droppedReplies, sourcesStatus } from '../src/app/views/sources.ts'
+import { metrics } from '../src/app/views/metrics.ts'
 import { overview } from '../src/app/views/overview.ts'
 import { markdown, plain } from '../src/app/views/text.ts'
 import { policyHistory } from '../src/app/settings-history.ts'
@@ -19,7 +20,7 @@ import { feishuLink } from '../src/sources/feishu-channel.ts'
 import { feishuChannel, feishuTriggerId } from '../src/sources/feishu-trigger.ts'
 import { githubLink } from '../src/sources/github-channel.ts'
 import { githubChannel } from '../src/sources/github-trigger.ts'
-import { followupOwners, type ChannelRef } from '../src/core/index.ts'
+import { followupOwners, type ChannelRef, type Decision, type DomainEvent, type Ticket } from '../src/core/index.ts'
 
 let directory: string
 let store: Store
@@ -320,4 +321,43 @@ it('reads each ticket a page\'s follow-ups reached once, and nothing for a messa
   const records = { tickets: { get: vi.fn() }, threads: { get: vi.fn() }, triggers: store.triggers }
   expect(followupOwners(store.triggers.get('f3')!, records)).toEqual([])
   expect([records.tickets.get, records.threads.get].map(read => read.mock.calls.length)).toEqual([0, 0])
+})
+
+it('reads the metrics of a window from its events: Evals by strength and latency, how Tickets ended, and the relays waiting', () => {
+  const now = Date.parse('2026-10-08T00:00:00.000Z'), time = (ms: number) => new Date(now - 86_400_000 + ms).toISOString()
+  const event = (type: DomainEvent['type'], at: string, data: Record<string, unknown>) => store.events.append({ type, at, data } as DomainEvent)
+  const decision = (id: string, evalId: string, fields: Partial<Decision>): Decision => ({ id, evalId, threadKey: 'github:1', triggerIds: [],
+    policyVersion: 'v', at: '', kind: 'ignore', reason: [], strength: 'inferred', ...fields })
+  // An inferred Eval that observe mode would have accepted, delivered after 2 s and decided a minute later.
+  event('eval.started', time(0), { evalId: 'e1' }); event('eval.delivered', time(2000), { evalId: 'e1' })
+  store.decisions.save(decision('d1', 'e1', { assessed: true, audit: { would_accept: true }, reason: [{ code: 'observed' }] }))
+  event('decision.recorded', time(62_000), { evalId: 'e1', decisionId: 'd1' })
+  // An explicit request accepted, and an unavailable Eval, which judged nothing.
+  store.decisions.save(decision('d2', 'e2', { kind: 'accept', strength: 'explicit' }))
+  event('decision.recorded', time(70_000), { evalId: 'e2', decisionId: 'd2' })
+  store.decisions.save(decision('d3', 'e3', { kind: 'unavailable', reason: [{ code: 'timeout' }] }))
+  event('decision.recorded', time(80_000), { evalId: 'e3', decisionId: 'd3' })
+  // A Decision before the window does not count.
+  store.decisions.save(decision('d0', 'e0', { kind: 'accept' }))
+  event('decision.recorded', new Date(now - 30 * 86_400_000).toISOString(), { evalId: 'e0', decisionId: 'd0' })
+  const ticket = (id: string, fields: Partial<Ticket>): Ticket => ({ id, title: id, decisionId: 'd2', mandate: { strength: 'explicit',
+    policyVersion: 'v', basis: { via: 'addressed', addressed: 'mention' }, actor: { source: 'github', id: 'alice' }, scope: '' }, channels: [],
+    assignments: [], inputs: [], undelivered: [], createdAt: time(0), updatedAt: time(0), origin: { triggerId: 'x', triggerIds: ['x'] }, ...fields })
+  // One Ticket finished in two hours with its result after one, held once, its first Assignment out of budget; one a person stopped.
+  store.tickets.save(ticket('t1', { ended: { at: time(7_200_000), by: 'executor', outcome: 'completed' }, assignments: [
+    { id: 'a1', state: 'ended', createdAt: time(0), endedReason: 'budgetSpent' },
+    { id: 'a2', state: 'ended', createdAt: time(0), report: { state: 'ready', summary: '', at: time(3_600_000) } }] }))
+  store.tickets.save(ticket('t2', { ended: { at: time(600_000), by: 'human', outcome: 'stopped' } }))
+  event('ticket.created', time(0), { ticketId: 't1' }); event('ticket.created', time(0), { ticketId: 't2' })
+  event('ticket.held', time(1000), { ticketId: 't1' })
+  event('ticket.ended', time(600_000), { ticketId: 't2' }); event('ticket.ended', time(7_200_000), { ticketId: 't1' })
+  store.db.prepare("INSERT INTO effect (kind, key, value, seq, due, since) VALUES ('relay', 'r1', '{}', 1, 0, ?)").run(time(5))
+  const result = metrics(store, 7, now)
+  expect(result.evals).toEqual({ decided: 3, explicit: { judged: 1, accepted: 1, wouldAccept: 0 }, inferred: { judged: 1, accepted: 0, wouldAccept: 1 } })
+  expect(result.latency).toEqual({ delivered: { count: 1, median: 2000, p90: 2000 }, decided: { count: 1, median: 60_000, p90: 60_000 },
+    total: { count: 1, median: 62_000, p90: 62_000 } })
+  expect(result.tickets).toEqual({ created: 2, ended: 2, outcomes: { completed: 1, merged: 0, closed: 0, dropped: 0, stopped: 1 },
+    duration: { count: 2, median: 600_000, p90: 7_200_000 }, toResult: { count: 1, median: 3_600_000, p90: 3_600_000 }, held: 1, stopped: 1,
+    budgetSpent: 1, assignments: 2 })
+  expect(result.relay).toEqual({ waiting: 1, since: time(5) })
 })

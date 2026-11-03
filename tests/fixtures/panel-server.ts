@@ -110,6 +110,10 @@ export interface PanelServer {
   failing: Extract<Problem, { kind: 'outgoing' }>['outgoing'][]
   /** The main Session's pending Policy proposal, if any. */
   proposal?: Extract<Problem, { kind: 'policy-proposal' }>['proposal'] | undefined
+  /** What `GET metrics` answers; the overview shows its latency and relay queue as the last day's. */
+  metrics: ApiResponse<'GET metrics'>
+  /** The Decisions an Eval in observe mode would have accepted, which `GET decisions` lists by their reason `observed`. */
+  observed: ApiResponse<'GET decisions'>['items']
   /** Further installed kinds whose settings the panel shows, such as the schedule Source's. */
   kinds?: SourceKind[]
 }
@@ -207,7 +211,8 @@ const overviewView = (): ApiResponse<'GET overview'> => {
         .map(([name, item]) => ({ kind: 'runtime-error' as const, name, detail: item.detail })),
       ...Object.values(server.settings.policy.sources).some(part => part.allowed.length) ? [] : [{ kind: 'no-allowed' as const }],
       ...server.failing.map(outgoing => ({ kind: 'outgoing' as const, outgoing }))],
-    person: server.person, executor: { running: 2, queued: 0, maxWorkers: server.settings.executor.maxWorkers, idle: 1 },
+    person: server.person, executor: { running: 2, queued: 0, maxWorkers: server.settings.executor.maxWorkers, idle: 1,
+      evals: server.metrics.latency, relays: server.metrics.relay.waiting },
     flow: { received: 12, filtered: 2, triggers: 10, judged: 5, accepted: 1, evaluating: 0,
       dropped: server.dropped.filter(item => item.dropped.at >= dayAgo()).length },
     policyVersion: 'abcdef1234567890',
@@ -260,7 +265,7 @@ function initial(): PanelServer {
     en: 'Feishu message' } }
   const defaults = { revision: 0, previousRevision: null, savedAt: '', source: 'defaults' }
   return {
-    health: {}, down: false, pending: 0, opened: [], requests: [], misuse: [], queued: new Set(), dropped: [], failing: [],
+    health: {}, down: false, pending: 0, opened: [], requests: [], misuse: [], queued: new Set(), dropped: [], failing: [], metrics: METRICS, observed: [],
     setup: { machine: MACHINE, problem: null, feishuProblem: null, warnings: [],
       accounts: { repository: 'acme/widgets', repositories: { github: 'acme/widgets' }, agent: 'agent-bot', feishu: { appId: 'cli_bot', brand: 'feishu', botId: 'ou_bot',
         name: 'Widgets Bot' } } },
@@ -302,6 +307,15 @@ const page = <T>(items: T[]) => ({ items, total: items.length, next_offset: null
 const ticketOf = (id: string) =>
   [...server.tickets.open, ...server.person, ...server.tickets.ended].find(ticket => ticket.id === id) ?? server.ticketDetails[id]
 const SourceSave = z.object({ enabled: z.boolean(), config: z.unknown() })
+
+const none = { count: 0, median: null, p90: null }
+/** Metrics of a week with no Evals and no ended Tickets. */
+export const METRICS: ApiResponse<'GET metrics'> = { days: 7, since: '2026-09-16T00:00:00.000Z',
+  evals: { decided: 0, explicit: { judged: 0, accepted: 0, wouldAccept: 0 }, inferred: { judged: 0, accepted: 0, wouldAccept: 0 } },
+  latency: { delivered: none, decided: none, total: none },
+  tickets: { created: 0, ended: 0, outcomes: { completed: 0, merged: 0, closed: 0, dropped: 0, stopped: 0 }, duration: none, toResult: none,
+    held: 0, stopped: 0, budgetSpent: 0, assignments: 0 },
+  relay: { waiting: 0, since: null } }
 
 const ROUTES: { [K in keyof Api]: Route<K> } = {
   'GET state': { answer: stateView },
@@ -353,10 +367,11 @@ const ROUTES: { [K in keyof Api]: Route<K> } = {
   } },
   'POST triggers/:id/requeue': { answer: ({ params }) => { server.queued.add(params.id); return { queued: true } } },
   'GET decisions': { query: ['kind', 'reason', 'window', 'offset', 'limit'], answer: ({ query }) =>
-    ({ items: query.kind === 'ignore' ? [] : [acceptDecision()], next_offset: null }) },
+    ({ items: query.reason === 'observed' ? server.observed : query.kind === 'ignore' ? [] : [acceptDecision()], next_offset: null }) },
   'POST decisions/:id/dismiss': { answer: ({ params }) => params.id === 'u1' ? { dismissed: true } : refuse(404,
     'Unavailable Eval not found') },
   'GET events': { query: ['type', 'since', 'before', 'limit'], answer: () => ({ items: [], next_before: null }) },
+  'GET metrics': { query: ['days'], answer: () => server.metrics },
   'GET tickets': { query: ['state', 'offset', 'limit'], answer: ({ query }) => page(server.tickets[query.state === 'ended' ? 'ended'
     : 'open']) },
   'GET tickets/:id': { answer: ({ params }) => server.ticketDetails[params.id] ?? refuse(404, 'Ticket not found') },

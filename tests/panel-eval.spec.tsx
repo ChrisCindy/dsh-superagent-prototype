@@ -103,6 +103,31 @@ it('syncs a Source\'s list from where the Source keeps it, but not while a Polic
   expect(server.requests.slice(before).some(request => request.path.startsWith('policy-sync'))).toBe(false)
 })
 
+it('shows the evidence for switching observe to auto beside the accept mode, with the latest would-accept records to check one by one',
+  async () => {
+  const spread = (median: number) => ({ count: 4, median, p90: median })
+  server.metrics = { ...server.metrics,
+    evals: { decided: 9, explicit: { judged: 2, accepted: 2, wouldAccept: 0 }, inferred: { judged: 4, accepted: 0, wouldAccept: 1 } },
+    latency: { delivered: spread(2000), decided: spread(90_000), total: spread(92_000) },
+    tickets: { ...server.metrics.tickets, ended: 2, duration: spread(3 * 3_600_000), toResult: spread(1_800_000), held: 1, stopped: 0,
+      budgetSpent: 1 } }
+  server.observed = [{ id: 'd9', kind: 'ignore', outcome: 'wouldAccept', reason: [{ code: 'observed', values: { text: '按钮间距可修' } }],
+    at: '2026-09-22T00:00:00Z', strength: 'inferred', ticketId: undefined, triggerIds: ['e9'], thread: 'feishu:oc_1:om_root', rules: [],
+    preview: '按钮间距不对', ticketTitle: undefined }]
+  await mount(en)
+  await click(en['tab.eval'])
+  await click(find(en['tab.settings'], '.dt-status-head button'))
+  expect(server.requests.some(request => request.path === 'metrics?days=7')).toBe(true)
+  expect(server.requests.some(request => request.path === 'decisions?kind=ignore&reason=observed&limit=10')).toBe(true)
+  const card = all('.dt-block').find(block => block.textContent?.startsWith(en.readiness))!
+  expect([...card.querySelectorAll('.dt-stat')].map(item => item.textContent)).toEqual([`${en.readinessJudged}6`,
+    `${en.readinessAccepted}2 (33%)`, `${en.readinessInferred}4`, `${en.readinessWouldAccept}1 (25%)`, `${en.evalToDeliveryLabel}2 s`,
+    `${en.evalToDecisionLabel}2 min`, `${en.readinessEnded}2`, `${en.readinessDuration}3 h`, `${en.readinessToResult}30 min`,
+    `${en.readinessHeld}1 (50%)`, `${en.readinessStopped}0 (0%)`, `${en.readinessBudget}1 (50%)`])
+  expect(card.textContent).toContain('按钮间距不对')
+  expect(card.textContent).toContain(en.wouldAccept)
+})
+
 it('adds, copies, renames, disables and deletes rules in Policy without touching Eval', async () => {
   await mount()
   await click(zh['tab.eval'])

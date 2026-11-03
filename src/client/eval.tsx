@@ -10,7 +10,7 @@ import { SaveBar } from './draft.tsx'
 import { useAction, usePanel } from './provider.tsx'
 import { DecisionLine } from './rows.tsx'
 import { ConfigHistory, Field, Fields, ModelField, SourceField, numberOf, useBlockDraft, useSettings } from './settings-kit.tsx'
-import { localized, valueLabel, when } from './text.ts'
+import { localized, span, valueLabel, when } from './text.ts'
 import { Hint, LabelValue, LoadMore, LoadState, Section, StatusHead } from './widgets.tsx'
 
 export function EvalStatus({ filter, window, paused }: { filter: DecisionFilter; window: '24h' | undefined; paused: boolean }) {
@@ -259,10 +259,52 @@ function EvalBlock() {
   </form>
 }
 
+/** How many days of evidence the readiness card reads, and how many would-accept records it lists for spot checks. */
+const READINESS_DAYS = 7, SPOT_CHECKS = 10
+/**
+ * The evidence for switching the accept mode from observe to auto: how Evals judged and how long they took, how Tickets
+ * ended, and the latest Decisions an Eval would have accepted, to read one by one.
+ */
+function Readiness() {
+  const { t, call } = usePanel()
+  const { data, error } = usePoll(() => Promise.all([call('GET metrics', { query: { days: READINESS_DAYS } }),
+    call('GET decisions', { query: { kind: 'ignore', reason: 'observed', limit: SPOT_CHECKS } })]), [], 30_000)
+  const share = (count: number, of: number) => of ? `${count} (${Math.round(100 * count / of)}%)` : String(count)
+  const stat = (label: string, value: string | number) => <span className="dt-stat"><span className="dt-stat-label">{label}</span><span
+    className="dt-stat-value">{value}</span></span>
+  if (!data) return <LoadState error={error} loading={!error} />
+  const [{ evals, latency, tickets }, records] = data
+  const judged = evals.explicit.judged + evals.inferred.judged
+  return <div className="dt-form dt-block">
+    <h2 className="dt-block-title">{t('readiness')}<InfoTip text={t('readinessHint', { days: READINESS_DAYS })} /></h2>
+    <div className="dt-stats">
+      {stat(t('readinessJudged'), judged)}
+      {stat(t('readinessAccepted'), share(evals.explicit.accepted + evals.inferred.accepted, judged))}
+      {stat(t('readinessInferred'), evals.inferred.judged)}
+      {stat(t('readinessWouldAccept'), share(evals.inferred.wouldAccept, evals.inferred.judged))}
+      {stat(t('evalToDeliveryLabel'), span(t, latency.delivered.median))}
+      {stat(t('evalToDecisionLabel'), span(t, latency.decided.median))}
+    </div>
+    <div className="dt-stats">
+      {stat(t('readinessEnded'), tickets.ended)}
+      {stat(t('readinessDuration'), span(t, tickets.duration.median))}
+      {stat(t('readinessToResult'), span(t, tickets.toResult.median))}
+      {stat(t('readinessHeld'), share(tickets.held, tickets.ended))}
+      {stat(t('readinessStopped'), share(tickets.stopped, tickets.ended))}
+      {stat(t('readinessBudget'), share(tickets.budgetSpent, tickets.ended))}
+    </div>
+    <Section title={t('readinessRecords')} count={records.items.length}>
+      {records.items.length ? <ul className="dt-list">{records.items.map(decision => <DecisionLine key={decision.id}
+        decision={decision} />)}</ul> : <Hint>{t('readinessNone')}</Hint>}
+    </Section>
+  </div>
+}
+
 export function EvalSettings({ version }: { version?: string | undefined }) {
   return <div className="dt-form">
     <PolicyBlock />
     <EvalBlock />
+    <Readiness />
     <ConfigHistory blocks={['policy', 'eval']} versions {...version ? { focus: version } : {}} />
   </div>
 }

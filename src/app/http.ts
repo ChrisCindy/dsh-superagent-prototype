@@ -25,6 +25,7 @@ import type { TextCache } from './cache.ts'
 import type { LinkTarget, ViewHost } from './views/records.ts'
 import type { Variable } from './execution-environment.ts'
 import { policyHistory } from './settings-history.ts'
+import { metrics } from './views/metrics.ts'
 import { overview } from './views/overview.ts'
 import { settingsView } from './views/settings.ts'
 import { sourcesStatus, type SetupState } from './views/sources.ts'
@@ -157,6 +158,7 @@ const DecisionsQuery = z.object({ kind: z.string().default(''), reason: z.string
 const EventsQuery = z.object({ type: z.string().default(''), since: z.string().default('').transform(isoTime), before: z.coerce.number().int().positive().optional().catch(undefined),
   limit: limit(100, 1000) })
 const count = z.coerce.number().int().nonnegative()
+const MetricsQuery = z.object({ days: z.coerce.number().int().min(1).max(90).catch(7) })
 const PromptsQuery = z.object({ revision: count.optional(), offset: count.default(0) })
 const SourceBlock = z.templateLiteral(['source:', z.string().regex(/^[a-z][a-z0-9-]*$/)])
 const SettingsBlockSchema = z.union([z.enum(['policy', 'eval', 'executor']), SourceBlock])
@@ -210,6 +212,7 @@ function routes(runtime: HttpHost): Routes {
       const page = store.read.events({ types: type.split(',').filter(Boolean), since, ...before ? { before } : {} }, limit)
       return { items: page.items, next_before: page.more ? page.items.at(-1)!.seq : null }
     },
+    'GET metrics': ({ query }) => metrics(store, MetricsQuery.parse(query).days),
     'GET tickets': ({ query }) => {
       const { state, offset, limit } = TicketsQuery.parse(query)
       return ticketList(views(runtime), state, offset, limit)

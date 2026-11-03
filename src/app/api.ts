@@ -4,6 +4,7 @@ import type { PromptConfig, Prompts } from './prompts.ts'
 import type { PromptsView, StateView, TicketPageView } from './http.ts'
 import type { HistoryView } from './settings-history.ts'
 import type { Settings } from './settings.ts'
+import type { MetricsView } from './views/metrics.ts'
 import type { OverviewView } from './views/overview.ts'
 import type { SettingsView } from './views/settings.ts'
 import type { SourceStatusView } from './views/sources.ts'
@@ -37,6 +38,8 @@ export interface Api {
   /** Domain events newest first, of the comma-separated `type`s; `next_before` continues the list as `before`. */
   'GET events': { query?: { type?: string; since?: string; before?: number; limit?: number }
     response: { items: StoredEvent[]; next_before: number | null } }
+  /** Evals, their latency, the Tickets that ended in the last `days` days (7 when left out), and the relays waiting now. */
+  'GET metrics': { query?: { days?: number }; response: MetricsView }
   'GET tickets': { query?: Paged & { state?: TicketFilter }; response: TicketListView }
   'GET tickets/:id': { response: TicketPageView }
   /** `executor` names the Executor the new Assignment runs on; without it, the one the stalled Assignment ran on. */
