@@ -40,7 +40,6 @@ import { HealthBoard } from '../infra/health.ts'
 import { Outbox } from './outbox.ts'
 import { Passes } from './passes.ts'
 import { Setup } from './setup.ts'
-import { feishuSettings } from '../sources/feishu.ts'
 import { health, type Health, type SourceContext, type SourceHost } from '../sources/host.ts'
 import { Sessions } from './sessions.ts'
 import { Settings } from './settings.ts'
@@ -123,12 +122,10 @@ export class Runtime extends Service implements SourceHost {
       const environment = (ticket: Ticket) => this.ticketEnvironment(ticket)
       const resources: ResourceHost = { store, pages: new TextCache(4_000_000), prompts, commands, masterId, context: ctx,
         promptVersion: id => this.sessions.promptVersion(id), mayRead: (id, revision) => this.sessions.mayRead(id, revision),
-        feishuPageSize: () => feishuSettings(sources).readPageSize, sourceLink: link, repliesTo: trigger => sources.repliesTo(trigger),
-        githubSource: (resource, ticketId) => {
-          const prefix = resource.slice(0, Math.max(resource.indexOf('/'), 0))
+        sourceLink: link, repliesTo: trigger => sources.repliesTo(trigger), sourceResourceNames: () => sources.resourceNames(),
+        sourceResources: (prefix, ticketId) => {
           const ticket = ticketId ? store.tickets.get(ticketId) : undefined
-          if (prefix === GITHUB) return sources.home(GITHUB, ticket && this.originTrigger(ticket))
-          return prefix && sources.kindOf(prefix)?.kind === GITHUB ? prefix : undefined
+          return sources.resources(prefix, ticket && this.originTrigger(ticket))
         } }
       const sessions = this.sessions = new Sessions({ context: ctx, store, prompts, effects, health: board.claim('models'), masterId,
         lifetime: this.lifetime,

@@ -4,12 +4,11 @@ import { z } from 'zod'
 import { FeishuBotSchema } from '../deployment.ts'
 import { IM_WORDS } from '../infra/text.ts'
 import { feishuLink, sendFeishu } from './feishu-channel.ts'
-import { feishuThreadContext, readFeishuLink } from './feishu-read.ts'
+import { feishuRead, feishuReferences, feishuThreadContext, readFeishuLink } from './feishu-read.ts'
 import { refreshChatNames, runFeishu } from './feishu-loops.ts'
 import { SOURCE, feishuRef, feishuTriggerId } from './feishu-trigger.ts'
 import { sourceContext } from './host.ts'
 import type { Localized, SourceKind } from './kind.ts'
-import type { SourceRegistry } from './registry.ts'
 
 export { SOURCE, feishuRef, feishuThreadId, feishuTime, feishuTrigger, feishuTriggerId, historyEvent, withMentionNames }
   from './feishu-trigger.ts'
@@ -70,6 +69,16 @@ export const feishuKind: SourceKind<FeishuConfig> = {
         readFeishuLink(commands.withSignal(AbortSignal.any([signal, AbortSignal.timeout(config.linkTimeoutMs)])), feishuRef(trigger)!),
       fallback: trigger => `feishu/${trigger.id}/message`,
     },
+  },
+  // Originals are read around a Trigger the reader may read, never by arbitrary chat or message IDs.
+  resources: {
+    names: [{ name: 'feishu/<trigger-id>/…', holds: 'a Feishu original, as the dsh-superagent-feishu skill describes' }],
+    open: ({ resource, prefix, commands, config, trigger }) => {
+      const ref = feishuRef(trigger(resource.slice(prefix.length + 1).split('/')[0]!))
+      if (!ref) throw new Error('A Feishu source trigger is required')
+      return () => feishuRead(commands, ref, resource, config.readPageSize)
+    },
+    references: trigger => { const ref = feishuRef(trigger); return ref && feishuReferences(ref) },
   },
   threadContext: feishuThreadContext,
   find: query => ({ threads: [], terms: [...new Set(query.match(/om_[A-Za-z0-9_-]+/g) ?? [])] }),
@@ -132,8 +141,6 @@ export const feishuKind: SourceKind<FeishuConfig> = {
   },
   facts: (deployment): Record<string, Localized | string> => deployment?.feishu ? { cli: { zh: `当前机器人 ${deployment.feishu.name || deployment.feishu.botId}`, en: `Current bot ${deployment.feishu.name || deployment.feishu.botId}` } } : {},
 }
-/** Returns the Feishu Source's settings, falling back to schema defaults while the Feishu plugin is disabled. */
-export const feishuSettings = (sources: SourceRegistry): FeishuConfig => sources.instance<FeishuConfig>(SOURCE)?.config ?? FeishuConfigSchema.parse({})
 
 export const name = 'dsh-superagent-feishu'
 export const inject = ['orchestrator']

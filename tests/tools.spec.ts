@@ -103,6 +103,9 @@ it('keeps the main Session\'s resources from an Executor Session, which lists on
   const registered = h.tools.get(sessionId)!.get('orchestrator_read') as unknown as Registered
   const offered = registered.description + registered.parameters.properties.resource.description
   for (const { name, executor } of RESOURCES) expect(offered.includes(`${name}:`), name).toBe(!!executor)
+  // The Source kinds' originals follow the host's own, for both roles.
+  for (const { name } of h.runtime.sources.resourceNames()) expect(offered.includes(`${name}:`), name).toBe(true)
+  expect(h.runtime.sources.resourceNames().map(({ name }) => name)).toEqual(['feishu/<trigger-id>/…', 'github/…'])
   expect(offered).not.toMatch(/preview/i)
 })
 

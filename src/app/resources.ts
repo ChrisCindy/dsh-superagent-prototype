@@ -2,9 +2,7 @@
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import { UserError, key, latestReport, reached, runningAssignment, threadKey, type Ticket, type Trigger } from '../core/index.ts'
 import { batchOf, inputMessage, triggerMessage, workerSessionId } from '../executor/dsh.ts'
-import { readGithub } from '../sources/github-read.ts'
-import { feishuReferences, feishuRead } from '../sources/feishu-read.ts'
-import { feishuRef } from '../sources/feishu.ts'
+import type { SourceRegistry } from '../sources/registry.ts'
 import { ASSIGNMENTS, INPUTS, assignmentLine, decisionCard, decisionDetails, inputLine, newestPage, preview, textPage, threadCard, ticketCard,
   ticketDetails, triggerCard, type TicketThread } from './cards.ts'
 import { threadTitle } from './views/records.ts'
@@ -49,11 +47,10 @@ export const RESOURCES: readonly { name: string; holds: string; executor?: true 
   { name: 'prompt-preview/<id>', holds: 'a composed prompt that orchestrator_prompts_save previewed' },
   { name: 'models', holds: 'model providers, the DSH default and each role\'s model' },
   { name: 'models/<provider>', holds: 'one provider\'s models' },
-  { name: 'feishu/<trigger-id>/…', holds: 'a Feishu original, as the dsh-superagent-feishu skill describes', executor: true },
-  { name: 'github/…', holds: 'a GitHub original, as the dsh-superagent-github skill describes; another GitHub Source\'s under its id, such as github-docs/…', executor: true },
 ]
-export const resourceGrammar = (executor: boolean): string => RESOURCES.filter(resource => !executor || resource.executor)
-  .map(resource => `${resource.name}: ${resource.holds}`).join('; ')
+/** The resources a Session's `orchestrator_read` lists: the host's own, then the Source kinds' `sources`, which both roles read. */
+export const resourceGrammar = (executor: boolean, sources: readonly { name: string; holds: string }[]): string =>
+  [...RESOURCES.filter(resource => !executor || resource.executor), ...sources].map(resource => `${resource.name}: ${resource.holds}`).join('; ')
 
 export interface ResourceHost {
   readonly store: Pick<Store, 'get' | 'settings' | 'triggers' | 'tickets' | 'threads' | 'read' | 'decisions' | 'replyStatus'>
@@ -65,12 +62,13 @@ export interface ResourceHost {
   promptVersion(sessionId: string): PromptVersion
   /** Whether a Session may read `revision` (the revision it currently runs under or any revision it ran under previously). */
   mayRead(sessionId: string, revision: number): boolean
-  feishuPageSize(): number
   /**
-   * The GitHub Source instance whose repository a resource reads: for `github/…`, a worker's ticket's own instance or else the
-   * first; for `<id>/…`, GitHub instance `id`; undefined for anything else.
+   * The Source instance whose resources a name starting with `prefix` reads (`SourceRegistry.resources`): for a kind's ID, a
+   * worker's ticket's own instance of that kind or else the first; for another instance's ID, that instance.
    */
-  githubSource(resource: string, ticketId?: string): string | undefined
+  sourceResources(prefix: string, ticketId?: string): ReturnType<SourceRegistry['resources']>
+  /** The Source kinds' resources, which `orchestrator_read` lists after the host's own. */
+  sourceResourceNames(): { name: string; holds: string }[]
   sourceLink(trigger: Trigger, signal?: AbortSignal): Promise<{ source_url?: string; source_url_read?: string }>
   /** The ID of the Trigger whose message `trigger` replies to, as its kind's `repliesTo` derives it. */
   repliesTo(trigger: Trigger): string | undefined
@@ -106,19 +104,20 @@ const trigger = (host: ResourceHost, id: string, ticketId?: string): Trigger => 
   if (ticketId && (!ticket || !readable(host, ticket, found))) throw new UserError('notReached')
   return found
 }
-/** Fetch and cache a source resource on offset 0, serving subsequent offsets from the session cache. */
-async function sourcePage(read: Read, source: string, fetch: () => Promise<unknown>) {
-  const { host, resource, offset, sessionId } = read
+/**
+ * Reads a Source kind's resource through the instance it names (`ResourceHost.sourceResources`): fetched and cached on offset 0,
+ * and later offsets served from the Session's cache.
+ */
+async function sourcePage(read: Read, prefix: string) {
+  const { host, resource, offset, sessionId, ticketId } = read
+  const found = host.sourceResources(prefix, ticketId)
+  if (!found) throw new Error('Unknown context resource')
+  const fetch = found.resources.open({ resource, prefix, commands: host.commands.forSource(found.id).withSignal(read.signal), config: found.config,
+    trigger: id => trigger(host, id, ticketId) })
   const body = offset === 0 ? JSON.stringify(await fetch()) : host.pages.get(`${sessionId}:${resource}`)
-  if (body === undefined) throw new Error(`Read this ${source === 'feishu' ? 'Feishu' : 'GitHub'} resource from offset 0 first`)
+  if (body === undefined) throw new Error(`Read this ${found.title} resource from offset 0 first`)
   if (offset === 0) host.pages.set(`${sessionId}:${resource}`, body)
   return text(read, body)
-}
-/** Reads a GitHub resource from the repository of the instance it names (`ResourceHost.githubSource`). */
-function githubPage(read: Read, prefix: string) {
-  const source = read.host.githubSource(read.resource, read.ticketId)
-  if (!source) throw new Error('Unknown context resource')
-  return sourcePage(read, 'github', () => readGithub(read.host.commands.forSource(source).withSignal(read.signal), read.resource, prefix))
 }
 const THREAD_DECISIONS = 5
 const triggerLine = (trigger: Trigger) => ({ trigger_id: trigger.id, actor: trigger.actor.id, human: trigger.human, at: trigger.at,
@@ -211,19 +210,11 @@ const ROUTES: readonly Route[] = [
     if (!models) throw new Error('Unknown model provider')
     return list(read, (offset, count) => models.slice(offset, offset + count))
   }],
-  ['feishu/', async read => {
-    const source = trigger(read.host, read.rest.split('/')[0]!, read.ticketId)
-    const ref = feishuRef(source)
-    if (!ref) throw new Error('A Feishu source trigger is required')
-    const commands = read.host.commands.withSignal(read.signal)
-    return sourcePage(read, 'feishu', () => feishuRead(commands, ref, read.resource, read.host.feishuPageSize()))
-  }],
-  ['github/', read => githubPage(read, 'github')],
   ['trigger/', async read => {
     const { host, rest, ticketId, offset, signal } = read
     if (!rest || rest.includes('/')) throw new Error('Unknown context resource')
     const found = trigger(host, rest, ticketId)
-    const ref = feishuRef(found)
+    const references = host.sourceResources(found.source)?.resources.references?.(found)
     // Redact decision IDs, other tickets, and unreachable neighbour triggers when a worker session reads a trigger.
     const ticket = ticketId ? host.store.tickets.get(ticketId) : undefined
     const shown = (item: Trigger | undefined) => item && (!ticket || readable(host, ticket, item)) ? item : undefined
@@ -237,7 +228,7 @@ const ROUTES: readonly Route[] = [
     const neighbours = host.store.read.neighbours(threadKey(found.threads[0]!), found.at, found.id)
     const around = { before: shown(neighbours.before), after: shown(neighbours.after) }
     return { ...card, ...await host.sourceLink(found, signal), acknowledgement: host.store.replyStatus(key('ack', found.id)) ?? 'not_requested',
-      ...(ref ? { context: feishuReferences(ref) } : {}),
+      ...(references ? { context: references } : {}),
       ...(offset === 0 ? {
         ...repliedTo ? { replied_to: triggerLine(repliedTo) } : {},
         around: { ...around.before ? { before: triggerLine(around.before) } : {}, ...around.after ? { after: triggerLine(around.after) } : {} },
@@ -311,10 +302,10 @@ const ROUTES: readonly Route[] = [
 export async function readResource(host: ResourceHost, resource: string, offset: number, limit: number | undefined, ticketId?: string,
   signal?: AbortSignal) {
   const name = resource.replace(/^event\//, 'trigger/').replace(/^task\//, 'ticket/').replace(/^observation\//, 'decision/')
-  // Another GitHub instance's originals are named by its ID, such as `github-docs/issues/12`.
+  // A Source's originals are named by its kind's ID or by another instance's, such as `github/issues/12` or `github-docs/issues/12`.
   const prefix = name.slice(0, Math.max(name.indexOf('/'), 0))
-  const other = prefix && prefix !== 'github' && host.githubSource(name, ticketId) ? [`${prefix}/`, (read: Read) => githubPage(read, prefix)] as const : undefined
-  const route = other ?? ROUTES.find(([route]) => route.endsWith('/') ? name.startsWith(route) : name === route)
+  const source = prefix && host.sourceResources(prefix, ticketId) ? [`${prefix}/`, (read: Read) => sourcePage(read, prefix)] as const : undefined
+  const route = ROUTES.find(([route]) => route.endsWith('/') ? name.startsWith(route) : name === route) ?? source
   if (!route) throw new Error('Unknown context resource')
   const sessionId = ticketId ? workerSessionId(ticketId) : host.masterId
   const rest = route[0].endsWith('/') ? name.slice(route[0].length) : ''

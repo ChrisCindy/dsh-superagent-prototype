@@ -3,8 +3,8 @@ import type { ChannelRef, OutboundMessage, ScopeResult, SourceScope, Trigger } f
 import type { Commands } from '../infra/commands.ts'
 import { HealthBoard, type HealthEntry } from '../infra/health.ts'
 import { AdmissionTableSchema, type Settings } from '../policy.ts'
-import { instanceHealth, type ChannelLink, type ChannelLinks, type SourceInstance, type SourceKind, type TriggerContext, type VariableSpec }
-  from './kind.ts'
+import { instanceHealth, type ChannelLink, type ChannelLinks, type SourceInstance, type SourceKind, type SourceResources, type TriggerContext,
+  type VariableSpec } from './kind.ts'
 
 type Stored = Settings['sources'][string]
 
@@ -164,6 +164,22 @@ export class SourceRegistry implements SourceScope {
     if (!kind || !link || key === undefined) return undefined
     const { config } = this.resolve(kind, trigger.source, settings.sources[trigger.source])
     return { key, fallback: link.fallback(trigger), read: (commands, signal) => link.read(commands.forSource(trigger.source), trigger, config, signal) }
+  }
+  /** The resources every installed kind serves, kinds in ID order, as `orchestrator_read` lists them. */
+  resourceNames(): { name: string; holds: string }[] {
+    return [...this.kinds.values()].sort((a, b) => a.kind.localeCompare(b.kind)).flatMap(kind => kind.resources?.names ?? [])
+  }
+  /**
+   * The instance whose resources a name starting with `prefix` reads, with its kind's title, resources and the instance's
+   * configuration: for a kind's ID, the instance `origin` has of that kind (see `home`); for another instance's ID, that
+   * instance. Undefined when no installed kind with resources has it.
+   */
+  resources(prefix: string, origin?: string | Pick<Trigger, 'source' | 'threads'>, settings = this.settings()):
+    { id: string; title: string; resources: SourceResources<Record<string, unknown>>; config: Record<string, unknown> } | undefined {
+    const kind = this.kindOf(prefix, settings)
+    if (!kind?.resources) return undefined
+    const id = prefix === kind.kind ? this.home(kind.kind, origin, settings) : prefix
+    return { id, title: kind.title.en, resources: kind.resources, config: this.resolve(kind, id, settings.sources[id]).config }
   }
   find(query: string): { threads: string[]; terms: string[] } {
     const found = this.instances().flatMap(instance => {

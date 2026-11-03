@@ -91,6 +91,31 @@ export interface ThreadContext<C> {
   image?(agent: Agent, commands: Commands, trigger: Trigger, message: { id: string; text: string }, key: string, stateDir: string,
     signal: AbortSignal): Promise<unknown>
 }
+/** What a Source kind's resource read receives: the name, the instance's commands and configuration, and a Trigger lookup. */
+export interface ResourceRead<C> {
+  /** The resource name, which starts with `prefix` and a slash. */
+  resource: string
+  /** The kind's ID, or the ID of the other instance of the kind whose resource this is, such as `github-docs`. */
+  prefix: string
+  /** Commands of that instance. */
+  commands: Commands
+  config: C
+  /** The Trigger `id`, which the reading Session may read. @throws for an unknown Trigger, or one the Session may not read. */
+  trigger(id: string): Trigger
+}
+/** Originals of a Source kind that `orchestrator_read` serves, under the kind's ID or another instance's. */
+export interface SourceResources<C> {
+  /** The resources `orchestrator_read` lists after the host's own, by name and what each holds; Executor Sessions read them too. */
+  names: readonly { name: string; holds: string }[]
+  /**
+   * Checks a resource name and the reader's access, and returns the read that fetches it; the host calls the read at offset 0
+   * and serves the JSON of its result in pages from a cache after.
+   * @throws for a name the kind does not serve, or a Trigger the reader may not read.
+   */
+  open(input: ResourceRead<C>): () => Promise<unknown>
+  /** Resources that read around a Trigger of this kind, which `trigger/<id>` shows as `context`; undefined for none. */
+  references?(trigger: Trigger): Record<string, string> | undefined
+}
 export interface TriggerContext {
   readonly messageId: string
   read(commands: Commands, part: ContextPartName, cursor?: string): Promise<ContextPart>
@@ -123,6 +148,8 @@ export interface SourceKind<C extends Record<string, unknown> = Record<string, u
   scope?(input: { meta: Record<string, unknown> }, config: C): ScopeResult
   /** Outbound reply adapter; kinds without `channel` produce no replies or channel checks. */
   channel?: SourceChannel<C>
+  /** Originals `orchestrator_read` serves under the kind's ID and its other instances' IDs. */
+  resources?: SourceResources<C>
   /** Bounded context reader for assessments; assessments of a kind without `threadContext` read none. */
   threadContext?: ThreadContext<C>
   /** Maps a search query to an instance's candidate Thread keys (such as `github:12`) and Trigger search terms (such as a Feishu `om_` ID). */
