@@ -29,6 +29,17 @@ The temporary areas are `/tmp` and the OS user's temporary directory, and every 
 
 The sandbox covers files only. Sessions still run as the operator's OS user, reach the network, and read the operator's home directory, and a worker can execute programs by path. Account wrappers choose the agent's credentials by default; they do not isolate the process. For isolation, use a dedicated OS account containing only the agent's credentials.
 
+#### Dedicated OS user
+
+Run the whole profile as its own OS user, for example `dsh`, so that the operator's files and personal credentials are out of reach:
+
+1. Create the user: `sudo useradd --create-home --shell /bin/bash dsh`, then `sudo chmod 700 /home/dsh`.
+2. As that user, install DeepSeek Harness and this bundle, and create the profile (Install, below). `$DSH_HOME`, the profile and `stateDir` then live in its home.
+3. As that user, set up the agent's GitHub CLI (Accounts, below), and the merge account and Feishu bot if you use them.
+4. Start the service as that user, for example from a systemd unit with `User=dsh`. Run `scripts/dsh-superagent` as that user too, so `login` can read its startup log.
+
+The workers still run as `dsh`, so they can still read `$DSH_HOME/.credentials.yaml`, the startup log, the cookie jar and the database. Moving workers to a second user through DeepSeek Harness's SSH provider is the planned next step. `docs/adr/0001-worker-os-isolation.md` compares the options, records what a proof of concept (`scripts/isolation-poc.sh`) showed, and lists what remains to do.
+
 #### Writable roots and the full-access fallback
 
 A git worktree keeps its objects and refs in the main clone's `.git`, outside the Ticket directory, so under the sandbox a worker cannot commit in one. Either give each Ticket a checkout whose git data lies inside its directory, as the prepare command under Settings does, or list the main clone's `.git` under **Writable roots** in the Execution settings, with any cache a toolchain writes outside the Ticket directory, such as a package manager's store.
