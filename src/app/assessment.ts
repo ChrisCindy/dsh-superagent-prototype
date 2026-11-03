@@ -2,8 +2,8 @@
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { z } from 'zod'
 import { reasonText, threadKey, type Assessor, type AssessmentOutcome, type Candidate, type EngineForMainSession,
-  type Trigger } from '../core/index.ts'
-import { AdmissionDirectionSchema, RuleAssessmentSchema, assessmentOutcome, directionAllowed, type Settings } from '../policy.ts'
+  type Thread, type Trigger } from '../core/index.ts'
+import { AdmissionDirectionSchema, GlobSchema, RuleAssessmentSchema, assessmentOutcome, directionAllowed, type Settings } from '../policy.ts'
 import { checkedImText } from '../infra/text.ts'
 import type { Commands } from '../infra/commands.ts'
 import type { Deployment } from '../deployment.ts'
@@ -27,6 +27,7 @@ export const AssessmentSchema = z.object({
   title: z.string().min(1).max(160),
   worktree_name: WorktreeNameSchema.optional(),
   scope: z.string().max(1500),
+  paths: z.array(GlobSchema).max(20).nullish().describe('Optional globs of the only files it may change.'),
   intent_evidence: z.string().trim().min(1).max(700).nullish().describe('For acceptance: the quotes that establish the three facts.'),
   acknowledgement: AcknowledgementSchema.nullish().describe('For acceptance: one sentence in the source language, posted as a reply to the trigger; omit only when a matched rule asks for silence.'),
   reason: z.string().min(1).max(500),
@@ -63,6 +64,8 @@ export interface AssessorHost {
   /** Delivers a candidate card to the main Session once per request ID, resolving after the Session receives it. */
   deliver(requestId: string, text: string): Promise<void>
   candidateCard(candidate: Candidate): Promise<Record<string, unknown>>
+  /** The Threads correlated with `thread` as `correlated_threads`, for reference only, or nothing when it has none. */
+  correlatedThreads(thread: Thread): { correlated_threads?: unknown[] }
 }
 
 /** Schema for bounded context or repository read requests during an active evaluation (`orchestrator_eval_read`). */
@@ -176,7 +179,7 @@ export class MasterAssessor implements Assessor {
   }
   /**
    * Returns the `orchestrator_eval` payload: the trigger's text once (up to `TRIGGER_CHARS`), batch peers, related tickets
-   * on the thread, the Policy version its Eval was built from, and the initial thread window (first five messages and five
+   * on the thread, the correlated Threads for reference, the Policy version its Eval was built from, and the initial thread window (first five messages and five
    * on either side of the trigger, truncated to `WINDOW_CHARS` or `NEAR_CHARS` for its two nearest neighbours with total
    * length and image IDs, plus other loaded messages as `STUB_CHARS` previews; `orchestrator_eval_read` reads any message
    * in full by ID).
@@ -217,7 +220,7 @@ export class MasterAssessor implements Assessor {
         return { trigger_id: item.id, actor: item.actor.id, at: item.at, ...text, ...'chars' in text ? { read: `trigger/${item.id}` } : {} }
       }) } : {},
       // The rules are in the main Session's Policy section, which names the version the candidate's Eval was built from.
-      ...relatedTickets(candidate.tickets), policy_version: candidate.policyVersion,
+      ...relatedTickets(candidate.tickets), ...this.host.correlatedThreads(candidate.thread), policy_version: candidate.policyVersion,
       thread }
   }
   /**

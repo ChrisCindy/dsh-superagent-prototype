@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { Engine, MemoryRepositories, UserError, followupOwners, key, runningAssignment, ticketOutcome, ticketStage,
   waitsForPerson } from '../src/core/index.ts'
-import type { Assessor, Assignment, Candidate, EngineOptions, Executor, OutboundMessage, Outcome, Policy, Ticket, Trigger } from '../src/core/index.ts'
+import type { Assessor, Assignment, Candidate, EngineOptions, Executor, MandateLimits, OutboundMessage, Outcome, Policy, Ticket, Trigger } from '../src/core/index.ts'
 
 const member = { source: 'chat', id: 'alice' }
 const guest = { source: 'chat', id: 'guest' }
@@ -1727,5 +1727,43 @@ describe('ignores from the card', () => {
     // Accepting an inferred candidate still takes an assessment's matched rules.
     h.engine.receive(trigger('5', { actor: guest })); h.engine.reevaluate('5'); h.pump()
     expect(() => h.engine.decide('5', { kind: 'accept', title: 'Fix', scope: 'small', reason: 'chat' })).toThrow(new UserError('notExplicit'))
+  })
+})
+
+describe('Mandate limits', () => {
+  /** A ticket accepted with `limits`, which follows its own pull request. */
+  function limited(limits: MandateLimits) {
+    const h = harness()
+    h.engine.receive(trigger('1')); h.pump()
+    const decision = h.decide(h.requests.at(-1)!, { kind: 'accept', title: 'Fix copy', scope: 'a typo', reason: 'requested', limits })
+    h.settle()
+    h.engine.bindThread(decision.ticketId!, { source: 'gh', id: 'pr-9' }, true)
+    return { h, ticketId: decision.ticketId! }
+  }
+  it('records them on the Mandate', () => {
+    const { h, ticketId } = limited({ paths: ['locale/**'], actions: ['comment', 'push'] })
+    expect(h.repo.tickets.get(ticketId)!.mandate.limits).toEqual({ paths: ['locale/**'], actions: ['comment', 'push'] })
+  })
+  it('keeps a ticket whose pull request changes files outside its paths from person/review: its ready report becomes blocked', () => {
+    const { h, ticketId } = limited({ paths: ['locale/**'] })
+    const ticket = h.engine.report(ticketId, { state: 'ready', summary: 'Fixed the typo.',
+      changes: [{ pull: 9, files: ['locale/en.json', 'src/app.ts'], complete: true }] })
+    expect(ticketStage(ticket)).not.toEqual({ stage: 'person', action: 'review' })
+    expect(ticketStage(ticket)).toEqual({ stage: 'person', action: 'answer' })
+    expect(ticket.attention!.question).toMatch(/^PR #9 changes src\/app\.ts: outside the files this work may change \(locale\/\*\*\)\. /)
+    expect(runningAssignment(ticket)!.report).toMatchObject({ state: 'blocked', summary: expect.stringContaining('The host made this ready report blocked') })
+    expect(waitsForPerson(ticket)).toBe(true)
+    // One that changes more files than the host can read cannot be checked whole, and is not handed over either.
+    expect(ticketStage(h.engine.report(ticketId, { state: 'ready', summary: 'Again.', changes: [{ pull: 9, files: ['locale/en.json'], complete: false }] })))
+      .toEqual({ stage: 'person', action: 'answer' })
+  })
+  it('hands over a ready report whose pull requests stay within its paths, and one of a ticket without paths', () => {
+    const within = limited({ paths: ['locale/**'] })
+    const ticket = within.h.engine.report(within.ticketId, { state: 'ready', summary: 'Fixed.',
+      changes: [{ pull: 9, files: ['locale/en.json', 'locale/zh/app.json'], complete: true }] })
+    expect(ticketStage(ticket)).toEqual({ stage: 'person', action: 'review' })
+    const free = limited({ actions: ['push', 'open_pr'] })
+    expect(ticketStage(free.h.engine.report(free.ticketId, { state: 'ready', summary: 'Fixed.', changes: [{ pull: 9, files: ['src/app.ts'], complete: true }] })))
+      .toEqual({ stage: 'person', action: 'review' })
   })
 })

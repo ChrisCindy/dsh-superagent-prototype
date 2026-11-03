@@ -19,7 +19,7 @@ import { Commands } from '../src/infra/commands.ts'
 import { inputMessage } from '../src/executor/dsh.ts'
 import { credentialHelper, workerGitConfig } from '../src/infra/environment.ts'
 import { IM_WORDS, NOTE_WORDS, checkedImText } from '../src/infra/text.ts'
-import { SettingsSchema } from '../src/policy.ts'
+import { SettingsSchema, type Rule } from '../src/policy.ts'
 import { feishuKind, feishuTrigger } from '../src/sources/feishu.ts'
 import { githubKind } from '../src/sources/github.ts'
 import { reviewedBranch, testMachine } from './fixtures/deployment.ts'
@@ -148,7 +148,10 @@ async function start() {
   const settings = runtime.store.settings()
   const allowed = { feishu: { allowed: [{ id: MEMBER, name: 'Alice' }], syncChat: CHAT }, github: { allowed: [{ id: 'alice' }] } }
   const feishuSource = { enabled: true, config: { cli: BOT, chats: [{ chatId: CHAT, listen: 'all' }], directMessages: true } }
-  runtime.store.saveSettings({ ...settings, policy: { ...settings.policy, sources: allowed }, eval: { ...settings.eval, mode: 'auto' },
+  // The copy rule presets limits, so the proactive ticket's assignment tells its worker what the host checks.
+  const limits: Rule['limits'] = { paths: ['locale/**'], actions: ['comment', 'push', 'open_pr'] }
+  const rules = settings.policy.rules.map(rule => rule.id === 'copy' ? { ...rule, limits } : rule)
+  runtime.store.saveSettings({ ...settings, policy: { ...settings.policy, rules, sources: allowed }, eval: { ...settings.eval, mode: 'auto' },
     sources: { ...settings.sources, feishu: feishuSource } })
   const run = async (sessionId: string, name: string, args: unknown) =>
     await tools.get(sessionId)!.get(name)!.execute(args, { signal: new AbortController().signal }) as Record<string, unknown>
@@ -412,4 +415,9 @@ it('lists in the main Session\'s Policy section exactly the enabled rules, as th
   expect(listed).toEqual(ruleLines())
   // The drive disabled the visual rule and changed the copy rule's instruction.
   expect(listed).toEqual([expect.stringMatching(/^- .* \(copy\): .*Keep the wording short\.$/)])
+})
+
+it('tells a proactive ticket\'s worker in its assignment the limits its rule presets, which the host checks', () => {
+  const assignment = surfaces.find(surface => surface.where === 'worker input assignment (inferred)')!.text
+  expect(assignment).toContain('Limits the host checks: change only files matching locale/**; only the actions comment, push, open_pr (not merge).')
 })

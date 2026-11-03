@@ -1,16 +1,18 @@
 /** Source message link resolution and candidate card assembly for the main Session. */
-import type { Candidate, Ticket, Trigger } from '../core/index.ts'
+import type { Candidate, Thread, Ticket, Trigger } from '../core/index.ts'
 import type { Commands } from '../infra/commands.ts'
 import { readFeishuLink } from '../sources/feishu-read.ts'
 import { feishuRef, feishuSettings } from '../sources/feishu.ts'
 import type { SourceRegistry } from '../sources/registry.ts'
 import { triggerMessage } from '../executor/dsh.ts'
-import { relatedTickets, ticketCard, triggerCard } from './cards.ts'
+import { CORRELATED, correlatedCard, relatedTickets, ticketCard, triggerCard } from './cards.ts'
 import type { Store } from './store.ts'
 import type { TextCache } from './cache.ts'
+import { attribute } from './views/text.ts'
+import { threadTitle } from './views/records.ts'
 
 export interface LinkHost {
-  readonly store: Pick<Store, 'settings' | 'triggers' | 'threads' | 'tickets'>
+  readonly store: Pick<Store, 'settings' | 'triggers' | 'threads' | 'tickets' | 'decisions' | 'read'>
   readonly links: TextCache
   readonly commands: Commands
   readonly sources: SourceRegistry
@@ -51,7 +53,23 @@ function referencedTickets(host: LinkHost, trigger: Trigger, known: readonly Tic
   for (const ticket of known) ids.delete(ticket.id)
   return [...ids].flatMap(id => host.store.tickets.get(id) ?? []).slice(0, 4)
 }
-/** Builds the main Session's candidate card with routing metadata, handback history, and related or referenced tickets. */
+/**
+ * The Threads correlated with `thread`, at most `CORRELATED`, the most recently active first: each with its label, link,
+ * latest Decision and ticket (see `correlatedCard`), for reference only; empty when it has none.
+ */
+export function correlatedThreads(store: LinkHost['store'], thread: Thread): { correlated_threads?: ReturnType<typeof correlatedCard>[] } {
+  const active = (item: Thread) => item.lastAt ?? item.createdAt
+  const threads = thread.correlated.flatMap(key => store.threads.get(key) ?? []).sort((a, b) => active(b).localeCompare(active(a)))
+  const cards = threads.slice(0, CORRELATED).map(other => {
+    const decision = store.decisions.latest(other.key)
+    const own = other.subscriptions.filter(id => !other.context?.includes(id))
+    const ticketId = decision?.ticketId ?? own.at(-1)
+    const url = attribute(other.meta.url) ?? store.read.firstTrigger(other.key)?.url
+    return correlatedCard(other, threadTitle(store, other), url, decision, ticketId ? store.tickets.get(ticketId) : undefined)
+  })
+  return cards.length ? { correlated_threads: cards } : {}
+}
+/** Builds the main Session's candidate card with routing metadata, handback history, related or referenced tickets, and correlated Threads. */
 export async function candidateCard(host: LinkHost, candidate: Candidate) {
   const primary = candidate.triggers.at(-1)!
   const settings = host.store.settings()
@@ -66,6 +84,7 @@ export async function candidateCard(host: LinkHost, candidate: Candidate) {
     mode: settings.eval.mode, ...others.length ? { batch: others.map(trigger => triggerCard(trigger)) } : {},
     ...handedBack.length ? { handed_back: handedBack } : {}, ...relatedTickets(candidate.tickets),
     ...(delivered.length ? { delivered_to: delivered } : {}), ...(referenced.length ? { referenced_tickets: referenced.map(ticketCard) } : {}),
+    ...correlatedThreads(host.store, candidate.thread),
     next_action: candidate.strength === 'explicit' ? 'Route it with orchestrator_route as dispatch says: accept, attach, stop or ignore.'
       : 'Ignore it with orchestrator_route if the card shows it touches no enabled rule; else assess it with orchestrator_eval, orchestrator_eval_read, then orchestrator_eval_decide.' }
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { SettingsSchema, assessmentOutcome, ticketBudget, policyEffects, settingsPolicy, policyVersion, allowedSender, anyoneAllowed, type Settings } from '../src/policy.ts'
-import type { MandateBasis } from '../src/core/index.ts'
+import { SettingsSchema, assessmentOutcome, mandateLimits, ticketBudget, policyEffects, settingsPolicy, policyVersion, allowedSender, anyoneAllowed, type Settings } from '../src/policy.ts'
+import { globPattern, outsidePaths, pathAllowed, type MandateBasis } from '../src/core/index.ts'
 import { migrateSettings } from '../src/app/migration.ts'
 import { SourceRegistry } from '../src/sources/registry.ts'
 import { feishuKind } from '../src/sources/feishu.ts'
@@ -509,5 +509,64 @@ describe('bots and events without a sender', () => {
       ['pulls', { listedUnaddressed: false, unlistedAddressed: true, unlistedUnaddressed: false }],
       ['comments', { listedUnaddressed: false, unlistedAddressed: true, unlistedUnaddressed: false }],
       ['ci', { listedUnaddressed: false, unlistedAddressed: false, unlistedUnaddressed: false }]])
+  })
+})
+
+describe('Mandate limits', () => {
+  it('reads globs over repository paths: * within a segment, ** across them, ? one character and braces either alternative', () => {
+    const matches = (glob: string, path: string) => globPattern(glob).test(path)
+    expect(matches('locale/**', 'locale/en.json')).toBe(true)
+    expect(matches('locale/**', 'locale/zh/app.json')).toBe(true)
+    expect(matches('locale/**', 'src/locale/en.json')).toBe(false)
+    expect(matches('locale/*.json', 'locale/zh/app.json')).toBe(false)
+    expect(matches('**/README.md', 'README.md')).toBe(true)
+    expect(matches('**/README.md', 'docs/a/README.md')).toBe(true)
+    expect(matches('docs/?.md', 'docs/a.md')).toBe(true)
+    expect(matches('src/*.{ts,tsx}', 'src/app.tsx')).toBe(true)
+    expect(matches('src/*.{ts,tsx}', 'src/app.js')).toBe(false)
+    // Regular-expression characters are literal.
+    expect(matches('a+b/(x).md', 'a+b/(x).md')).toBe(true)
+    expect(matches('a.md', 'aXmd')).toBe(false)
+    for (const glob of ['', '/etc/**', '../x', 'a/./b', 'src/{a,b', 'src/a}', 'src/{a,{b}}']) expect(() => globPattern(glob), glob).toThrow()
+    const rule = (limits: unknown) => ({ policy: { rules: [{ id: 'r', name: 'R', enabled: true, instruction: 'i', limits }] } })
+    expect(SettingsSchema.safeParse(rule({ paths: ['../x'] })).success).toBe(false)
+    expect(SettingsSchema.safeParse(rule({ actions: ['deploy'] })).success).toBe(false)
+    expect(SettingsSchema.safeParse(rule({ paths: ['locale/**'], actions: ['comment'] })).success).toBe(true)
+  })
+  it('limits a field only when every matched rule presets it, to their union, and the rules\' paths over the assessment\'s', () => {
+    const rule = (id: string, limits?: { paths?: string[]; actions?: ('comment' | 'push' | 'open_pr' | 'merge')[] }) =>
+      ({ id, name: id, enabled: true, instruction: 'i', ...limits ? { limits } : {} })
+    expect(mandateLimits([rule('copy', { paths: ['locale/**'], actions: ['comment'] })])).toEqual({ paths: ['locale/**'], actions: ['comment'] })
+    expect(mandateLimits([rule('copy', { paths: ['locale/**'] }), rule('docs', { paths: ['docs/**', 'locale/**'], actions: ['push'] })]))
+      .toEqual({ paths: ['locale/**', 'docs/**'] })
+    // A matched rule without limits, like an explicit request that matches none, sets none.
+    expect(mandateLimits([rule('copy', { paths: ['locale/**'] }), rule('visual')])).toBeUndefined()
+    expect(mandateLimits([])).toBeUndefined()
+    expect(mandateLimits([rule('visual')], ['src/styles/**'])).toEqual({ paths: ['src/styles/**'] })
+    expect(mandateLimits([rule('copy', { paths: ['locale/**'] })], ['src/**'])).toEqual({ paths: ['locale/**'] })
+    expect(mandateLimits([rule('triage', { actions: [] })])).toEqual({ actions: [] })
+    expect(pathAllowed(undefined, 'src/a.ts')).toBe(true)
+    const files = ['locale/a.json', ...Array.from({ length: 7 }, (_, i) => `src/${i}.ts`)]
+    expect(outsidePaths({ paths: ['locale/**'] }, [{ pull: 3, files, complete: true }]))
+      .toEqual(['PR #3 changes src/0.ts, src/1.ts, src/2.ts, src/3.ts, src/4.ts and 2 more'])
+  })
+  it('gives an accepted assessment its limits, keeps the Policy version of rules without limits, and versions the limits a rule sets', () => {
+    const parsed = SettingsSchema.parse({ eval: { mode: 'auto' } })
+    const rules = parsed.policy.rules.map(rule => rule.id === 'copy'
+      ? { ...rule, limits: { paths: ['locale/**'], actions: ['comment' as const, 'push' as const] } } : rule)
+    const limited = { ...parsed, policy: { ...parsed.policy, rules } }
+    const direction = { implementation_requested: true, target_basis: 'specified', requires_design_decision: false, evidence: 'asked' }
+    const assessment = (matched: string[], paths?: string[]) => ({ decision: 'accept' as const, direction, title: 'Fix', scope: 'small', reason: 'asked',
+      intent_evidence: 'quote', worktree_name: 'fix-copy', paths, rule_assessments: rules.filter(rule => rule.enabled)
+        .map(rule => ({ rule_id: rule.id, matched: matched.includes(rule.id), reason: 'judged' })) })
+    expect(assessmentOutcome(assessment(['copy'], ['src/**']), limited, 'inferred')).toMatchObject({ kind: 'accept',
+      limits: { paths: ['locale/**'], actions: ['comment', 'push'] } })
+    expect(assessmentOutcome(assessment(['copy', 'visual']), limited, 'inferred')).not.toHaveProperty('limits')
+    expect(assessmentOutcome(assessment(['visual'], ['src/styles/**']), limited, 'inferred')).toMatchObject({ limits: { paths: ['src/styles/**'] } })
+    const observed = { ...limited, eval: { ...limited.eval, mode: 'observe' as const } }
+    expect(assessmentOutcome(assessment(['copy']), observed, 'inferred')).toMatchObject({ kind: 'ignore',
+      audit: { would_accept: true, proposal: { limits: { paths: ['locale/**'] } } } })
+    expect(policyVersion(SettingsSchema.parse({ eval: { mode: 'auto' } }))).toBe(policyVersion(parsed))
+    expect(policyVersion(limited)).not.toBe(policyVersion(parsed))
   })
 })

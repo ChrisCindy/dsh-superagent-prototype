@@ -1,6 +1,6 @@
 /** Pull request binding, lifecycle observation, and terminal IM notification helpers. */
 import { z } from 'zod'
-import { key, liveTicket, type Follow, type OutboundMessage, type ThreadFact, type Ticket } from '../core/index.ts'
+import { actionAllowed, key, liveTicket, type Follow, type OutboundMessage, type ThreadFact, type Ticket } from '../core/index.ts'
 import type { Deployment } from '../deployment.ts'
 import { sameName } from '../infra/text.ts'
 import type { SourceContext } from './host.ts'
@@ -36,8 +36,11 @@ export const ticketBranch = (ticket: Pick<Ticket, 'execution'>, ref: string): bo
   !!ticket.execution?.name && ref.split('/').at(-1) === ticket.execution.name
 const AUTO_MERGE_ON: ThreadFact = { label: { zh: '自动合并', en: 'Auto-merge' }, value: { zh: '已开启', en: 'on' } }
 
+/** Why a PR the ticket opened is not bound when its Mandate's limits leave out opening one. */
+export const OPEN_PR_REFUSED = 'This ticket may not open a PR: its limits leave out open_pr, so the host does not bind one; report without pr_number and say what a person should do'
 /**
  * Validates and binds an open PR to a ticket when the PR is either the ticket's origin PR or an agent-authored PR on the ticket's branch, enforcing that one PR binds to at most one open ticket.
+ * An agent-authored PR is refused when the ticket's Mandate limits leave out `open_pr`.
  * Returns an error message when binding is rejected, or undefined when the PR is bound or when the PR is not open (which is not an error).
  */
 export function claimPull(ctx: SourceContext, ticketId: string, pr: Pull): string | undefined {
@@ -50,6 +53,8 @@ export function claimPull(ctx: SourceContext, ticketId: string, pr: Pull): strin
     const { login } = ctx.deployment.github
     return `PR does not belong to this ticket: use the source PR or a PR by ${login} from a branch whose last path segment is DSH_SUPERAGENT_NAME; omit pr_number when no PR exists`
   }
+  // A Mandate whose limits leave out opening a pull request lets the ticket follow its source PR, never one it opened.
+  if (!started && !actionAllowed(ticket.mandate.limits, 'open_pr')) return OPEN_PR_REFUSED
   const owner = ctx.tickets.open().find(item => pullsOf(item, true, ctx.source).includes(pr.number))
   if (owner && owner.id !== ticketId) return 'PR already belongs to another active ticket'
   const follow = ticket.follows?.find(item => item.thread === `${ctx.source}:${pr.number}`)

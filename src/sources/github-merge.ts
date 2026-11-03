@@ -1,9 +1,9 @@
 /** Host checks of a PR an Executor asks to merge, and enabling auto-merge for it with the merge account's CLI. */
 import { z } from 'zod'
-import type { Ticket } from '../core/index.ts'
+import { actionAllowed, outsidePaths, type Ticket } from '../core/index.ts'
 import type { MergeConfig } from '../policy.ts'
 import { sameName } from '../infra/text.ts'
-import { ciFailures, pullChecks } from './github-read.ts'
+import { ciFailures, pullChecks, pullFiles } from './github-read.ts'
 import { readPull } from './github-pull.ts'
 import { isHumanLogin } from './github-trigger.ts'
 import type { SourceContext } from './host.ts'
@@ -13,23 +13,27 @@ const ReviewSchema = z.looseObject({ user: z.looseObject({ login: z.string(), ty
 const CommitSchema = z.looseObject({ tree: z.looseObject({ sha: z.string() }) })
 
 /** The condition a refusal names: each is checked by the host before auto-merge is enabled. */
-export type MergeCheck = 'merge_cli' | 'ticket_pull' | 'open' | 'ready' | 'ci' | 'size' | 'approvals' | 'changes_requested' | 'merge_account'
+export type MergeCheck = 'merge_cli' | 'limits' | 'ticket_pull' | 'open' | 'ready' | 'ci' | 'size' | 'paths' | 'approvals' | 'changes_requested'
+  | 'merge_account'
 export interface MergeRefusal { check: MergeCheck; detail: string }
 export type MergeResult = { auto_merge: 'enabled'; pull: number; head: string; method: MergeConfig['method'] }
   | { auto_merge: 'refused'; pull: number; refused: MergeRefusal[]; next: string }
 
 const names = (list: readonly string[]) => list.slice(0, 5).join(', ') + (list.length > 5 ? `, and ${list.length - 5} more` : '')
 /**
- * Checks a PR against the merge settings: the ticket opened it and follows it, it is open and not a draft, every CI check of its
- * head commit succeeded, it changes at most `maxLines` lines, approvals of accounts other than the agent cover its head commit
+ * Checks a PR against the merge settings and the ticket's Mandate limits: they allow merging, the ticket opened it and follows
+ * it, it is open and not a draft, every CI check of its head commit succeeded, it changes at most `maxLines` lines and only
+ * files within the Mandate's paths, approvals of accounts other than the agent cover its head commit
  * (an approval of an earlier commit with the same tree, such as one rewritten to credit a reviewer, covers it too), and no
  * requested change is outstanding. Reads go through the agent's GitHub CLI.
  * @returns the refusals, empty when every check passed, and the head commit that was checked.
  */
-export async function mergeChecks(ctx: SourceContext, ticket: Pick<Ticket, 'follows'>, number: number, merge: MergeConfig,
+export async function mergeChecks(ctx: SourceContext, ticket: Pick<Ticket, 'follows' | 'mandate'>, number: number, merge: MergeConfig,
   signal?: AbortSignal): Promise<{ refused: MergeRefusal[]; head?: string }> {
   const refused: MergeRefusal[] = []
+  const { limits } = ticket.mandate
   if (!merge.cli) refused.push({ check: 'merge_cli', detail: 'No merge CLI is set in the Execution settings, so a person merges every PR' })
+  if (!actionAllowed(limits, 'merge')) refused.push({ check: 'limits', detail: 'This ticket\'s limits leave out merge, so a person merges its PR' })
   const own = ticket.follows?.some(item => item.thread === `${ctx.source}:${number}` && item.own && !item.closed)
   if (!own) refused.push({ check: 'ticket_pull', detail: `This ticket did not open PR #${number}, or does not follow it; bind the PR it opened with orchestrator_report pr_number first` })
   if (refused.length) return { refused }
@@ -41,6 +45,9 @@ export async function mergeChecks(ctx: SourceContext, ticket: Pick<Ticket, 'foll
   const lines = (pull.additions ?? 0) + (pull.deletions ?? 0)
   if (pull.additions === undefined || pull.deletions === undefined) refused.push({ check: 'size', detail: 'GitHub did not report the size of the PR' })
   else if (lines > merge.maxLines) refused.push({ check: 'size', detail: `PR #${number} changes ${lines} lines (additions plus deletions), more than the ${merge.maxLines} auto-merge accepts` })
+  // A PR that changes files outside the Mandate's paths is a wider change than the ticket was accepted for.
+  const outside = limits?.paths ? outsidePaths(limits, [await pullFiles(commands, number)]) : []
+  if (outside.length) refused.push({ check: 'paths', detail: `${outside.join('; ')}: outside the files this ticket may change (${limits!.paths!.join(', ')})` })
   const ci = await pullChecks(commands, head)
   const failed = ciFailures(ci)
   const running = [...ci.checks.filter(check => check.status !== 'completed').map(check => check.name),
@@ -83,11 +90,11 @@ export async function mergeChecks(ctx: SourceContext, ticket: Pick<Ticket, 'foll
  * Enables auto-merge of a PR the ticket opened once `mergeChecks` passes, as the merge account with `--match-head-commit` so
  * only the commit that was checked merges; GitHub's own rules, such as required reviews, still apply when it merges.
  */
-export async function requestMerge(ctx: SourceContext, ticket: Pick<Ticket, 'follows'>, number: number, merge: MergeConfig,
+export async function requestMerge(ctx: SourceContext, ticket: Pick<Ticket, 'follows' | 'mandate'>, number: number, merge: MergeConfig,
   signal?: AbortSignal): Promise<MergeResult> {
   const { refused, head } = await mergeChecks(ctx, ticket, number, merge, signal)
   if (refused.length || !head) {
-    const people = refused.some(item => item.check === 'merge_cli' || item.check === 'size' || item.check === 'merge_account')
+    const people = refused.some(item => ['merge_cli', 'limits', 'size', 'merge_account'].includes(item.check))
     const next = people ? 'A person merges this PR; say so in your report.'
       : 'Fix what you can and call again for the new head; report ready without waiting for approvals, and call again when they arrive.'
     return { auto_merge: 'refused', pull: number, refused, next }

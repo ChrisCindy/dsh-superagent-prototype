@@ -1,6 +1,6 @@
 /** Read-only GitHub repository, conversation, and CI check inspection for assessments and workers. */
 import { z } from 'zod'
-import type { ThreadFact } from '../core/index.ts'
+import type { PullChanges, ThreadFact } from '../core/index.ts'
 import { validItems, type Commands, type Tally } from '../infra/commands.ts'
 import { CommentSchema, IssueSchema, isHumanLogin, reviewPlace, type GithubComment } from './github-trigger.ts'
 import type { ContextMessage, ThreadContext } from './kind.ts'
@@ -67,6 +67,20 @@ export async function pullChecks(commands: Commands, head: string, tally?: Tally
   const checks = runs.map(({ name, status, conclusion }) => ({ name, status, conclusion }))
   return { head, checks: checks.sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))),
     statuses: [...latest].map(([context, state]) => ({ context, state })).sort((a, b) => a.context.localeCompare(b.context)) }
+}
+
+/** How many files GitHub lists for a pull request at most; one that changes more cannot be checked whole. */
+const PULL_FILES = 3000
+const PullFileSchema = z.looseObject({ filename: z.string(), previous_filename: z.string().optional() })
+/**
+ * Reads the files a pull request changes, a renamed file under both its names, for checking them against a Mandate's paths.
+ * Every listed file must parse, so none is skipped unchecked; `complete` is false at GitHub's limit of `PULL_FILES`.
+ */
+export async function pullFiles(commands: Commands, number: number): Promise<PullChanges> {
+  const pages = await commands.api(z.array(z.array(PullFileSchema)), `pulls/${number}/files?per_page=100`, '--paginate', '--slurp')
+  const listed = pages.flat()
+  return { pull: number, files: listed.flatMap(file => [file.filename, ...file.previous_filename ? [file.previous_filename] : []]),
+    complete: listed.length < PULL_FILES }
 }
 
 /** Formats a GitHub comment, review, or issue as a model-facing ContextMessage, marking bots and GitHub Apps because bot messages never authorize work. */

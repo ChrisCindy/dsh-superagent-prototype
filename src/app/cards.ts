@@ -62,7 +62,7 @@ export function ticketDetails(ticket: Ticket, threads: TicketThread[], batch: re
   const { preview: _preview, ...card } = ticketCard(ticket)
   return { ...card, trigger_id: ticket.origin.triggerId, ...batch.length ? { batch: batch.map(batchLine) } : {},
     ...worker ? {} : { decision_id: ticket.decisionId }, threads, directory: ticket.execution?.directory,
-    scope: ticket.mandate.scope, requested_by: ticket.mandate.actor.id,
+    scope: ticket.mandate.scope, ...(ticket.mandate.limits ? { limits: ticket.mandate.limits } : {}), requested_by: ticket.mandate.actor.id,
     assignments: newestPage(ticket.assignments, 0, ASSIGNMENTS, item => assignmentLine(ticket, item), `ticket/${ticket.id}/assignments`),
     inputs: newestPage(ticket.inputs, 0, INPUTS, input => inputLine(ticket, input, worker), `ticket/${ticket.id}/inputs`),
     assignment: `ticket/${ticket.id}/assignment`, result: `ticket/${ticket.id}/result`, transcript: `ticket/${ticket.id}/transcript` }
@@ -89,6 +89,17 @@ export function decisionDetails(decision: Decision) {
 export function textPage(resource: string, text: string, offset: number, limit: number) {
   const end = Math.min(text.length, offset + limit)
   return { resource, offset, total_chars: text.length, next_offset: end < text.length ? end : null, text: text.slice(offset, end) }
+}
+/** How many correlated Threads a candidate shows at most, the most recently active first. */
+export const CORRELATED = 5
+/**
+ * A Thread correlated with a candidate's, for reference only: its label and link, its latest Decision, and the ticket that
+ * Decision names, else the newest ticket of its own, with that ticket's card state. Correlation never routes.
+ */
+export function correlatedCard(thread: Thread, label: string, url: string | undefined, decision: Decision | undefined, ticket: Ticket | undefined) {
+  return { thread: thread.key, label: preview(label).slice(0, 80), ...(url ? { url } : {}),
+    ...(decision ? { decision: { decision_id: decision.id, kind: decision.kind, at: decision.at } } : {}),
+    ...(ticket ? { ticket: { ticket_id: ticket.id, title: ticket.title, state: cardState(ticket) } } : {}), read: `thread/${thread.key}` }
 }
 export function relatedTickets(tickets: readonly Ticket[]) {
   const order = [...tickets].sort((a, b) => Number(!a.ended) === Number(!b.ended) ? b.createdAt.localeCompare(a.createdAt) : a.ended ? 1 : -1)

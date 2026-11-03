@@ -122,6 +122,15 @@ export type MandateBasis = Received & { sender?: string; rules?: string[] } & (
   | { via: 'bot'; addressed?: 'mention' | 'direct'; observation: { mode: AcceptMode } }
 )
 
+/** The actions a Mandate's `limits` can allow: comment on a Source, push a branch, open a pull request, and have one merged. */
+export const MANDATE_ACTIONS = ['comment', 'push', 'open_pr', 'merge'] as const
+export type MandateAction = typeof MANDATE_ACTIONS[number]
+/**
+ * The machine-checkable part of a Mandate's scope: `paths`, globs of the repository files its work may change, and `actions`,
+ * what it may do. A field it leaves out sets no limit; a Mandate without limits has none. See `docs/002`.
+ */
+export interface MandateLimits { paths?: string[]; actions?: MandateAction[] }
+
 /** Immutable authorization produced by an accept decision; execution is bounded by it and it never changes. */
 export interface Mandate {
   strength: Strength
@@ -130,7 +139,55 @@ export interface Mandate {
   basis: MandateBasis
   actor: ActorRef
   scope: string
+  /** What the host checks the work against; none sets no limit. */
+  limits?: MandateLimits
 }
+
+/**
+ * The regular expression of a glob over repository-relative paths: `*` matches within one path segment, `**` across segments
+ * (`**\/` also matches no directory), `?` one character other than `/`, and `{a,b}` either alternative.
+ * @throws when the glob is not one: it is empty, starts with `/`, names `.` or `..`, or has unbalanced or nested braces.
+ */
+export function globPattern(glob: string): RegExp {
+  if (!glob || glob.startsWith('/') || glob.split('/').some(part => part === '.' || part === '..')) throw new Error(`Not a repository glob: ${glob}`)
+  let pattern = '', braces = false
+  for (let at = 0; at < glob.length; at++) {
+    const char = glob[at]!
+    if (char === '*' && glob[at + 1] === '*') {
+      const slash = glob[at + 2] === '/'
+      pattern += slash ? '(?:.*/)?' : '.*'
+      at += slash ? 2 : 1
+    } else if (char === '*') pattern += '[^/]*'
+    else if (char === '?') pattern += '[^/]'
+    else if (char === '{' && !braces) { pattern += '(?:'; braces = true }
+    else if (char === '}' && braces) { pattern += ')'; braces = false }
+    else if (char === ',' && braces) pattern += '|'
+    else if (char === '{' || char === '}') throw new Error(`Unbalanced or nested braces in ${glob}`)
+    else pattern += char.replace(/[.+^$()|[\]\\]/g, '\\$&')
+  }
+  if (braces) throw new Error(`Unbalanced or nested braces in ${glob}`)
+  return new RegExp(`^${pattern}$`)
+}
+/** Whether limits let the work change a repository file: they set no `paths`, or the path matches one of them. */
+export const pathAllowed = (limits: MandateLimits | undefined, path: string): boolean =>
+  !limits?.paths || limits.paths.some(glob => globPattern(glob).test(path))
+/** The files a pull request changes, as the host read them; `complete` is false when it changes more than the host could read. */
+export interface PullChanges { pull: number; files: string[]; complete: boolean }
+/**
+ * What in the pull requests' changes lies outside the files limits let the work change, one line per pull request: the
+ * files outside, or that it could not be checked whole. Empty when the limits set no `paths` or every file is within them.
+ */
+export function outsidePaths(limits: MandateLimits | undefined, changes: readonly PullChanges[]): string[] {
+  if (!limits?.paths) return []
+  return changes.flatMap(({ pull, files, complete }) => {
+    if (!complete) return [`PR #${pull} changes more files than the host can check`]
+    const outside = [...new Set(files.filter(file => !pathAllowed(limits, file)))]
+    if (!outside.length) return []
+    return [`PR #${pull} changes ${outside.slice(0, 5).join(', ')}${outside.length > 5 ? ` and ${outside.length - 5} more` : ''}`]
+  })
+}
+/** Whether limits let the work take an action: they set no `actions`, or list it. */
+export const actionAllowed = (limits: MandateLimits | undefined, action: MandateAction): boolean => !limits?.actions || limits.actions.includes(action)
 
 /** Active trigger evaluation on a thread; at most one exists per thread. */
 export interface Evaluation {
