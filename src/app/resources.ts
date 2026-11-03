@@ -5,7 +5,6 @@ import { batchOf, inputMessage, triggerMessage, workerSessionId } from '../execu
 import { readGithub } from '../sources/github-read.ts'
 import { feishuReferences, feishuRead } from '../sources/feishu-read.ts'
 import { feishuRef } from '../sources/feishu.ts'
-import { feishuTriggerId } from '../sources/feishu-trigger.ts'
 import { ASSIGNMENTS, INPUTS, assignmentLine, decisionCard, decisionDetails, inputLine, newestPage, preview, textPage, threadCard, ticketCard,
   ticketDetails, triggerCard, type TicketThread } from './cards.ts'
 import { threadTitle } from './views/records.ts'
@@ -73,6 +72,8 @@ export interface ResourceHost {
    */
   githubSource(resource: string, ticketId?: string): string | undefined
   sourceLink(trigger: Trigger, signal?: AbortSignal): Promise<{ source_url?: string; source_url_read?: string }>
+  /** The ID of the Trigger whose message `trigger` replies to, as its kind's `repliesTo` derives it. */
+  repliesTo(trigger: Trigger): string | undefined
 }
 export interface MainResourceHost extends ResourceHost {
   readonly sessions: Pick<Sessions, 'status' | 'modelRetry'>
@@ -231,8 +232,8 @@ const ROUTES: readonly Route[] = [
       : disposition
     // Omit card preview and self-reference because this resource returns the full text.
     const { preview: _preview, chars: _chars, read: _read, ...card } = triggerCard(found, visible)
-    const parent = found.source === 'feishu' && typeof found.meta.parentId === 'string' ? found.meta.parentId : undefined
-    const repliedTo = shown(parent ? host.store.triggers.get(feishuTriggerId(parent)) : undefined)
+    const parent = host.repliesTo(found)
+    const repliedTo = shown(parent !== undefined ? host.store.triggers.get(parent) : undefined)
     const neighbours = host.store.read.neighbours(threadKey(found.threads[0]!), found.at, found.id)
     const around = { before: shown(neighbours.before), after: shown(neighbours.after) }
     return { ...card, ...await host.sourceLink(found, signal), acknowledgement: host.store.replyStatus(key('ack', found.id)) ?? 'not_requested',

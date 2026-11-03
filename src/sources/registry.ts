@@ -153,6 +153,18 @@ export class SourceRegistry implements SourceScope {
     const link = this.kindOf(channel.source)?.channel?.link(channel.address, links)
     return link ?? { url: '', label: { zh: channel.source, en: channel.source } }
   }
+  /**
+   * The lookup of `trigger`'s message URL through its instance's Channel, with that instance's configuration and commands, or
+   * undefined when its kind has none or the Trigger names no message.
+   */
+  messageLink(trigger: Trigger, settings = this.settings()): { key: string; fallback: string; read(commands: Commands, signal: AbortSignal): Promise<string> } | undefined {
+    const kind = this.kindOf(trigger.source, settings)
+    const link = kind?.channel?.messageLink
+    const key = link?.key(trigger)
+    if (!kind || !link || key === undefined) return undefined
+    const { config } = this.resolve(kind, trigger.source, settings.sources[trigger.source])
+    return { key, fallback: link.fallback(trigger), read: (commands, signal) => link.read(commands.forSource(trigger.source), trigger, config, signal) }
+  }
   find(query: string): { threads: string[]; terms: string[] } {
     const found = this.instances().flatMap(instance => {
       const kind = instance.installed ? this.kinds.get(instance.kind) : undefined

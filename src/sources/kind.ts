@@ -57,6 +57,20 @@ export interface SourceChannel<C> {
   send(host: Pick<SourceContext, 'commands'>, message: OutboundMessage): Promise<'sent' | 'gone'>
   /** Returns the URL and label for `address`; `url` is empty when `links` lack the required deployment info. */
   link(address: Record<string, string>, links: ChannelLinks): ChannelLink
+  /** Looks up the URL of a Trigger's own message when its event carried none; without it, such a Trigger has no link. */
+  messageLink?: MessageLink<C>
+}
+/** Lookup of a Trigger's message URL, which the host caches. */
+export interface MessageLink<C> {
+  /** The message's key in the link cache, ending with the ID that search matches; undefined when the Trigger names no message. */
+  key(trigger: Trigger): string | undefined
+  /**
+   * Reads the URL within the kind's own time limit.
+   * @throws when it cannot, such as after a timeout or for a deleted message.
+   */
+  read(commands: Commands, trigger: Trigger, config: C, signal: AbortSignal): Promise<string>
+  /** The resource that reads the message itself, which the host offers when the lookup fails. */
+  fallback(trigger: Trigger): string
 }
 /** Normalized message returned by thread context readers; `bot` marks a non-human sender whose message can never authorize work on its own (at most an inferred candidate). */
 export interface ContextMessage {

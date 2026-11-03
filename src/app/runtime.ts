@@ -123,7 +123,7 @@ export class Runtime extends Service implements SourceHost {
       const environment = (ticket: Ticket) => this.ticketEnvironment(ticket)
       const resources: ResourceHost = { store, pages: new TextCache(4_000_000), prompts, commands, masterId, context: ctx,
         promptVersion: id => this.sessions.promptVersion(id), mayRead: (id, revision) => this.sessions.mayRead(id, revision),
-        feishuPageSize: () => feishuSettings(sources).readPageSize, sourceLink: link,
+        feishuPageSize: () => feishuSettings(sources).readPageSize, sourceLink: link, repliesTo: trigger => sources.repliesTo(trigger),
         githubSource: (resource, ticketId) => {
           const prefix = resource.slice(0, Math.max(resource.indexOf('/'), 0))
           const ticket = ticketId ? store.tickets.get(ticketId) : undefined

@@ -4,9 +4,9 @@ import { z } from 'zod'
 import { FeishuBotSchema } from '../deployment.ts'
 import { IM_WORDS } from '../infra/text.ts'
 import { feishuLink, sendFeishu } from './feishu-channel.ts'
-import { feishuThreadContext } from './feishu-read.ts'
+import { feishuThreadContext, readFeishuLink } from './feishu-read.ts'
 import { refreshChatNames, runFeishu } from './feishu-loops.ts'
-import { SOURCE, feishuTriggerId } from './feishu-trigger.ts'
+import { SOURCE, feishuRef, feishuTriggerId } from './feishu-trigger.ts'
 import { sourceContext } from './host.ts'
 import type { Localized, SourceKind } from './kind.ts'
 import type { SourceRegistry } from './registry.ts'
@@ -63,6 +63,13 @@ export const feishuKind: SourceKind<FeishuConfig> = {
     allowed: (address, config) =>
       feishuKind.scope!({ meta: { chatId: address.chatId ?? '', direct: address.direct === 'true' } }, config).listened,
     limit: IM_WORDS, send: sendFeishu, link: feishuLink,
+    // The CLI's AppLink of the message, within the configured time; the message itself stays readable when that fails.
+    messageLink: {
+      key: trigger => { const ref = feishuRef(trigger); return ref && `${ref.chatId}:${ref.messageId}` },
+      read: (commands, trigger, config, signal) =>
+        readFeishuLink(commands.withSignal(AbortSignal.any([signal, AbortSignal.timeout(config.linkTimeoutMs)])), feishuRef(trigger)!),
+      fallback: trigger => `feishu/${trigger.id}/message`,
+    },
   },
   threadContext: feishuThreadContext,
   find: query => ({ threads: [], terms: [...new Set(query.match(/om_[A-Za-z0-9_-]+/g) ?? [])] }),
