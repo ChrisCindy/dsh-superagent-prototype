@@ -427,6 +427,15 @@ it('shows a candidate with its thread\'s tickets open first, the tickets it reac
   h.runtime.store.threads.save(thread)
   h.runtime.receive(feishu('4', '@bot 看看 #123 的进展')); await h.runtime.idle()
   expect(relaysOf('candidate').at(-1)).toMatchObject({ related_tickets: [], tickets_total: 0, referenced_tickets: [{ ticket_id: a.id }] })
+  expect(relaysOf('candidate').at(-1)).not.toHaveProperty('correlated_threads')
+  // A Thread correlated with the candidate's shows for reference, with its label, link and the ticket on it.
+  h.runtime.store.threads.save({ ...thread, meta: { label: 'PR 123', url: 'https://github.com/acme/widgets/pull/123' } })
+  h.runtime.store.threads.save({ key: `feishu:${CHAT}:om_5`, ref: { source: 'feishu', id: `${CHAT}:om_5` }, createdAt: '', subscriptions: [],
+    correlated: ['github:123'], pending: [], meta: {} })
+  h.runtime.receive(feishu('5', '@bot 这个也看看')); await h.runtime.idle()
+  expect(relaysOf('candidate').at(-1)!.correlated_threads).toEqual([{ thread: 'github:123', label: 'PR 123',
+    url: 'https://github.com/acme/widgets/pull/123', ticket: { ticket_id: a.id, title: expect.any(String), state: expect.any(String) },
+    read: 'thread/github:123' }])
 })
 
 it('relays a worker\'s report with its ticket card and the start of its summary, and a question with the card alone', async () => {

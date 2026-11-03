@@ -247,6 +247,8 @@ export class Store implements Repositories {
     get: (id: string): Decision | undefined => { const row = this.db.prepare('SELECT value FROM decision WHERE id=?').get(id); return row ? JSON.parse(String(row.value)) as Decision : undefined },
     save: (decision: Decision): void => { this.db.prepare('INSERT INTO decision VALUES (?,?,?) ON CONFLICT(id) DO UPDATE SET value=excluded.value, thread=excluded.thread').run(decision.id, decision.threadKey, JSON.stringify(decision)) },
     byThread: (threadKeyValue: string): Decision[] => this.db.prepare('SELECT value FROM decision WHERE thread=? ORDER BY rowid').all(threadKeyValue).map(row => JSON.parse(String(row.value)) as Decision),
+    /** The newest Decision on a Thread. */
+    latest: (threadKeyValue: string): Decision | undefined => this.values<Decision>('SELECT value FROM decision WHERE thread=? ORDER BY rowid DESC LIMIT 1', threadKeyValue)[0],
     inferredSince: (source: string, since: string): number => Number(this.db.prepare(`SELECT COUNT(*) AS n FROM decision
       WHERE inferred >= ? AND substr(thread, 1, ?) = ?`).get(since, source.length + 1, `${source}:`)?.n ?? 0),
   }

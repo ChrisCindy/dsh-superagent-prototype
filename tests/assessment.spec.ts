@@ -3,6 +3,7 @@ import { expect, it, vi } from 'vitest'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { AssessmentSchema, EvalReadSchema, MasterAssessor, type AssessorHost } from '../src/app/assessment.ts'
 import { mainAdmissionPolicy } from '../src/app/context.ts'
+import { correlatedThreads, type LinkHost } from '../src/app/links.ts'
 import { Engine, MemoryRepositories, type Executor, type Policy, type Trigger } from '../src/core/index.ts'
 import type { Commands } from '../src/infra/commands.ts'
 import { SettingsSchema } from '../src/policy.ts'
@@ -36,7 +37,12 @@ function setup(strength: 'explicit' | 'inferred' = 'inferred', bodies = Array.fr
   const sources = new SourceRegistry(() => SettingsSchema.parse({}))
   sources.register(githubKind)
   let engine!: Engine
+  // The Store's reads the correlated Threads take, over the in-memory repositories: a Thread's first Trigger is the oldest stored on it.
+  const triggers: Trigger[] = []
+  const records = { threads: repo.threads, tickets: repo.tickets, decisions: { latest: (key: string) => repo.decisions.byThread(key).at(-1) },
+    read: { firstTrigger: (key: string) => triggers.find(trigger => trigger.threads.some(ref => `${ref.source}:${ref.id}` === key)) } } as unknown as LinkHost['store']
   const host: AssessorHost = {
+    correlatedThreads: thread => correlatedThreads(records, thread),
     get engine() { return engine }, commands, deployment: testDeployment(), settings: () => SettingsSchema.parse({}),
     threadContext: threadContext ?? (trigger => sources.threadContext(trigger)), githubSource: () => 'github',
     effects: { enqueue: () => {}, handle: () => {} }, paused: () => false, deliver: async () => {}, candidateCard: async candidate => ({ eval_id: candidate.evalId }),
@@ -57,7 +63,8 @@ function setup(strength: 'explicit' | 'inferred' = 'inferred', bodies = Array.fr
   // Per-Eval state retained by the assessor and released when the Eval ends.
   const kept = assessor as unknown as { evals: Map<string, unknown> }
   const size = () => kept.evals.size
-  return { repo, engine, assessor, tools, size, gate }
+  const receive = (trigger: Trigger) => { triggers.push(trigger); engine.receive(trigger) }
+  return { repo, engine, assessor, tools, size, gate, receive }
 }
 const issue = (n: number): Trigger => ({ id: `issue-${n}`, source: 'github', threads: [{ source: 'github', id: String(n) }], actor: { source: 'github', id: 'bob' }, human: true,
   at: new Date(Date.UTC(2026, 8, 9, 0, 0, n)).toISOString(), text: `issue ${n}`, url: `https://github.com/acme/widgets/issues/${n}`, meta: { number: n } })
@@ -180,4 +187,25 @@ it('lets the main Session read on from the cursor its loaded window ends with, a
   s2.engine.receive(long); s2.engine.receive({ ...issue(3), threads: issue(1).threads }); s2.engine.evaluateDue()
   const other = await s2.assessor.context('issue-3', signal) as { batch: Record<string, unknown>[] }
   expect(other.batch).toEqual([expect.objectContaining({ trigger_id: 'long', chars: long.text.length, read: 'trigger/long' })])
+})
+
+it('gives the assessment the correlated Threads for reference: label, link, latest Decision, and its ticket with the ticket\'s state', async () => {
+  const s = setup()
+  // A message on Issue 1 earlier started a ticket; a CI run's message now belongs to Issue 1 and to pull request 7, which is the primary Thread.
+  s.receive(issue(1)); s.engine.evaluateDue()
+  const accepted = s.engine.decide('issue-1', { kind: 'accept', title: 'Fix it', scope: 'the label', reason: 'asked', rules: ['copy'] })
+  const run: Trigger = { ...issue(7), id: 'run-7', human: false, threads: [{ source: 'github', id: '7' }, { source: 'github', id: '1' }],
+    text: 'CI failed on the label fix' }
+  s.receive(run); s.engine.evaluateDue()
+  const context = await s.assessor.context('run-7', signal) as { correlated_threads?: Record<string, unknown>[] }
+  expect(context.correlated_threads).toEqual([{ thread: 'github:1', label: 'issue 1', url: 'https://github.com/acme/widgets/issues/1',
+    decision: { decision_id: accepted.id, kind: 'accept', at: accepted.at }, ticket: { ticket_id: accepted.ticketId, title: 'Fix it',
+      state: 'working/queued' }, read: 'thread/github:1' }])
+  // No more than five show, the most recently active first.
+  for (let n = 20; n < 27; n++) s.receive({ ...issue(n), id: `run-${n}`, threads: [{ source: 'github', id: '8' }, { source: 'github', id: String(n) }] })
+  s.engine.evaluateDue()
+  const many = await s.assessor.context('run-26', signal) as { correlated_threads?: { thread: string }[] }
+  expect(many.correlated_threads!.map(item => item.thread)).toEqual(['github:26', 'github:25', 'github:24', 'github:23', 'github:22'])
+  s.receive(issue(30)); s.engine.evaluateDue()
+  expect(await s.assessor.context('issue-30', signal)).not.toHaveProperty('correlated_threads')
 })
