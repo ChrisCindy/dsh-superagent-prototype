@@ -29,6 +29,17 @@ The temporary areas are `/tmp` and the OS user's temporary directory, and every 
 
 The sandbox covers files only. Sessions still run as the operator's OS user, reach the network, and read the operator's home directory, and a worker can execute programs by path. Account wrappers choose the agent's credentials by default; they do not isolate the process. For isolation, use a dedicated OS account containing only the agent's credentials.
 
+#### Dedicated OS user
+
+Run the whole profile as its own OS user, for example `dsh`, so that the operator's files and personal credentials are out of reach:
+
+1. Create the user: `sudo useradd --create-home --shell /bin/bash dsh`, then `sudo chmod 700 /home/dsh`.
+2. As that user, install DeepSeek Harness and this bundle, and create the profile (Install, below). `$DSH_HOME`, the profile and `stateDir` then live in its home.
+3. As that user, set up the agent's GitHub CLI (Accounts, below), and the merge account and Feishu bot if you use them.
+4. Start the service as that user, for example from a systemd unit with `User=dsh`. Run `scripts/dsh-superagent` as that user too, so `login` can read its startup log.
+
+The workers still run as `dsh`, so they can still read `$DSH_HOME/.credentials.yaml`, the startup log, the cookie jar and the database. Moving workers to a second user through DeepSeek Harness's SSH provider is the planned next step. `docs/adr/0001-worker-os-isolation.md` compares the options, records what a proof of concept (`scripts/isolation-poc.sh`) showed, and lists what remains to do.
+
 #### Writable roots and the full-access fallback
 
 A git worktree keeps its objects and refs in the main clone's `.git`, outside the Ticket directory, so under the sandbox a worker cannot commit in one. Either give each Ticket a checkout whose git data lies inside its directory, as the prepare command under Settings does, or list the main clone's `.git` under **Writable roots** in the Execution settings, with any cache a toolchain writes outside the Ticket directory, such as a package manager's store.
@@ -118,6 +129,7 @@ Copy [examples/profile.cordis.patch.yml](../examples/profile.cordis.patch.yml) t
 | --- | --- | --- |
 | `stateDir` | yes | Absolute path: the database, the lock, the command shims in `worker-bin`, the agent's git configuration and, by default, the Ticket directories in `work`. Back it up before upgrades |
 | `promptMaxChars`, `admissionContextMaxPages`, `admissionContextTimeoutMs` | no | The largest saved prompt configuration, and how many Thread pages one assessment reads within what time |
+| `eventLog` | no | Absolute path of a file in a directory that exists. Each domain event is also appended to it as one JSON line, as `GET events` lists it. Empty, the default, writes none. The database's `event` table stays the record; keep the file out of the directories workers may write |
 
 After the first start, edit machine limits in **Settings → Deployment** or the DeepSeek Harness Plugin Manager. Changes apply without restart. `stateDir` cannot be changed there. Invalid values or unknown configuration keys prevent startup; the log identifies the key.
 
@@ -222,8 +234,9 @@ Agents may rely on these routes and fields. The other routes in `src/app/api.ts`
 | `GET policy-proposal` | The main Session's pending Policy proposal, or `null`: `proposal`, with its `block` (`policy` or `eval`), `value`, the `revision` it was made from, `reason`, the request it carries out, `changed`, the settings paths it changes, `at`, and `stale`, true once the block was saved since |
 | `POST policy-proposal/accept`, `POST policy-proposal/dismiss` | Accepts the proposal, saving it as `PUT settings/<block>` would against the revision it was made from (409 when stale, 404 when none waits), or discards it: `dismissed`, whether one was waiting |
 | `GET prompts`, `PUT prompts` with `{"config", "baseRevision"}` | Reads the prompt configuration: `current`, with its `revision` and `config`, `defaults`, `sections`, the team sections in the order Sessions read them, `skillName`, the pattern of a team skill's name, `builtin`, the names a team skill cannot take, and `skillPrefix`, which Sessions load a skill's name under. Or saves it: the new `revision` |
-| `POST tickets/<id>/retry`, `POST tickets/<id>/stop` | Retries or stops a Ticket, as the panel does |
+| `POST tickets/<id>/retry`, `POST tickets/<id>/stop` | Retries or stops a Ticket, as the panel does. A retry may send `{"executor": "<name>"}` to run the new Assignment on another Executor; a name no Executor holds is refused with `unknownExecutor` |
 | `POST tickets/<id>/hold`, `POST tickets/<id>/release` | Holds or releases a Ticket, as the panel does; answers whether it changed |
+| `GET events?type=&since=&before=&limit=` | The domain events, newest first: `items`, each with `seq`, `type`, `at` and `data`, and `next_before`, the `before` of the next page, or `null`. `type` takes several types joined by commas, `since` a time, and `limit` at most 1000 (default 100) |
 
 Health entries are grouped by responsibility:
 

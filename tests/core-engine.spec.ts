@@ -340,7 +340,7 @@ describe('resume and stop', () => {
     expect(ticket.mandate.policyVersion).toBe('v1')
     expect(ticket.inputs.map(input => input.kind)).toEqual(['trigger', 'resumed'])
     expect(h.executor.start).toHaveBeenCalledTimes(2)
-    // The message still reaches Eval as a follow-up, but no reopen Decision is needed or possible.
+    // The message still reaches Eval as a follow-up, but no Decision to resume the ticket is needed or possible.
     expect(h.repo.decisions.byThread('chat:t1').filter(decision => decision.kind !== 'ignore')).toHaveLength(decisions)
   })
   it('resumes an ended ticket an earlier version left with a person\'s message waiting, on the next pass', async () => {

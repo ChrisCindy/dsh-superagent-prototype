@@ -8,13 +8,17 @@ export const FAILURES_BEFORE_ERROR = 3
 import type { HealthBoard, HealthEntry } from '../infra/health.ts'
 import type { Store } from './store.ts'
 
+/**
+ * The payload of each effect kind. A kind that belongs to one Executor starts with its name and a dot, such as `dsh.launch`;
+ * its health entry keeps the kind's name without it (see `handle`).
+ */
 export interface EffectPayloads {
   /** Build an Eval's candidate card and relay it to the main Session; the key is the Eval ID. */
   assessment: { triggerId: string }
-  /** Launch a pending Assignment; the key is the Assignment ID. */
-  launch: { ticketId: string; assignmentId: string }
-  /** Hand a ticket's waiting Inputs to its running Assignment; the key is the Ticket ID. */
-  delivery: { ticketId: string }
+  /** The DshExecutor launches a pending Assignment; the key is the Assignment ID. */
+  'dsh.launch': { ticketId: string; assignmentId: string }
+  /** The DshExecutor hands a ticket's waiting Inputs to its running Assignment; the key is the Ticket ID. */
+  'dsh.delivery': { ticketId: string }
   /** Steer a report or a candidate into the main Session; the key is the request ID. */
   relay: { text: string }
   /** Inject a notice into the main Session without waking it; the key names what it reports, such as `prompts`. */
@@ -66,7 +70,7 @@ export class Effects {
   }
   handle<K extends EffectKind>(kind: K, run: Handler<K>['run'], options: Options<K> = {}): void {
     if (this.handlers.has(kind)) throw new Error(`The ${kind} effects already have a handler`)
-    this.health.set(kind, this.board.claim(kind))
+    this.health.set(kind, this.board.claim(kind.slice(kind.indexOf('.') + 1)))
     const { limit = () => 1, retry = [2000, 60_000], ordered = false, quiet = false } = options
     this.handlers.set(kind, { run, limit: ordered ? () => Math.min(1, limit()) : limit, retry, ordered, quiet } as unknown as Handler<never>)
     this.report(kind)

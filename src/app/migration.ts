@@ -1,5 +1,5 @@
 /**
- * Migrates a schema 10 or 11 database to schema 12 in a single transaction so runtime readers never convert legacy shapes.
+ * Migrates a schema 10, 11, 12 or 13 database to schema 14 in a single transaction so runtime readers never convert legacy shapes.
  * Databases older than schema 10 are rejected: this version cannot migrate them.
  */
 import { basename } from 'node:path'
@@ -17,7 +17,7 @@ import type { SettingsVersion, Store } from './store.ts'
 import { Versions } from './versions.ts'
 import { KV, type Key } from '../kv.ts'
 
-export const SCHEMA_VERSION = 12
+export const SCHEMA_VERSION = 14
 /** The oldest database schema version this build can open and migrate directly. */
 export const OLDEST_SCHEMA = 10
 /** Returns an error message explaining why `version` cannot be opened: older schemas need a new state directory. */
@@ -49,6 +49,44 @@ export function migrateTo12(store: Store): void {
       store.set(name, { ...version, settings: { ...settings, sources } })
     })
   }
+}
+/**
+ * Rewrite schema 12 records into their schema 13 shapes in place: a Decision and an Input that earlier versions recorded when a
+ * follow-up reopened a ticket take the shapes the same facts take now. Such a Decision becomes an `ignore` routed to its ticket,
+ * as the main Session's routing of a follow-up records it; such an Input, a `resumed` Input of the Trigger its Decision decided,
+ * or, when that Decision is gone, a `text` Input that says the ticket resumed.
+ */
+export function migrateTo13(store: Store): void {
+  const legacy = 'reopen'
+  for (const row of store.db.prepare("SELECT id, value FROM decision WHERE value ->> '$.kind' = ?").all(legacy)) {
+    step(`decision ${String(row.id)}`, () => {
+      const decision = JSON.parse(String(row.value)) as Decision & { reason: unknown }
+      const routed: Reason[] = decision.ticketId ? [{ code: 'routed', values: { ticket: decision.ticketId } }] : []
+      store.decisions.save({ ...decision, kind: 'ignore', reason: [...routed, ...reasonsOf(decision.reason)] })
+    })
+  }
+  const tickets = store.db.prepare(`SELECT t.id, t.value FROM ticket t
+    WHERE EXISTS (SELECT 1 FROM json_each(t.value, '$.inputs') i WHERE i.value ->> '$.kind' = ?)`).all(legacy)
+  for (const row of tickets) {
+    step(`ticket ${String(row.id)}`, () => {
+      const ticket = JSON.parse(String(row.value)) as Omit<Ticket, 'inputs'> & { inputs: Stored[] }
+      const inputs = ticket.inputs.map((input): TicketInput => {
+        if (input.kind !== legacy) return input as unknown as TicketInput
+        const { id, at } = input as { id: string; at: string }
+        const triggerId = store.decisions.get(String(input.decisionId))?.triggerIds[0]
+        return triggerId ? { id, kind: 'resumed', triggerId, at } : { id, kind: 'text', text: 'A follow-up resumed this ticket under its Mandate.', at }
+      })
+      store.tickets.save({ ...ticket, inputs })
+    })
+  }
+}
+/**
+ * Rewrite schema 13 records into their schema 14 shapes in place: the effects the DshExecutor queued under the kinds `launch`
+ * and `delivery` take its name as their prefix. Assignments recorded before they named their Executor stay as they are,
+ * since one without a name is the DshExecutor's (`executorOf`).
+ */
+export function migrateTo14(store: Store): void {
+  store.db.exec("UPDATE effect SET kind = 'dsh.' || kind WHERE kind IN ('launch', 'delivery')")
 }
 /** Rewrite all schema 10 records into their schema 11 shapes in place. */
 export function migrateTo11(store: Store): void {
@@ -385,7 +423,7 @@ export function basisOf(stored: unknown): MandateBasis {
 /**
  * Upgrade a schema 10 ticket record to schema 11: extracts `origin`, `execution`, `delivery`, and followed PR threads
  * (`follows`) from `meta` and GitHub opener channels, merges reported `answers`, marks human trigger inputs (`human: true`),
- * and converts pending `reopen` inputs into `text` inputs for the worker.
+ * and converts pending `reopen` inputs into `text` inputs for the worker; schema 13 converts the others.
  */
 export function ticketOf(old: Stored, answers = new Map<string, string[]>(), human: (triggerId: string) => boolean = () => false,
   closed: (number: number) => Follow['closed'] = () => undefined): Ticket {
@@ -398,8 +436,9 @@ export function ticketOf(old: Stored, answers = new Map<string, string[]>(), hum
   // Remaining `meta` fields are obsolete: schema 6 task states stay in the `task` table, and accept fields live on `execution` and `mandate`.
   const execution: Execution | undefined = directory ? { name: text(meta.name) ?? basename(directory), directory,
     assignment: text(meta.assignment) ?? text(meta.legacyPrompt) ?? '' } : undefined
-  const inputs = ticket.inputs.map((input): TicketInput => input.kind === 'trigger' ? { ...input, ...human(input.triggerId) ? { human: true } : {} }
-    : input.kind !== 'reopen' || !ticket.undelivered.includes(input.id) ? input
+  const stored = ticket.inputs as (TicketInput | { id: string; kind: 'reopen'; decisionId: string; at: string })[]
+  const inputs = stored.map((input): TicketInput => input.kind === 'trigger' ? { ...input, ...human(input.triggerId) ? { human: true } : {} }
+    : input.kind !== 'reopen' ? input : !ticket.undelivered.includes(input.id) ? input as unknown as TicketInput
     : { id: input.id, kind: 'text', at: input.at, text: JSON.stringify({ resumed: true, decision_id: input.decisionId, read: `ticket/${ticket.id}/assignment`,
       note: 'This ticket ended earlier and a follow-up resumed it under the same mandate. Inspect the worktree, git history and PR state before continuing; do not repeat completed external operations.' }) })
   const reported = [...new Set([...ticket.answers ?? [], ...answers.get(ticket.id) ?? []])]

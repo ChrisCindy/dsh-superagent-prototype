@@ -244,7 +244,7 @@ export interface ThreadFact { label?: Text; value: Text; problem?: true }
 /** A thread's facts by id, ordered for display; each writer owns its fact ids. */
 export type ThreadFacts = Record<string, ThreadFact>
 
-export type DecisionKind = 'ignore' | 'accept' | 'reopen' | 'stop' | 'hold' | 'unavailable'
+export type DecisionKind = 'ignore' | 'accept' | 'stop' | 'hold' | 'unavailable'
 /** Outcome of one eval, recorded on the thread. */
 export interface Decision {
   id: string
@@ -273,9 +273,13 @@ export type AssignmentState = 'pending' | 'running' | 'ended'
  * ready (`ready`), a person must act to unblock or recover it (`blocked` or `failed`), or nothing is left to do (`dropped`).
  */
 export type ReportState = 'progress' | 'waiting' | 'ready' | 'blocked' | 'failed' | 'dropped'
+/** The Executor an Assignment names when none other is chosen: the DshExecutor, which runs each in a DeepSeek Harness Session. */
+export const DEFAULT_EXECUTOR = 'dsh'
 /** Binding between a ticket and one executor instance. */
 export interface Assignment {
   id: string
+  /** The name of the Executor that runs it; one recorded before Assignments named theirs has none and is the default's. */
+  executor?: string
   state: AssignmentState
   createdAt: string
   startedAt?: string
@@ -307,8 +311,6 @@ export type TicketInput =
     deliveredAt?: string }
   /** The Policy changed in a way that bears on the ticket, as `effect` says; Inputs written before effects have none. */
   | { id: string; kind: 'policy-changed'; from: string; to: string; at: string; effect?: PolicyEffect }
-  /** A Decision reopened the ticket; written before ended tickets resumed on their own. */
-  | { id: string; kind: 'reopen'; decisionId: string; at: string }
   /** A human's message on one of its Threads resumed the ended ticket under its unchanged Mandate. */
   | { id: string; kind: 'resumed'; triggerId: string; at: string }
   | { id: string; kind: 'text'; text: string; at: string }
@@ -396,6 +398,8 @@ export function reached(ticket: Ticket, trigger: Trigger, thread: (key: string) 
   }) || (input && (context || !trigger.threads.every(ref => thread(threadKey(ref))?.context?.includes(ticket.id))))
 }
 export const latestAssignment = (ticket: Ticket): Assignment | undefined => ticket.assignments.at(-1)
+/** The name of the Executor that runs an Assignment (see `Assignment.executor`). */
+export const executorOf = (assignment: Pick<Assignment, 'executor'>): string => assignment.executor ?? DEFAULT_EXECUTOR
 /** The latest report any of a ticket's Assignments made, which is what the ticket last said. */
 export const latestReport = (ticket: Pick<Ticket, 'assignments'>): Assignment['report'] => ticket.assignments.findLast(assignment => assignment.report)?.report
 /**

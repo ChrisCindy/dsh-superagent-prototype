@@ -11,6 +11,8 @@ import { sameName } from './infra/text.ts'
 import { WORKER_COMMANDS } from './infra/environment.ts'
 
 export const RuleIdSchema = z.string().regex(/^[a-zA-Z0-9_-]{1,80}$/)
+/** The name of an Executor, such as `dsh`, the DshExecutor's. */
+export const ExecutorNameSchema = z.string().regex(/^[a-z][a-z0-9-]{0,39}$/)
 export const RuleMatchSchema = z.object({ rule_id: RuleIdSchema, reason: z.string().trim().min(1).max(500) }).strict()
 export type RuleMatch = z.infer<typeof RuleMatchSchema>
 export const RuleAssessmentSchema = RuleMatchSchema.extend({ matched: z.boolean() }).strict()
@@ -105,13 +107,15 @@ export const RuleBudgetSchema = z.object({ turns: limit(LIMITS.budgetTurns).opti
 /**
  * An assessment rule; its instruction may also specify PR reviewers and whether to wait for their approval. Its `limits` preset
  * what the Mandates of tickets accepted under it let the work change and do (see `mandateLimits`), which is part of
- * authorization. Its `budget` sets what each Assignment of such a ticket may use, which is not.
+ * authorization. Its `budget` sets what each Assignment of such a ticket may use, and its `executor` which Executor runs such a
+ * ticket (see `chosenExecutor` in `src/app/executors.ts`), which are not.
  */
 export const RuleSchema = z.object({ id: RuleIdSchema, name: z.string().trim().min(1).max(LIMITS.ruleName), enabled: z.boolean(),
-  instruction: z.string().trim().min(1).max(LIMITS.ruleInstruction), limits: LimitsSchema.optional(), budget: RuleBudgetSchema.optional() }).strict()
+  instruction: z.string().trim().min(1).max(LIMITS.ruleInstruction), limits: LimitsSchema.optional(), budget: RuleBudgetSchema.optional(),
+  executor: ExecutorNameSchema.optional() }).strict()
 export type Rule = z.infer<typeof RuleSchema>
-/** A rule as it bears on authorization: without its budget. */
-const authorizing = ({ budget: _budget, ...rule }: Rule) => rule
+/** A rule as it bears on authorization: without its budget and its Executor. */
+const authorizing = ({ budget: _budget, executor: _executor, ...rule }: Rule) => rule
 /**
  * The budget of each Assignment of a ticket: the Executor's default, where each rule the ticket was accepted under that sets a
  * field replaces it; of several such rules, the largest wins, and no limit is the largest.
@@ -188,9 +192,12 @@ export const ExecutorConfigSchema = z.object({
   merge: MergeConfigSchema.default(() => MergeConfigSchema.parse({})),
   budget: BudgetSchema.default(() => BudgetSchema.parse({})),
 }).strict()
-/** A stored Source instance: the kind that runs it, whether it is on, and its configuration, which the kind validates. */
+/**
+ * A stored Source instance: the kind that runs it, whether it is on, its configuration, which the kind validates, and the
+ * Executor that runs the tickets its Triggers start, when it names one.
+ */
 export const SourceInstanceSchema = z.object({ kind: z.string().regex(/^[a-z][a-z0-9-]*$/), enabled: z.boolean().default(true),
-  config: z.record(z.string(), z.unknown()).default({}) }).strict()
+  config: z.record(z.string(), z.unknown()).default({}), executor: ExecutorNameSchema.optional() }).strict()
 /**
  * Source instances by ID. An instance stored without `kind` is its kind's first instance, whose ID is the kind's; another
  * instance's ID starts with its kind and a hyphen.

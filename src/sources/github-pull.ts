@@ -75,8 +75,8 @@ export async function observePull(ctx: SourceContext, pr: Pull): Promise<boolean
     const candidates = agentPull(pr, ctx.deployment.github, ctx.commands.repository) ? ctx.tickets.open().filter(ticket => ticketBranch(ticket, pr.head.ref)) : []
     const ticket = candidates.length === 1 ? candidates[0]! : undefined
     // A PR the ticket followed until it closed, and that is open again, is followed again.
-    const reopened = ticket?.follows?.some(item => item.thread === `${ctx.source}:${pr.number}` && item.closed)
-    if (ticket && (reopened || pullsOf(ticket, true, ctx.source).every(number => number === pr.number))) claimPull(ctx, ticket.id, pr)
+    const openedAgain = ticket?.follows?.some(item => item.thread === `${ctx.source}:${pr.number}` && item.closed)
+    if (ticket && (openedAgain || pullsOf(ticket, true, ctx.source).every(number => number === pr.number))) claimPull(ctx, ticket.id, pr)
   }
   ctx.threads.describe(`${ctx.source}:${pr.number}`, { facts: { autoMerge: !ended && pr.auto_merge != null ? AUTO_MERGE_ON : null } })
   return ended

@@ -72,8 +72,10 @@ export function ClampText({ text }: { text: string }) {
   </>
 }
 
-export function ConfirmButton({ label, title, message, onConfirm, variant = 'ghost', icon }: {
+export function ConfirmButton({ label, title, message, onConfirm, variant = 'ghost', icon, children }: {
   label: string; title: string; message: string; onConfirm: () => Promise<unknown>; variant?: 'ghost' | 'outline'; icon?: IconName
+  /** What the dialog asks besides its message, such as a choice its confirmation carries. */
+  children?: ReactNode
 }) {
   const { t } = usePanel()
   const [open, setOpen] = useState(false)
@@ -85,7 +87,7 @@ export function ConfirmButton({ label, title, message, onConfirm, variant = 'gho
         <Button variant="ghost" onClick={() => setOpen(false)}>{t('cancel')}</Button>
         <Button variant="primary" disabled={confirm.busy}
           onClick={() => { void confirm.run().then(done => { if (done) setOpen(false) }) }}>{t('confirm')}</Button>
-      </>} />
+      </>}>{children}</Modal>
   </>
 }
 export function SessionButton({ sessionId, label,

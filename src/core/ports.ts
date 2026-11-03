@@ -64,7 +64,8 @@ export interface Assessor {
 
 /**
  * Executes assignments; concurrency and workspace management are its own concern. The Engine calls it inside its
- * commands, so each method only queues work, which reports back through the Engine's callbacks.
+ * commands, so each method only queues work, which reports back through the Engine's callbacks. Each Assignment names the
+ * Executor that runs it (`Assignment.executor`); the Engine's port dispatches to that one.
  */
 export interface Executor {
   /** Queue a pending assignment for launch; reports back through `Engine.assignmentStarted` or a `failed` report. */
@@ -96,7 +97,9 @@ export interface Outbox {
 export interface DomainEvents {
   'trigger.received': { triggerId: string; threads: string[] }
   'eval.started': { evalId: string; threadKey: string; triggerIds: string[]; strength: Strength }
-  'decision.recorded': { decisionId: string; kind: DecisionKind; threadKey: string }
+  /** The Eval's candidate reached the assessor's Session. */
+  'eval.delivered': { evalId: string; threadKey: string }
+  'decision.recorded': { decisionId: string; evalId: string; kind: DecisionKind; threadKey: string }
   'ticket.created': { ticketId: string; decisionId: string; strength: Strength }
   'ticket.resumed': { ticketId: string; triggerId: string }
   /** A person held the ticket. */

@@ -218,6 +218,7 @@ export const acceptDecision = (): NonNullable<TicketPageView['decision']> => ({ 
   triggerIds: ['e1'], thread: 'feishu:oc_1:om_root', rules: [], preview: '@bot 修一下', ticketTitle: undefined })
 const ticketDetail = (): TicketPageView => ({
   ...ticketSummary(), paused: false, budget: { turns: 300, minutes: 120, tokens: null }, decision: acceptDecision(), threads: [threadSummary()],
+  executors: ['dsh'],
   mandate: { strength: 'explicit', policyVersion: 'abcdef1234567890', basis: { via: 'addressed', sender: 'Alice', addressed: 'mention' },
     actor: actor('feishu', MEMBER), scope: '修复登录页回归' },
   basis: { facts: [{ name: 'sender', value: 'Alice' }, { name: 'addressed', value: 'mention' }], legacy: false },
@@ -292,11 +293,11 @@ function initial(): PanelServer {
 class Refusal { constructor(readonly status: 400 | 404 | 409 | 500, readonly body: Record<string, unknown>) {} }
 const refuse = (status: Refusal['status'], error: string, more: Record<string, unknown> = {}) => new Refusal(status, { error, ...more })
 type Query<K extends keyof Api> = Api[K] extends { query?: infer Q } ? keyof NonNullable<Q> & string : never
-type Body<K extends keyof Api> = Api[K] extends { body: infer B } ? B : undefined
+type Body<K extends keyof Api> = Api[K] extends { body?: infer B } ? B : undefined
 interface Request<K extends keyof Api> { params: RouteParams<K>; query: Partial<Record<Query<K>, string>>; body: Body<K> }
 type Answer<K extends keyof Api> = ApiResponse<K> | Refusal
 type Route<K extends keyof Api> = { query?: readonly Query<K>[]; answer: (request: Request<K>) => Answer<K> | Promise<Answer<K>> }
-  & (Api[K] extends { body: unknown } ? { body: true } : { body?: never })
+  & ('body' extends keyof Api[K] ? Api[K] extends { body: unknown } ? { body: true } : { body: 'optional' } : { body?: never })
 const page = <T>(items: T[]) => ({ items, total: items.length, next_offset: null })
 const ticketOf = (id: string) =>
   [...server.tickets.open, ...server.person, ...server.tickets.ended].find(ticket => ticket.id === id) ?? server.ticketDetails[id]
@@ -355,10 +356,11 @@ const ROUTES: { [K in keyof Api]: Route<K> } = {
     ({ items: query.kind === 'ignore' ? [] : [acceptDecision()], next_offset: null }) },
   'POST decisions/:id/dismiss': { answer: ({ params }) => params.id === 'u1' ? { dismissed: true } : refuse(404,
     'Unavailable Eval not found') },
+  'GET events': { query: ['type', 'since', 'before', 'limit'], answer: () => ({ items: [], next_before: null }) },
   'GET tickets': { query: ['state', 'offset', 'limit'], answer: ({ query }) => page(server.tickets[query.state === 'ended' ? 'ended'
     : 'open']) },
   'GET tickets/:id': { answer: ({ params }) => server.ticketDetails[params.id] ?? refuse(404, 'Ticket not found') },
-  'POST tickets/:id/retry': { answer: ({ params }) => {
+  'POST tickets/:id/retry': { body: 'optional', answer: ({ params }) => {
     const ticket = ticketOf(params.id)
     if (!ticket) return refuse(404, 'Ticket not found')
     return ticket.actions.retry ? { retried: true } : refuse(400, 'Only an open ticket can be retried, and only when its worker last reported failed or blocked and no person has sent a message since, or when delivering an Input to its worker failed',
@@ -467,7 +469,7 @@ async function run<K extends keyof Api>(key: K, params: Record<string, string>, 
   const route: Route<K> = ROUTES[key]
   const read: readonly string[] = route.query ?? []
   for (const name of query.keys()) if (!read.includes(name)) server.misuse.push(`${key} with the query parameter ${name}`)
-  if ((body !== undefined) !== !!route.body) server.misuse.push(`${key} ${body === undefined ? 'without' : 'with'} a body`)
+  if (route.body !== 'optional' && (body !== undefined) !== !!route.body) server.misuse.push(`${key} ${body === undefined ? 'without' : 'with'} a body`)
   const values: Partial<Record<Query<K>, string>> = {}
   for (const name of route.query ?? []) { const value = query.get(name); if (value !== null) values[name] = value }
   return route.answer({ params: params as RouteParams<K>, query: values, body: body as Body<K> })

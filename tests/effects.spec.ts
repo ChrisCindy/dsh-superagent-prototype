@@ -52,12 +52,12 @@ it('runs a kind oldest first, as many at once as its limit allows, and holds it 
   const holds = new Map<string, ReturnType<typeof deferred<void>>>()
   let limit = 2
   const run = vi.fn(async (_payload: unknown, key: string) => { const hold = deferred(); holds.set(key, hold); await hold.promise })
-  effects.handle('launch', run, { limit: () => limit })
-  for (const key of ['a', 'b', 'c']) effects.enqueue('launch', key, { ticketId: key, assignmentId: key })
+  effects.handle('dsh.launch', run, { limit: () => limit })
+  for (const key of ['a', 'b', 'c']) effects.enqueue('dsh.launch', key, { ticketId: key, assignmentId: key })
   await vi.waitFor(() => expect(run.mock.calls.map(([, key]) => key)).toEqual(['a', 'b']))
   limit = 0
   holds.get('a')!.resolve()
-  await vi.waitFor(() => expect(effects.pending('launch', 'a')).toBe(false))
+  await vi.waitFor(() => expect(effects.pending('dsh.launch', 'a')).toBe(false))
   effects.kick(); await Promise.resolve()
   expect(run).toHaveBeenCalledTimes(2)
   limit = 2
@@ -70,11 +70,11 @@ it('runs a kind oldest first, as many at once as its limit allows, and holds it 
 it('keeps an effect\'s place in its queue when it is queued again with a new payload', async () => {
   const run = vi.fn(async (_payload: { ticketId: string; assignmentId: string }, _key: string) => {})
   let room = 0
-  effects.handle('launch', run, { limit: () => room })
+  effects.handle('dsh.launch', run, { limit: () => room })
   store.atomic(() => {
-    effects.enqueue('launch', 'first', { ticketId: 't1', assignmentId: 'a1' })
-    effects.enqueue('launch', 'second', { ticketId: 't2', assignmentId: 'a2' })
-    effects.enqueue('launch', 'first', { ticketId: 't1', assignmentId: 'a1' })
+    effects.enqueue('dsh.launch', 'first', { ticketId: 't1', assignmentId: 'a1' })
+    effects.enqueue('dsh.launch', 'second', { ticketId: 't2', assignmentId: 'a2' })
+    effects.enqueue('dsh.launch', 'first', { ticketId: 't1', assignmentId: 'a1' })
   })
   await effects.idle()
   room = 1
@@ -122,8 +122,8 @@ it('starts nothing once drained, keeps what waits and what shutdown cut short, a
 it('lets a handler defer an effect without a failure, until a later dispatch after its first delay', async () => {
   let later = true
   const run = vi.fn(async () => { if (later) throw new Later('paused') })
-  effects.handle('launch', run, { retry: [5000, 60_000] })
-  effects.enqueue('launch', 'a', { ticketId: 't', assignmentId: 'a' })
+  effects.handle('dsh.launch', run, { retry: [5000, 60_000] })
+  effects.enqueue('dsh.launch', 'a', { ticketId: 't', assignmentId: 'a' })
   await effects.idle()
   expect(health.launch).toMatchObject({ state: 'ready', detail: '1 waiting since 2026-09-09T00:00:00.000Z' })
   later = false
@@ -131,7 +131,7 @@ it('lets a handler defer an effect without a failure, until a later dispatch aft
   expect(run).toHaveBeenCalledOnce()
   clock += 1; await effects.idle()
   expect(run).toHaveBeenCalledTimes(2)
-  expect(effects.pending('launch')).toBe(false)
+  expect(effects.pending('dsh.launch')).toBe(false)
 })
 
 it('runs an ordered kind one at a time in the order queued, and holds the later effects while an earlier one fails', async () => {
@@ -149,10 +149,10 @@ it('runs an ordered kind one at a time in the order queued, and holds the later 
 
 it('keeps a quiet kind\'s failures out of its health, and asks no limit while nothing is due', async () => {
   const limit = vi.fn(() => 4)
-  effects.handle('delivery', async () => { throw new Error('Session gone') }, { quiet: true, limit, retry: [1000, 1000] })
+  effects.handle('dsh.delivery', async () => { throw new Error('Session gone') }, { quiet: true, limit, retry: [1000, 1000] })
   effects.kick(); await effects.idle()
   expect(limit).not.toHaveBeenCalled()
-  effects.enqueue('delivery', 't', { ticketId: 't' })
+  effects.enqueue('dsh.delivery', 't', { ticketId: 't' })
   for (let attempt = 0; attempt < 4; attempt++) { await effects.idle(); clock += 1000 }
   expect(health.delivery).toMatchObject({ state: 'ready', detail: '1 waiting since 2026-09-09T00:00:00.000Z' })
 })

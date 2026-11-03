@@ -160,10 +160,10 @@ export class Engine {
   stopTicket(ticketId: string, reason?: string): Ticket { return this.repo.atomic(() => this.tickets.stop(ticketId, reason)) }
   /**
    * A person retries a ticket whose worker reported failed or blocked (or whose input delivery failed): the stalled
-   * Assignment ends and a new one starts under the same Mandate.
+   * Assignment ends and a new one starts under the same Mandate, run by `executor` when it names one, else by the same Executor.
    * @throws UserError when the ticket is unknown, has ended, or is not retryable.
    */
-  retryTicket(ticketId: string): Ticket { return this.repo.atomic(() => this.tickets.retry(ticketId)) }
+  retryTicket(ticketId: string, executor?: string): Ticket { return this.repo.atomic(() => this.tickets.retry(ticketId, executor)) }
   /**
    * A person holds an open ticket: its Assignment ends, and until a person's message or a release it takes no automatic Input
    * and starts no Assignment; it keeps its Mandate.

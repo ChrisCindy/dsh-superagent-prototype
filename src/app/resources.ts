@@ -267,7 +267,7 @@ const ROUTES: readonly Route[] = [
       const size = Math.min(read.limit ?? (section === 'assignments' ? ASSIGNMENTS : INPUTS), 50)
       const { items, next_offset } = section === 'assignments'
         ? newestPage(ticket.assignments, read.offset, size, item => assignmentLine(ticket, item), resource)
-        : newestPage(ticket.inputs, read.offset, size, input => inputLine(ticket, input, !!ticketId), resource)
+        : newestPage(ticket.inputs, read.offset, size, input => inputLine(ticket, input), resource)
       return { items, next_offset: next_offset ?? null }
     }
     let body: string

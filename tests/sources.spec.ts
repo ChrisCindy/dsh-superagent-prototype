@@ -452,7 +452,7 @@ describe('github source', () => {
     expect(h.store.keys('github-')).toEqual([])
     h.store.close()
   })
-  it('follows a PR it opened again when it reopens, while another PR it opened is open', async () => {
+  it('follows a PR it opened again when the PR is opened again, while another PR it opened is open', async () => {
     const h = host()
     h.store.tickets.save({ ...openTicket('t5'), execution: execution('fix-5'),
       follows: [{ thread: 'github:21', own: true }, { thread: 'github:22', own: true, closed: { at: '2026-09-02T00:00:00.000Z', outcome: 'closed' } }] })

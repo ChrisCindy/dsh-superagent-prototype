@@ -52,9 +52,10 @@ let guards: Map<string, Guard>
 let restricts: Map<string, unknown[]>
 type HttpHandler = (req: unknown, res: unknown) => Promise<void>
 let http: HttpHandler
-async function api(method: string, path: string): Promise<{ status: number; body: unknown }> {
+async function api(method: string, path: string, body?: unknown): Promise<{ status: number; body: unknown }> {
   let status = 0, text = ''
-  const req = { method, url: `/orchestrator/api/${path}`, headers: PANEL_HEADERS }
+  const chunks = body === undefined ? [] : [Buffer.from(JSON.stringify(body))]
+  const req = { method, url: `/orchestrator/api/${path}`, headers: PANEL_HEADERS, async *[Symbol.asyncIterator]() { yield* chunks } }
   await http(req, { writeHead: (code: number) => { status = code }, end: (data: string) => { text = data } })
   return { status, body: JSON.parse(text) }
 }
@@ -244,6 +245,40 @@ it('relays an explicit member mention as a candidate and creates the ticket, ack
   expect(await route({ kind: 'accept', trigger_id: trigger.id, title: 'again', worktree_name: worktreeName, acknowledgement: 'x' })).toMatchObject({ ticket: { ticket_id: ticket.id } })
 })
 
+it('writes every domain event to the event table in the transaction of its change, lists them signed in, and appends them to the event log', async () => {
+  const log = join(directory, 'events.jsonl')
+  runtime.machine.eventLog = reference(log)
+  const { trigger, ticket } = await acceptedTicket()
+  const events = runtime.store.read.events({}, 100).items.reverse()
+  const types = events.map(event => event.type)
+  expect(types.slice(0, 6)).toEqual(['trigger.received', 'eval.started', 'eval.delivered', 'decision.recorded', 'thread.subscribed', 'ticket.created'])
+  expect(types).toContain('assignment.started')
+  // Eval latency reads from one Eval's events: started, its candidate delivered, and its Decision.
+  const started = events.find(event => event.type === 'eval.started')!
+  const evalId = (started.data as { evalId: string }).evalId
+  expect(events.filter(event => (event.data as { evalId?: string }).evalId === evalId).map(event => event.type))
+    .toEqual(['eval.started', 'eval.delivered', 'decision.recorded'])
+  expect(events[0]).toMatchObject({ type: 'trigger.received', data: { triggerId: trigger.id }, at: expect.any(String) })
+  // Each line of the log is one event, as the table keeps it.
+  const lines = readFileSync(log, 'utf8').trim().split('\n').map(line => JSON.parse(line) as unknown)
+  expect(lines).toEqual(events.map(({ seq, type, at, data }) => ({ seq, type, at, data })))
+  // A change that fails leaves no event, in the table or in the log.
+  const before = runtime.store.read.events({}, 1000).items.length
+  expect(() => runtime.engine.attach('no-such-ticket', trigger.id)).toThrow()
+  expect(runtime.store.read.events({}, 1000).items).toHaveLength(before)
+  expect(readFileSync(log, 'utf8').trim().split('\n')).toHaveLength(before)
+  const page = await api('GET', `events?type=ticket.created,assignment.started&limit=1`)
+  expect(page).toEqual({ status: 200, body: { items: [expect.objectContaining({ type: 'assignment.started', data: expect.objectContaining({ ticketId: ticket.id }) })],
+    next_before: expect.any(Number) } })
+  const next = await api('GET', `events?type=ticket.created,assignment.started&before=${(page.body as { next_before: number }).next_before}`)
+  expect(next.body).toEqual({ items: [expect.objectContaining({ type: 'ticket.created', data: expect.objectContaining({ ticketId: ticket.id }) })], next_before: null })
+  expect((await api('GET', `events?since=${encodeURIComponent(new Date(Date.now() + 60_000).toISOString())}`)).body).toEqual({ items: [], next_before: null })
+  // An unwritable log loses its lines, never the change or its events.
+  runtime.machine.eventLog = reference(join(log, 'events.jsonl'))
+  await receive(feishu('2', '@bot 还有一个'))
+  expect(runtime.store.read.events({ types: ['trigger.received'] }, 10).items).toHaveLength(2)
+})
+
 it('runs the main Session read-only and each worker writing only its Ticket directory, neither asking for approval, and changes that only from the panel', async () => {
   const presets = services.permissionPresets as ReturnType<typeof permissionPresets>
   const { ticket, sessionId } = await acceptedTicket()
@@ -392,6 +427,78 @@ it('accepts silently under a rule that says so, gives the worker the rule proced
   await runTool(`worker-${ticket.id}`, 'orchestrator_report', { state: 'dropped', summary: 'too complex; recorded in #123' })
   expect(runtime.store.tickets.get(ticket.id)).toMatchObject({ ended: expect.objectContaining({ by: 'executor', outcome: 'dropped' }) })
   expect(await runTool(runtime.masterId, 'orchestrator_reply', { ticket_id: ticket.id, purpose: 'result', text: '看到这个问题我试了一下，能复现，修复需要较大改动，已记在 #123。' })).toEqual({ status: 'sent' })
+})
+
+it('runs tickets on the Executor a rule names beside the DshExecutor, and a retry switches a ticket to another Executor', async () => {
+  // A test-only Executor: it starts each Assignment at once and reports what `outcome` says for its ticket.
+  const calls: string[] = []
+  const outcome = new Map<string, 'failed' | 'ready'>()
+  runtime.executors.register('fake', {
+    start: (ticket, assignment) => {
+      calls.push(`start ${assignment.id}`)
+      runtime.store.afterCommit(() => {
+        runtime.engine.assignmentStarted(ticket.id, assignment.id)
+        runtime.engine.report(ticket.id, { state: outcome.get(ticket.id) ?? 'ready', summary: 'done by fake' })
+      })
+    },
+    deliver: (_ticket, assignment) => { calls.push(`deliver ${assignment.id}`) },
+    stop: (_ticket, assignment, reason) => { calls.push(`stop ${assignment.id} ${reason}`) },
+  })
+  const policy = runtime.store.settings().policy
+  await runtime.settings.save('policy', { ...policy, rules: policy.rules.map(rule => rule.id === 'copy' ? { ...rule, executor: 'fake' } : rule) },
+    runtime.store.blockRevision('policy'), 'panel')
+  // An explicit request names no rule, so the DshExecutor runs it.
+  const { ticket: explicit, sessionId } = await acceptedTicket()
+  expect(explicit.assignments).toEqual([expect.objectContaining({ executor: 'dsh', state: 'running' })])
+  // A proactive one under the copy rule runs on the fake Executor; its first Assignment fails.
+  const copy = feishu('5', '把副标题改成“浏览网页”', { mentions: [] })
+  await receive(copy)
+  await runTool(runtime.masterId, 'orchestrator_eval', { trigger_id: copy.id })
+  vi.spyOn(Commands.prototype, 'lark').mockResolvedValue({ items: [{ message_id: 'om_5', chat_id: CHAT }] })
+  const proactiveId = key('ticket', runtime.store.threads.get(`feishu:${CHAT}:om_5`)!.evaluating!.id)
+  outcome.set(proactiveId, 'failed')
+  const accepted = await runTool(runtime.masterId, 'orchestrator_eval_decide', { trigger_id: copy.id, decision: 'accept', title: '文案修订',
+    worktree_name: 'copy-fix', scope: '改副标题', reason: 'copy change', intent_evidence: 'quoted',
+    rule_assessments: [{ rule_id: 'copy', matched: true, reason: 'copy change' }, { rule_id: 'visual', matched: false, reason: 'not visual' }],
+    direction: { implementation_requested: true, target_basis: 'specified', requires_design_decision: false, evidence: 'named' } })
+  const proactive = (accepted.ticket as { ticket_id: string }).ticket_id
+  expect(proactive).toBe(proactiveId)
+  expect(runtime.store.tickets.get(proactive)!.assignments).toEqual([expect.objectContaining({ executor: 'fake', report: expect.objectContaining({ state: 'failed' }) })])
+  expect(agents.has(`worker-${proactive}`)).toBe(false)
+  // A retry that names an Executor no plugin provides is refused; one that names the DshExecutor launches its worker.
+  expect(await api('POST', `tickets/${proactive}/retry`, { executor: 'nobody' })).toMatchObject({ status: 400, body: { code: 'unknownExecutor' } })
+  expect(await api('POST', `tickets/${proactive}/retry`, { executor: 'dsh' })).toEqual({ status: 200, body: { retried: true } })
+  await runtime.idle()
+  const [failed, retried] = runtime.store.tickets.get(proactive)!.assignments
+  expect(calls).toContain(`stop ${failed!.id} retried`)
+  expect(retried).toMatchObject({ executor: 'dsh', state: 'running' })
+  await runTool(`worker-${proactive}`, 'orchestrator_report', { state: 'ready', summary: 'copy changed' })
+  expect(runtime.store.tickets.get(proactive)!.ended).toMatchObject({ outcome: 'completed' })
+  // The explicit ticket's worker is blocked; a retry that names fake moves it there, which completes it.
+  await runTool(sessionId, 'orchestrator_report', { state: 'blocked', summary: 'needs a decision' })
+  expect(await api('POST', `tickets/${explicit.id}/retry`, { executor: 'fake' })).toEqual({ status: 200, body: { retried: true } })
+  const assignments = runtime.store.tickets.get(explicit.id)!.assignments
+  expect(assignments.map(item => item.executor)).toEqual(['dsh', 'fake'])
+  expect(runtime.store.tickets.get(explicit.id)!.ended).toMatchObject({ outcome: 'completed' })
+  expect(assignments[1]!.report).toMatchObject({ state: 'ready', summary: 'done by fake' })
+  // The panel offers the Executors a retry may name.
+  expect((await api('GET', `tickets/${explicit.id}`)).body).toMatchObject({ executors: ['dsh', 'fake'] })
+})
+
+it('fails an Assignment whose Executor no plugin provides, and a retry on another Executor runs it', async () => {
+  runtime.store.saveSettings({ ...runtime.store.settings(), sources: { ...runtime.store.settings().sources,
+    feishu: { ...runtime.store.settings().sources.feishu!, executor: 'gone' } } })
+  const trigger = feishu('1', '@bot 修一下回归')
+  await receive(trigger)
+  const result = await route({ kind: 'accept', trigger_id: trigger.id, title: '修复回归', worktree_name: worktreeName, acknowledgement: '收到' })
+  const id = (result.ticket as { ticket_id: string }).ticket_id
+  expect(runtime.store.tickets.get(id)!.assignments).toEqual([expect.objectContaining({ executor: 'gone',
+    report: expect.objectContaining({ state: 'failed', summary: expect.stringContaining('No Executor named gone') }) })])
+  expect(await api('POST', `tickets/${id}/retry`)).toEqual({ status: 200, body: { retried: true } })
+  expect(runtime.store.tickets.get(id)!.assignments.at(-1)).toMatchObject({ executor: 'gone', report: { state: 'failed' } })
+  expect(await api('POST', `tickets/${id}/retry`, { executor: 'dsh' })).toEqual({ status: 200, body: { retried: true } })
+  await runtime.idle()
+  expect(runtime.store.tickets.get(id)!.assignments.at(-1)).toMatchObject({ executor: 'dsh', state: 'running' })
 })
 
 it('records worker reports, binds the task PR, ends the ticket on ready without a PR, and relays attention', async () => {
@@ -848,8 +955,8 @@ it('counts every step of the day\'s flow over the same arriving messages and lis
   await receive(feishu('7', '另一个群', { chat_id: 'oc_elsewhere', create_time: now }))
   const since = new Date(Date.now() - 86_400_000).toISOString()
   expect(overviewOf(runtime).flow).toMatchObject({ received: 2, filtered: 1, triggers: 1, judged: 1, accepted: 1 })
-  expect(decisionList(viewsOf(runtime), ['accept', 'reopen'], 0, 10, since).items).toHaveLength(1)
-  expect(decisionList(viewsOf(runtime), ['accept', 'reopen'], 0, 10, new Date(Date.now() + 60_000).toISOString()).items).toEqual([])
+  expect(decisionList(viewsOf(runtime), ['accept'], 0, 10, since).items).toHaveLength(1)
+  expect(decisionList(viewsOf(runtime), ['accept'], 0, 10, new Date(Date.now() + 60_000).toISOString()).items).toEqual([])
 })
 
 it('queues a requeued trigger visibly and tells the orchestrator', async () => {

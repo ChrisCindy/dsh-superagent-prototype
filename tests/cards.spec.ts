@@ -143,9 +143,9 @@ it('shows a trigger and a ticket as cards with a short preview and references to
       chars: SUMMARY.length, read: 'ticket/ticket-1/report/a1' } }] },
     assignment: 'ticket/ticket-1/assignment', result: 'ticket/ticket-1/result', transcript: 'ticket/ticket-1/transcript' })
   // Its worker reads no Decision, so it sees no Decision's id.
-  expect(ticketDetails({ ...ticket, inputs: [{ id: 'r', kind: 'reopen', decisionId: 'd2', at: '1' }] }, threads, [], true)).toMatchObject({
-    inputs: { items: [{ kind: 'reopen', read: `ticket/ticket-1/input/${key('r')}` }] } })
-  expect(JSON.stringify(ticketDetails({ ...ticket, inputs: [{ id: 'r', kind: 'reopen', decisionId: 'd2', at: '1' }] }, threads, [], true))).not.toMatch(/"d[12]"/)
+  expect(ticketDetails({ ...ticket, inputs: [{ id: 'r', kind: 'policy-changed', from: 'v1', to: 'v2', at: '1' }] }, threads, [], true)).toMatchObject({
+    inputs: { items: [{ kind: 'policy-changed', read: `ticket/ticket-1/input/${key('r')}` }] } })
+  expect(JSON.stringify(ticketDetails(ticket, threads, [], true))).not.toMatch(/"d1"/)
   // The latest ten Inputs, newest first, each read by the name its line gives; the next page reads from the Inputs' own list.
   const inputs = Array.from({ length: 12 }, (_, n) => ({ id: `text:${n}`, kind: 'text' as const, text: `Note ${n}`, at: String(n) }))
   const page = ticketDetails({ ...ticket, inputs: [...inputs, { id: 'text:long', kind: 'text', text: 'Long note. '.repeat(10), at: '12' }], undelivered: ['text:11'] },

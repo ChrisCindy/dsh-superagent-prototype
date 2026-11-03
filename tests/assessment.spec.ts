@@ -129,12 +129,12 @@ it('routes an explicit candidate instead of assessing it: each eval tool names t
   await expect(s.tools.orchestrator_eval_decide!(decision, signal)).rejects.toThrow(routed)
 })
 
-it('asks the assessment only for decisions its tool accepts, which no longer include reopen or stop', () => {
-  expect(mainAdmissionPolicy).not.toMatch(/reopen|decision=stop/)
+it('asks the assessment only for decisions its tool accepts, which do not include stop', () => {
+  expect(mainAdmissionPolicy).not.toMatch(/decision=stop/)
   const direction = { implementation_requested: true, target_basis: 'specified', requires_design_decision: false, evidence: 'e' }
   const result = (decision: string, extra = {}) =>
     AssessmentSchema.safeParse({ decision, rule_assessments: [], direction, title: 't', scope: 's', reason: 'r', ...extra }).success
-  expect([result('ignore'), result('unavailable'), result('reopen'), result('stop')]).toEqual([true, true, false, false])
+  expect([result('ignore'), result('unavailable'), result('resume'), result('stop')]).toEqual([true, true, false, false])
   expect(result('ignore', { ticket_id: 't' })).toBe(false)
 })
 

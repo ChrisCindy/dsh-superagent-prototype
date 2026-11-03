@@ -103,7 +103,7 @@ export function usePoll<T>(load: () => Promise<T>, deps: readonly unknown[], int
 export const DECISION_FILTERS = ['work', 'stop', 'ignore', 'rateLimited', 'unavailable', 'all'] as const
 export type DecisionFilter = typeof DECISION_FILTERS[number]
 /** The `GET decisions` query of each filter: its kinds, and the reason code its Decisions carry. */
-export const DECISION_QUERIES: Readonly<Record<DecisionFilter, { kind: string; reason?: string }>> = { work: { kind: 'accept,reopen' },
+export const DECISION_QUERIES: Readonly<Record<DecisionFilter, { kind: string; reason?: string }>> = { work: { kind: 'accept' },
   stop: { kind: 'stop,hold' }, ignore: { kind: 'ignore' }, rateLimited: { kind: 'ignore', reason: 'rateLimited' },
   unavailable: { kind: 'unavailable' }, all: { kind: '' } }
 

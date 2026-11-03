@@ -98,10 +98,10 @@ export class SourceRegistry implements SourceScope {
    * Validates a submitted value for instance `id` (an existing instance, or a new one of `kind`) with its kind's schema.
    * @throws when the instance's kind is not installed, or the configuration is invalid.
    */
-  validate(id: string, value: { enabled: boolean; config: unknown }, settings = this.settings(), kind = settings.sources[id]?.kind ?? id): Stored {
+  validate(id: string, value: { enabled: boolean; config: unknown; executor?: string }, settings = this.settings(), kind = settings.sources[id]?.kind ?? id): Stored {
     const found = this.kinds.get(kind)
     if (!found) throw new Error(`Source kind not installed: ${kind}`)
-    return { kind, enabled: value.enabled, config: found.schema.parse(value.config) }
+    return { kind, enabled: value.enabled, config: found.schema.parse(value.config), ...value.executor ? { executor: value.executor } : {} }
   }
   /** Validates each Source's part of a submitted Policy against its instance's kind; policy parts for uninstalled Source kinds are kept as stored. */
   validatePolicy(parts: Record<string, Record<string, unknown>>, settings = this.settings()): Record<string, Record<string, unknown> & { allowed: { id: string; name?: string }[] }> {

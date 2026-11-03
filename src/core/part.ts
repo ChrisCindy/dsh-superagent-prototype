@@ -13,6 +13,8 @@ export interface EngineOptions {
   executor: Executor
   outbox: Outbox
   prepareTicket?: (ticket: Ticket, outcome: Extract<AssessmentOutcome, { kind: 'accept' }>) => Ticket
+  /** The name of the Executor that runs a new ticket's first Assignment; without it, `DEFAULT_EXECUTOR`. */
+  executorFor?: (ticket: Ticket, outcome: Extract<AssessmentOutcome, { kind: 'accept' }>) => string
   now?: () => string
   emit?: (event: DomainEvent) => void
 }

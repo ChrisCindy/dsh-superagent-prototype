@@ -284,3 +284,31 @@ it('reads `%` and `_` in a key prefix and a search query as written, not as patt
   expect([store.read.search('50%').map(item => item.id), store.read.search('a_b').map(item => item.id)]).toEqual([['p'], ['r']])
   store.close()
 })
+it('keeps domain events in the order they happened, drops those of a rolled back change, and lists them by type, time and page', () => {
+  const path = join(directory, 'orchestrator.sqlite')
+  const store = new Store(path)
+  const seq = store.events.append({ type: 'trigger.received', at: '2026-09-01T00:00:00.000Z', data: { triggerId: 't1', threads: ['github:1'] } })
+  expect(() => store.atomic(() => {
+    store.events.append({ type: 'ticket.held', at: '2026-09-01T00:00:01.000Z', data: { ticketId: 'k1' } })
+    throw new Error('boom')
+  })).toThrow('boom')
+  store.events.append({ type: 'ticket.held', at: '2026-09-02T00:00:00.000Z', data: { ticketId: 'k1' } })
+  store.events.append({ type: 'ticket.released', at: '2026-09-03T00:00:00.000Z', data: { ticketId: 'k1' } })
+  const all = store.read.events({})
+  const held = all.items[1]!.seq
+  expect(held).toBeGreaterThan(seq)
+  expect(all).toEqual({ more: false, items: [
+    { seq: held + 1, type: 'ticket.released', at: '2026-09-03T00:00:00.000Z', data: { ticketId: 'k1' } },
+    { seq: held, type: 'ticket.held', at: '2026-09-02T00:00:00.000Z', data: { ticketId: 'k1' } },
+    { seq, type: 'trigger.received', at: '2026-09-01T00:00:00.000Z', data: { triggerId: 't1', threads: ['github:1'] } }] })
+  expect(store.read.events({ types: ['ticket.held', 'trigger.received'] }).items.map(event => event.type)).toEqual(['ticket.held', 'trigger.received'])
+  expect(store.read.events({ since: '2026-09-02T00:00:00.000Z' }).items.map(event => event.type)).toEqual(['ticket.released', 'ticket.held'])
+  const first = store.read.events({}, 1)
+  expect(first).toMatchObject({ more: true, items: [{ type: 'ticket.released' }] })
+  expect(store.read.events({ before: first.items[0]!.seq }, 1)).toMatchObject({ more: true, items: [{ type: 'ticket.held' }] })
+  store.close()
+  // A database opened again keeps them.
+  const again = new Store(path)
+  expect(again.read.events({}).items).toEqual(all.items)
+  again.close()
+})

@@ -2,11 +2,11 @@
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite'
 import { chmodSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
-import { key, threadKey, type ChannelRef, type Decision, type OutboundMessage, type ReplyStatus, type Repositories, type Thread, type ThreadFact,
+import { key, threadKey, type ChannelRef, type Decision, type DomainEvent, type OutboundMessage, type ReplyStatus, type Repositories, type Thread, type ThreadFact,
   type ThreadFacts, type Ticket, type Trigger, type TriggerDisposition } from '../core/index.ts'
 import { KV, type Family, type Key } from '../kv.ts'
 import { SettingsSchema, type Settings, type SettingsOrigin, type SettingsSave } from '../policy.ts'
-import { OLDEST_SCHEMA, SCHEMA_VERSION, migrateTo11, migrateTo12, tooOld } from './migration.ts'
+import { OLDEST_SCHEMA, SCHEMA_VERSION, migrateTo11, migrateTo12, migrateTo13, migrateTo14, tooOld } from './migration.ts'
 import { Versions } from './versions.ts'
 import { storeReads } from './store-read.ts'
 
@@ -53,9 +53,9 @@ export { SCHEMA_VERSION }
 export class Store implements Repositories {
   readonly db: DatabaseSync
   /**
-   * Opens or creates the SQLite database at `path`, migrating schema 10 or 11 to schema 12 in a single transaction.
+   * Opens or creates the SQLite database at `path`, migrating schema 10, 11, 12 or 13 to schema 14 in a single transaction.
    * @param report - Receives errors thrown by `afterCommit` callbacks without failing the committed transaction.
-   * @throws When the database schema is older than `OLDEST_SCHEMA` (10), newer than `SCHEMA_VERSION` (12), or when migration fails; in every case the database file is left unchanged and the SQLite handle is closed so a later attempt in the same process can open it.
+   * @throws When the database schema is older than `OLDEST_SCHEMA` (10), newer than `SCHEMA_VERSION` (14), or when migration fails; in every case the database file is left unchanged and the SQLite handle is closed so a later attempt in the same process can open it.
    */
   constructor(path: string, private readonly report: (error: unknown) => void = () => {}) {
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
@@ -86,10 +86,15 @@ export class Store implements Repositories {
             CREATE INDEX IF NOT EXISTS trigger_thread_at ON trigger_thread(thread, at);
             CREATE INDEX IF NOT EXISTS decision_thread ON decision(thread);
             CREATE INDEX IF NOT EXISTS effect_due ON effect(kind, due, seq);
+            CREATE TABLE IF NOT EXISTS event (seq INTEGER PRIMARY KEY AUTOINCREMENT, type TEXT NOT NULL, at TEXT NOT NULL, data TEXT NOT NULL);
+            CREATE INDEX IF NOT EXISTS event_type ON event(type, seq);
+            CREATE INDEX IF NOT EXISTS event_at ON event(at);
           `)
           this.addColumns()
           if (migrating && version < 11) migrateTo11(this)
-          if (migrating) migrateTo12(this)
+          if (migrating && version < 12) migrateTo12(this)
+          if (migrating && version < 13) migrateTo13(this)
+          if (migrating) migrateTo14(this)
           if (version !== SCHEMA_VERSION) this.set(KV.store.schema, SCHEMA_VERSION)
         })
       } catch (error) {
@@ -251,6 +256,15 @@ export class Store implements Repositories {
     latest: (threadKeyValue: string): Decision | undefined => this.values<Decision>('SELECT value FROM decision WHERE thread=? ORDER BY rowid DESC LIMIT 1', threadKeyValue)[0],
     inferredSince: (source: string, since: string): number => Number(this.db.prepare(`SELECT COUNT(*) AS n FROM decision
       WHERE inferred >= ? AND substr(thread, 1, ?) = ?`).get(since, source.length + 1, `${source}:`)?.n ?? 0),
+  }
+  /**
+   * The append-only audit trail of domain events: one row per event, in the order they happened, written in the transaction
+   * of the change that emitted it, so a rolled back change leaves no event. Nothing updates or deletes a row.
+   */
+  readonly events = {
+    /** @returns The event's `seq`. */
+    append: (event: DomainEvent): number =>
+      Number(this.db.prepare('INSERT INTO event (type, at, data) VALUES (?, ?, ?)').run(event.type, event.at, JSON.stringify(event.data)).lastInsertRowid),
   }
   /** Read-only queries for management views, orchestrator tools, and source polling (see `storeReads`). */
   readonly read: ReturnType<typeof storeReads>

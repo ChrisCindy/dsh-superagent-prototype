@@ -111,6 +111,8 @@ function MandateDetails({ ticket, actor }: { ticket: TicketPageView; actor: stri
 export function TicketPage({ id }: { id: string }) {
   const { t, call } = usePanel()
   const { data, error, reload } = usePoll(() => call('GET tickets/:id', { id }), [id])
+  // The Executor a retry runs the ticket on, when a person picks another than its latest Assignment's.
+  const [executor, setExecutor] = useState<string>()
   const after = async (request: Promise<unknown>) => { await request; await reload() }
   if (!data) return <><PageHead
     title={t('term.ticket')} />{error instanceof ApiError && error.missing ? <Hint>{t('ticketNotFound')}</Hint> : <LoadState
@@ -128,12 +130,21 @@ export function TicketPage({ id }: { id: string }) {
     return reason ? t('endedAt', { time, outcome, reason }) : t('endedAtShort', { time, outcome })
   })()
   const channel = data.channels[0]
+  const current = data.assignments.at(-1)?.executor ?? 'dsh'
+  const retryOn = executor && executor !== current ? executor : undefined
   return <>
     <PageHead title={data.title}>
       {opening?.url && <ActionLink href={opening.url}>{t('openThread', { source: valueLabel(t, 'source', opening.source) })}</ActionLink>}
       {data.actions.retry && <ConfirmButton variant="outline" icon="refresh" label={t('retry')} title={t('retryTitle')}
         message={t('retryConfirm', { title: data.title })}
-        onConfirm={() => after(call('POST tickets/:id/retry', { id }))} />}
+        onConfirm={() => after(call('POST tickets/:id/retry', { id, ...retryOn ? { body: { executor: retryOn } } : {} }))}>
+        {data.executors.length > 1 && <label className="dt-field">
+          <span className="dt-field-head">{t('retryExecutor')}</span>
+          <select className="dt-select" aria-label={t('retryExecutor')} value={executor ?? current} onChange={event => setExecutor(event.target.value)}>
+            {[...new Set([current, ...data.executors])].map(name => <option key={name} value={name}>{name}</option>)}
+          </select>
+        </label>}
+      </ConfirmButton>}
       {data.actions.hold && <ConfirmButton variant="outline" icon="pause" label={t('hold')} title={t('holdTitle')}
         message={t('holdConfirm', { title: data.title })} onConfirm={() => after(call('POST tickets/:id/hold', { id }))} />}
       {data.actions.release && <Button variant="outline" icon={<Icon name="play" />}
