@@ -12,7 +12,7 @@ import { PromptConflict, SKILL_NAME, SKILL_PREFIX, TEAM_SECTIONS, builtInBase, b
 import { policyVersion } from '../policy.ts'
 import { SettingsConflict, type Settings } from './settings.ts'
 import { SetupError, type SetupProblem, type SetupWarning } from '../setup.ts'
-import { UserError, type EngineForPeople, type Ticket } from '../core/index.ts'
+import { UserError, isoTime, type EngineForPeople, type Ticket } from '../core/index.ts'
 import type { Deployment, Machine } from '../deployment.ts'
 import type { DshExecutor } from '../executor/dsh.ts'
 import type { Health } from '../sources/host.ts'
@@ -148,6 +148,8 @@ const ThreadsQuery = z.object({ filter: z.enum(THREAD_FILTERS).catch('subscribed
 const ThreadQuery = z.object({ limit: limit(50, 100), before: z.string().optional(), around: z.string().optional() })
 const DecisionsQuery = z.object({ kind: z.string().default(''), reason: z.string().default(''), window: z.literal('24h').optional().catch(undefined), offset,
   limit: limit(30, 200) })
+const EventsQuery = z.object({ type: z.string().default(''), since: z.string().default('').transform(isoTime), before: z.coerce.number().int().positive().optional().catch(undefined),
+  limit: limit(100, 1000) })
 const count = z.coerce.number().int().nonnegative()
 const PromptsQuery = z.object({ revision: count.optional(), offset: count.default(0) })
 const SourceBlock = z.templateLiteral(['source:', z.string().regex(/^[a-z][a-z0-9-]*$/)])
@@ -197,6 +199,11 @@ function routes(runtime: HttpHost): Routes {
       return decisionList(views(runtime), kind.split(',').filter(Boolean), offset, limit, since, reason)
     },
     'POST decisions/:id/dismiss': ({ params }) => { runtime.engine.dismiss(params.id); return { dismissed: true } },
+    'GET events': ({ query }) => {
+      const { type, since, before, limit } = EventsQuery.parse(query)
+      const page = store.read.events({ types: type.split(',').filter(Boolean), since, ...before ? { before } : {} }, limit)
+      return { items: page.items, next_before: page.more ? page.items.at(-1)!.seq : null }
+    },
     'GET tickets': ({ query }) => {
       const { state, offset, limit } = TicketsQuery.parse(query)
       return ticketList(views(runtime), state, offset, limit)

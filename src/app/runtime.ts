@@ -10,10 +10,10 @@ import type {} from '@deepseek-ai/dsh-system-prompt'
 import type {} from '@deepseek-ai/dsh-tools'
 import type {} from '@deepseek-ai/dsh-skill'
 import type {} from '@deepseek-ai/dsh-subprocess'
-import { mkdirSync } from 'node:fs'
+import { appendFileSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { lockSync } from 'proper-lockfile'
-import { Engine, key, reasonText, type EngineForSettings, type ReceiveResult, type Ticket, type Trigger } from '../core/index.ts'
+import { Engine, key, reasonText, type DomainEvent, type EngineForSettings, type ReceiveResult, type Ticket, type Trigger } from '../core/index.ts'
 import { allowedSender, settingsPolicy } from '../policy.ts'
 import { SourceRegistry } from '../sources/registry.ts'
 import { Commands, GITHUB } from '../infra/commands.ts'
@@ -146,6 +146,7 @@ export class Runtime extends Service implements SourceHost {
       const policy = () => settingsPolicy(store.settings(), sources)
       const engine = this.engine = new Engine({ repo: store, scope: sources, policy, assessor, executor,
         outbox, prepareTicket: (ticket, outcome) => executor.prepare(ticket, outcome), emit: event => {
+          this.record(event)
           // Notify the main Session only about domain events it did not initiate itself.
           const notice = this.quiet ? undefined : eventNotice(event, id => store.tickets.get(id))
           if (notice) sessions.notify(...notice)
@@ -179,6 +180,28 @@ export class Runtime extends Service implements SourceHost {
       try { opened?.close() } finally { release() }
       throw error
     }
+  }
+  /** The last error writing the event log, so a lasting failure is logged once. */
+  private eventLogError = ''
+  /**
+   * Writes a domain event to the `event` table in the transaction of the change that emitted it, and, once that commits, appends
+   * it as a JSON line to the machine's `eventLog` file when one is set, in a directory that exists. A failed append loses that
+   * line only.
+   */
+  private record(event: DomainEvent): void {
+    const seq = this.store.events.append(event)
+    const file = this.machine.eventLog?.get()
+    if (!file) return
+    this.store.afterCommit(() => {
+      try {
+        appendFileSync(file, `${JSON.stringify({ seq, ...event })}\n`, { mode: 0o600 })
+        this.eventLogError = ''
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        if (message !== this.eventLogError) this.ctx.logger.warn('dsh-superagent could not append to the event log %s: %s', file, message)
+        this.eventLogError = message
+      }
+    })
   }
   get health(): Readonly<Record<string, Health>> { return this.board.all }
   /** Aborted when dsh-superagent stops or loses its state directory lock, cancelling running reads and subprocesses. */

@@ -64,7 +64,7 @@ export class Tickets extends EnginePart {
     const ticket = this.require(ticketId)
     const followed = threadKey(thread)
     const follow = ticket.follows?.find(item => item.thread === followed)
-    // Re-binding a thread reopens it if previously closed; `own` remains true once set.
+    // Re-binding a closed thread opens it again; `own` remains true once set.
     if (follow) { follow.own ||= own; delete follow.closed } else ticket.follows = [...ticket.follows ?? [], { thread: followed, own }]
     ticket.updatedAt = this.now()
     this.repo.tickets.save(ticket)

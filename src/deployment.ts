@@ -22,6 +22,8 @@ export const Config = s.object({
     .description('Pages of thread context one assessment may read.').volatile(),
   admissionContextTimeoutMs: s.number().min(LIMITS.admissionContextTimeoutMs.min).max(LIMITS.admissionContextTimeoutMs.max).step(1)
     .default(15000).description('Time limit of one context read during an assessment, in milliseconds.').volatile(),
+  eventLog: s.string().pattern(/^(\/.*)?$/).default('')
+    .description('File that each domain event is also appended to, as one JSON line. Absolute path in a directory that exists; empty writes none.').volatile(),
 })
 export type DeploymentConfig = ReturnType<typeof Config>
 export interface Machine {
@@ -29,6 +31,8 @@ export interface Machine {
   promptMaxChars: Volatile<number>
   admissionContextMaxPages: Volatile<number>
   admissionContextTimeoutMs: Volatile<number>
+  /** The file each domain event is also appended to as a JSON line; empty, or none, writes none. */
+  eventLog?: Volatile<string>
   /** The temporary areas DSH's `workspace-write` sandbox lets every confined command write: `/tmp` and the user's temporary directory. */
   temporaryAreas: readonly string[]
 }
@@ -42,8 +46,8 @@ const MOVED: Record<string, string> = {
 export function machineOf(config: DeploymentConfig): Machine {
   const unknown = Object.keys(config).filter(key => !(key in (Config.dict ?? {})))
   if (unknown.length) throw new Error(`dsh-superagent configuration has keys it does not use: ${unknown.map(key => MOVED[key] ? `${key} (now ${MOVED[key]})` : key).join(', ')}; docs/006-deployment.md lists the keys`)
-  const { stateDir, promptMaxChars, admissionContextMaxPages, admissionContextTimeoutMs } = config
-  return { stateDir, promptMaxChars, admissionContextMaxPages, admissionContextTimeoutMs, temporaryAreas: [...new Set(['/tmp', tmpdir()])] }
+  const { stateDir, promptMaxChars, admissionContextMaxPages, admissionContextTimeoutMs, eventLog } = config
+  return { stateDir, promptMaxChars, admissionContextMaxPages, admissionContextTimeoutMs, eventLog, temporaryAreas: [...new Set(['/tmp', tmpdir()])] }
 }
 
 export const GithubAccountsSchema = z.object({

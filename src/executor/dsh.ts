@@ -195,7 +195,6 @@ export const inputResource = (ticketId: string, inputId: string): string => `tic
 /**
  * Formats a ticket input for worker delivery: a `trigger` rendered via `trigger` (or by its ID and read path when absent),
  * a `policy-changed` notice, a `resumed` notice, an orchestrator `note`, or a `text` input as written.
- * Returns `undefined` for legacy `reopen` inputs, which are historical only because the schema 11 migration converted pending reopen inputs into text inputs.
  */
 export function inputMessage(input: TicketInput, trigger?: object): string | undefined {
   // Mark triggers arriving on context-only subscriptions so the worker knows they are not addressed to the ticket.

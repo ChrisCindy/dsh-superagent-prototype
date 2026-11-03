@@ -244,6 +244,40 @@ it('relays an explicit member mention as a candidate and creates the ticket, ack
   expect(await route({ kind: 'accept', trigger_id: trigger.id, title: 'again', worktree_name: worktreeName, acknowledgement: 'x' })).toMatchObject({ ticket: { ticket_id: ticket.id } })
 })
 
+it('writes every domain event to the event table in the transaction of its change, lists them signed in, and appends them to the event log', async () => {
+  const log = join(directory, 'events.jsonl')
+  runtime.machine.eventLog = reference(log)
+  const { trigger, ticket } = await acceptedTicket()
+  const events = runtime.store.read.events({}, 100).items.reverse()
+  const types = events.map(event => event.type)
+  expect(types.slice(0, 6)).toEqual(['trigger.received', 'eval.started', 'eval.delivered', 'decision.recorded', 'thread.subscribed', 'ticket.created'])
+  expect(types).toContain('assignment.started')
+  // Eval latency reads from one Eval's events: started, its candidate delivered, and its Decision.
+  const started = events.find(event => event.type === 'eval.started')!
+  const evalId = (started.data as { evalId: string }).evalId
+  expect(events.filter(event => (event.data as { evalId?: string }).evalId === evalId).map(event => event.type))
+    .toEqual(['eval.started', 'eval.delivered', 'decision.recorded'])
+  expect(events[0]).toMatchObject({ type: 'trigger.received', data: { triggerId: trigger.id }, at: expect.any(String) })
+  // Each line of the log is one event, as the table keeps it.
+  const lines = readFileSync(log, 'utf8').trim().split('\n').map(line => JSON.parse(line) as unknown)
+  expect(lines).toEqual(events.map(({ seq, type, at, data }) => ({ seq, type, at, data })))
+  // A change that fails leaves no event, in the table or in the log.
+  const before = runtime.store.read.events({}, 1000).items.length
+  expect(() => runtime.engine.attach('no-such-ticket', trigger.id)).toThrow()
+  expect(runtime.store.read.events({}, 1000).items).toHaveLength(before)
+  expect(readFileSync(log, 'utf8').trim().split('\n')).toHaveLength(before)
+  const page = await api('GET', `events?type=ticket.created,assignment.started&limit=1`)
+  expect(page).toEqual({ status: 200, body: { items: [expect.objectContaining({ type: 'assignment.started', data: expect.objectContaining({ ticketId: ticket.id }) })],
+    next_before: expect.any(Number) } })
+  const next = await api('GET', `events?type=ticket.created,assignment.started&before=${(page.body as { next_before: number }).next_before}`)
+  expect(next.body).toEqual({ items: [expect.objectContaining({ type: 'ticket.created', data: expect.objectContaining({ ticketId: ticket.id }) })], next_before: null })
+  expect((await api('GET', `events?since=${encodeURIComponent(new Date(Date.now() + 60_000).toISOString())}`)).body).toEqual({ items: [], next_before: null })
+  // An unwritable log loses its lines, never the change or its events.
+  runtime.machine.eventLog = reference(join(log, 'events.jsonl'))
+  await receive(feishu('2', '@bot 还有一个'))
+  expect(runtime.store.read.events({ types: ['trigger.received'] }, 10).items).toHaveLength(2)
+})
+
 it('runs the main Session read-only and each worker writing only its Ticket directory, neither asking for approval, and changes that only from the panel', async () => {
   const presets = services.permissionPresets as ReturnType<typeof permissionPresets>
   const { ticket, sessionId } = await acceptedTicket()
@@ -848,8 +882,8 @@ it('counts every step of the day\'s flow over the same arriving messages and lis
   await receive(feishu('7', '另一个群', { chat_id: 'oc_elsewhere', create_time: now }))
   const since = new Date(Date.now() - 86_400_000).toISOString()
   expect(overviewOf(runtime).flow).toMatchObject({ received: 2, filtered: 1, triggers: 1, judged: 1, accepted: 1 })
-  expect(decisionList(viewsOf(runtime), ['accept', 'reopen'], 0, 10, since).items).toHaveLength(1)
-  expect(decisionList(viewsOf(runtime), ['accept', 'reopen'], 0, 10, new Date(Date.now() + 60_000).toISOString()).items).toEqual([])
+  expect(decisionList(viewsOf(runtime), ['accept'], 0, 10, since).items).toHaveLength(1)
+  expect(decisionList(viewsOf(runtime), ['accept'], 0, 10, new Date(Date.now() + 60_000).toISOString()).items).toEqual([])
 })
 
 it('queues a requeued trigger visibly and tells the orchestrator', async () => {

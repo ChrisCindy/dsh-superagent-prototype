@@ -35,11 +35,10 @@ export function ticketCard(ticket: Ticket) {
 const mandateOf = ({ policyVersion: _version, ...mandate }: Mandate) => mandate
 export const INPUTS = 10, ASSIGNMENTS = 3
 const INPUT_TEXT = 80
-/** Summarizes a ticket input inline for short text or as a resource reference, omitting decision IDs for worker Sessions. */
-export function inputLine(ticket: Ticket, input: TicketInput, worker = false) {
+/** Summarizes a ticket input inline for short text or as a resource reference. */
+export function inputLine(ticket: Ticket, input: TicketInput) {
   const read = { read: inputResource(ticket.id, input.id) }
   const names = input.kind === 'trigger' || input.kind === 'resumed' ? { trigger_id: input.triggerId }
-    : input.kind === 'reopen' && !worker ? { decision_id: input.decisionId }
     : input.kind !== 'text' ? read
     : input.text.length <= INPUT_TEXT ? { text: input.text }
     : { preview: preview(input.text).slice(0, INPUT_TEXT), chars: input.text.length, ...read }
@@ -64,7 +63,7 @@ export function ticketDetails(ticket: Ticket, threads: TicketThread[], batch: re
     ...worker ? {} : { decision_id: ticket.decisionId }, threads, directory: ticket.execution?.directory,
     scope: ticket.mandate.scope, ...(ticket.mandate.limits ? { limits: ticket.mandate.limits } : {}), requested_by: ticket.mandate.actor.id,
     assignments: newestPage(ticket.assignments, 0, ASSIGNMENTS, item => assignmentLine(ticket, item), `ticket/${ticket.id}/assignments`),
-    inputs: newestPage(ticket.inputs, 0, INPUTS, input => inputLine(ticket, input, worker), `ticket/${ticket.id}/inputs`),
+    inputs: newestPage(ticket.inputs, 0, INPUTS, input => inputLine(ticket, input), `ticket/${ticket.id}/inputs`),
     assignment: `ticket/${ticket.id}/assignment`, result: `ticket/${ticket.id}/result`, transcript: `ticket/${ticket.id}/transcript` }
 }
 

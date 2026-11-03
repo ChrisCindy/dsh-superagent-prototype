@@ -39,7 +39,7 @@ it('does not navigate after the panel unmounts or a newer request supersedes it'
   controller.abort(); state.phase = 'ready'; state.byId[id] = {}; pending.resolve()
   await expect(navigation).resolves.toBe(false); expect(open).not.toHaveBeenCalled()
 })
-it('reopens the page this tab showed last, and the overview for a route that no longer exists', () => {
+it('opens again the page this tab showed last, and the overview for a route that no longer exists', () => {
   remember({ route: { page: 'eval', query: { filter: 'stop' } }, stack: [{ page: 'overview' }] })
   expect(initialLocation()).toEqual({ route: { page: 'eval', query: { filter: 'stop' } }, stack: [{ page: 'overview' }] })
   // The Eval tab was previously named Policy; a route saved under the old name falls back to overview.

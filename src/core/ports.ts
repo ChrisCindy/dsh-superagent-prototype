@@ -96,7 +96,9 @@ export interface Outbox {
 export interface DomainEvents {
   'trigger.received': { triggerId: string; threads: string[] }
   'eval.started': { evalId: string; threadKey: string; triggerIds: string[]; strength: Strength }
-  'decision.recorded': { decisionId: string; kind: DecisionKind; threadKey: string }
+  /** The Eval's candidate reached the assessor's Session. */
+  'eval.delivered': { evalId: string; threadKey: string }
+  'decision.recorded': { decisionId: string; evalId: string; kind: DecisionKind; threadKey: string }
   'ticket.created': { ticketId: string; decisionId: string; strength: Strength }
   'ticket.resumed': { ticketId: string; triggerId: string }
   /** A person held the ticket. */

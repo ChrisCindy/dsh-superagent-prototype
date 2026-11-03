@@ -1,7 +1,10 @@
 /** Read-only Store queries for views, tools, and Source polling. */
 import type { DatabaseSync, SQLInputValue } from 'node:sqlite'
-import type { Decision, Thread, Trigger } from '../core/index.ts'
+import type { Decision, DomainEvent, Thread, Trigger } from '../core/index.ts'
 import type { Dropped, Receipt, TimelinePlace } from './store.ts'
+
+/** A domain event as the `event` table keeps it: its place `seq` in the order events happened. */
+export type StoredEvent = DomainEvent & { seq: number }
 
 export function storeReads(db: DatabaseSync) {
   const values = <T>(sql: string, ...parameters: SQLInputValue[]): T[] => db.prepare(sql).all(...parameters).map(row => JSON.parse(String(row.value)) as T)
@@ -17,12 +20,12 @@ export function storeReads(db: DatabaseSync) {
   },
   /**
    * Counts triggers arriving at or after `since` that passed source filtering and reached a decision,
-   * and how many accept/reopen decisions those same arrivals produced.
+   * and how many accept decisions those same arrivals produced.
    */
   flow: (since: string): { judged: number; accepted: number } => {
     const passed = "t.at >= ? AND NOT EXISTS (SELECT 1 FROM disposition s WHERE s.id = t.id AND json_extract(s.value, '$.filtered') IS NOT NULL)"
     const judged = db.prepare(`SELECT COUNT(DISTINCT t.id) AS n FROM decision d, json_each(json_extract(d.value, '$.triggerIds')) j JOIN trigger t ON t.id = j.value WHERE ${passed}`).get(since)
-    const accepted = db.prepare(`SELECT COUNT(DISTINCT d.id) AS n FROM decision d, json_each(json_extract(d.value, '$.triggerIds')) j JOIN trigger t ON t.id = j.value WHERE json_extract(d.value, '$.kind') IN ('accept', 'reopen') AND t.at >= ?`).get(since)
+    const accepted = db.prepare(`SELECT COUNT(DISTINCT d.id) AS n FROM decision d, json_each(json_extract(d.value, '$.triggerIds')) j JOIN trigger t ON t.id = j.value WHERE json_extract(d.value, '$.kind') = 'accept' AND t.at >= ?`).get(since)
     return { judged: Number(judged?.n ?? 0), accepted: Number(accepted?.n ?? 0) }
   },
   triggers: (options: { source?: string; filtered?: boolean }, offset = 0, limit = 50): { items: Trigger[]; more: boolean } => {
@@ -77,6 +80,20 @@ export function storeReads(db: DatabaseSync) {
   droppedReplies: (limit = 20): Dropped[] =>
     values('SELECT value FROM outbox WHERE dropped IS NOT NULL ORDER BY dropped DESC LIMIT ?', limit),
   droppedSince: (since: string): number => Number(db.prepare('SELECT COUNT(*) AS n FROM outbox WHERE dropped >= ?').get(since)?.n ?? 0),
+  /**
+   * Domain events newest first: of the `types` given, else of every type, at or after `since`, and before the event `before`
+   * names by its `seq`, for the next page.
+   */
+  events: (options: { types?: string[]; since?: string; before?: number }, limit = 100): { items: StoredEvent[]; more: boolean } => {
+    const types = options.types ?? []
+    const where = [...types.length ? [`type IN (${types.map(() => '?').join(',')})`] : [], ...options.since ? ['at >= ?'] : [],
+      ...options.before ? ['seq < ?'] : []]
+    const rows = db.prepare(`SELECT seq, type, at, data FROM event ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY seq DESC LIMIT ?`)
+      .all(...types, ...options.since ? [options.since] : [], ...options.before ? [options.before] : [], limit + 1)
+    const items = rows.slice(0, limit).map(row => ({ seq: Number(row.seq), type: String(row.type), at: String(row.at),
+      data: JSON.parse(String(row.data)) as unknown }) as StoredEvent)
+    return { items, more: rows.length > limit }
+  },
   subscribedThreads: (source?: string): Thread[] => source
     ? values('SELECT value FROM thread WHERE subscribed = ? ORDER BY rowid', source)
     // Force the partial index so SQLite does not scan the entire table in rowid order.

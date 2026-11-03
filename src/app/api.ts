@@ -9,6 +9,7 @@ import type { SettingsView } from './views/settings.ts'
 import type { SourceStatusView } from './views/sources.ts'
 import type { DecisionListView, SearchView, ThreadDetailView, ThreadListView } from './views/threads.ts'
 import type { TicketListView } from './views/tickets.ts'
+import type { StoredEvent } from './store-read.ts'
 
 export const TICKET_FILTERS = ['open', 'person', 'working', 'idle', 'ended'] as const
 export const THREAD_FILTERS = ['subscribed', 'evaluating', 'recent', 'all'] as const
@@ -33,6 +34,9 @@ export interface Api {
   'POST triggers/:id/requeue': { response: { queued: boolean } }
   'GET decisions': { query?: Paged & { kind?: string; reason?: string; window?: '24h' }; response: DecisionListView }
   'POST decisions/:id/dismiss': { response: { dismissed: true } }
+  /** Domain events newest first, of the comma-separated `type`s; `next_before` continues the list as `before`. */
+  'GET events': { query?: { type?: string; since?: string; before?: number; limit?: number }
+    response: { items: StoredEvent[]; next_before: number | null } }
   'GET tickets': { query?: Paged & { state?: TicketFilter }; response: TicketListView }
   'GET tickets/:id': { response: TicketPageView }
   'POST tickets/:id/retry': { response: { retried: true } }

@@ -118,6 +118,7 @@ Copy [examples/profile.cordis.patch.yml](../examples/profile.cordis.patch.yml) t
 | --- | --- | --- |
 | `stateDir` | yes | Absolute path: the database, the lock, the command shims in `worker-bin`, the agent's git configuration and, by default, the Ticket directories in `work`. Back it up before upgrades |
 | `promptMaxChars`, `admissionContextMaxPages`, `admissionContextTimeoutMs` | no | The largest saved prompt configuration, and how many Thread pages one assessment reads within what time |
+| `eventLog` | no | Absolute path of a file in a directory that exists. Each domain event is also appended to it as one JSON line, as `GET events` lists it. Empty, the default, writes none. The database's `event` table stays the record; keep the file out of the directories workers may write |
 
 After the first start, edit machine limits in **Settings → Deployment** or the DeepSeek Harness Plugin Manager. Changes apply without restart. `stateDir` cannot be changed there. Invalid values or unknown configuration keys prevent startup; the log identifies the key.
 
@@ -224,6 +225,7 @@ Agents may rely on these routes and fields. The other routes in `src/app/api.ts`
 | `GET prompts`, `PUT prompts` with `{"config", "baseRevision"}` | Reads the prompt configuration: `current`, with its `revision` and `config`, `defaults`, `sections`, the team sections in the order Sessions read them, `skillName`, the pattern of a team skill's name, `builtin`, the names a team skill cannot take, and `skillPrefix`, which Sessions load a skill's name under. Or saves it: the new `revision` |
 | `POST tickets/<id>/retry`, `POST tickets/<id>/stop` | Retries or stops a Ticket, as the panel does |
 | `POST tickets/<id>/hold`, `POST tickets/<id>/release` | Holds or releases a Ticket, as the panel does; answers whether it changed |
+| `GET events?type=&since=&before=&limit=` | The domain events, newest first: `items`, each with `seq`, `type`, `at` and `data`, and `next_before`, the `before` of the next page, or `null`. `type` takes several types joined by commas, `since` a time, and `limit` at most 1000 (default 100) |
 
 Health entries are grouped by responsibility:
 

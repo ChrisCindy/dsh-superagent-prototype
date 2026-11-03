@@ -901,7 +901,7 @@ describe('the Executor\'s parts', () => {
     expect(execution.assignment).toContain('- Copy fixes (copy): Fix typos only.')
     expect(mandateInstructions({ strength: 'explicit' })).toBe('')
   })
-  it('renders each kind of Input as its worker reads it, inline, and no reopen Input', () => {
+  it('renders each kind of Input as its worker reads it, inline', () => {
     const asked = { id: 'tr1', source: 'feishu', threads: [{ source: 'feishu', id: 'oc:om_1' }], actor: { source: 'feishu', id: 'ou_a' }, human: true,
       at: '2026-09-01T00:00:00Z', text: 'Which page?', meta: {} } as Trigger
     const reply = { ...asked, id: 'tr2', text: 'The login page. '.repeat(50) }
@@ -927,7 +927,6 @@ describe('the Executor\'s parts', () => {
     expect(mode).toContain('Work inferred from a rule is no longer accepted, as the accept mode is no longer auto')
     expect(mode).not.toContain('sender')
     expect(inputMessage({ id: 'i5', kind: 'resumed', at: '', triggerId: 'tr2' })).not.toContain('tr2')
-    expect(inputMessage({ id: 'i4', kind: 'reopen', at: '' } as never)).toBeUndefined()
   })
   it('relays a worker\'s question, result or answer to the main Session, and keeps its progress internal', () => {
     const ticket = { id: 't1', title: 'Fix', updatedAt: '2026-09-01T00:00:00Z', attention: { id: 'a1', question: 'Which color?' }, assignments: [],

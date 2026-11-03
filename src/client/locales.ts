@@ -20,7 +20,6 @@ const TEXT = {
   yes: ['是', 'Yes'],
   no: ['否', 'No'],
   'decision.accept': ['接单', 'Accept'],
-  'decision.reopen': ['续做', 'Reopen'],
   'decision.stop': ['停止', 'Stop'],
   'decision.hold': ['暂停工单', 'Hold'],
   'decision.ignore': ['忽略', 'Ignore'],
@@ -268,7 +267,7 @@ const TEXT = {
   assessorModel: ['研判模型', 'Assessor model'],
   assessorModelHint: ['主 Session 的模型，负责研判和路由。保存后用于新建的主 Session，已有 Session 保持原选择。', 'Model of the main Session, which assesses and routes. Applies to a newly created main Session; existing Sessions keep their choice.'],
   ruleLabel: ['规则', 'Rules'],
-  'decisionFilter.work': ['接单与续做', 'Accept and reopen'],
+  'decisionFilter.work': ['接单', 'Accepted'],
   'decisionFilter.stop': ['停止与暂停', 'Stopped and held'],
   'decisionFilter.ignore': ['忽略', 'Ignored'],
   'decisionFilter.unavailable': ['未完成', 'Unavailable'],
@@ -322,7 +321,6 @@ const TEXT = {
   'report.open': ['进行中', 'open'],
   'input.trigger': ['触发', 'Trigger'],
   'input.policy-changed': ['策略变更', 'Policy change'],
-  'input.reopen': ['续做', 'Reopened'],
   'input.resumed': ['恢复：线程上有人发了新消息', 'Resumed by a new message on its thread'],
   'input.text': ['dsh-superagent 说明', 'dsh-superagent note'],
   'input.note': ['主 Session 的备注', 'Orchestrator note'],
@@ -868,7 +866,7 @@ export const GLOSSARY = {
   execution: ['executor', 'environment', 'ticket', 'assignment', 'input', 'report', 'attention'],
 } as const
 export const GLOSSARY_VALUES = {
-  decision: ['decision.accept', 'decision.reopen', 'decision.stop', 'decision.hold', 'decision.ignore', 'decision.unavailable'], strength: ['strength.explicit', 'strength.inferred'],
+  decision: ['decision.accept', 'decision.stop', 'decision.hold', 'decision.ignore', 'decision.unavailable'], strength: ['strength.explicit', 'strength.inferred'],
   ticket: ['stage.held', 'stage.answer', 'stage.review', 'stage.blocked', 'stage.failed', 'stage.delivery', 'stage.queued', 'stage.working', 'stage.idle', 'ticket.ended'],
   assignment: ['assignment.pending', 'assignment.running', 'assignment.ended'], report: ['report.progress', 'report.waiting', 'report.ready', 'report.blocked', 'report.failed', 'report.dropped'],
 } as const

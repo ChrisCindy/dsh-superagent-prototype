@@ -19,7 +19,7 @@ The tabs follow the workflow: **Overview**, **Source**, **Trigger**, **Eval**, *
 | Overview | Tickets needing action, system problems with the main Session's pending Policy proposal first, activity counts for the last 24 hours, and Executor load. Each block links to its detailed page |
 | Source | Source state, setup problems and non-zero counts. Filtered Triggers and dropped messages cover the same 24-hour window as Overview |
 | Trigger | Threads filtered by Subscribed, Evaluating, New Triggers in 24 h, or All Threads. Each Thread shows its Triggers newest first, Decisions and Subscriptions |
-| Eval | Decisions with their reason and matched rules, filtered by Accept and reopen, Stopped and held, Ignored, Rate limited (over a Source's proactive limit), Unavailable or All |
+| Eval | Decisions with their reason and matched rules, filtered by Accepted, Stopped and held, Ignored, Rate limited (over a Source's proactive limit), Unavailable or All |
 | Execution | Executor state, Pause processing, and Tickets filtered by Open, Pending, Working, Waiting for a Trigger or Ended. Ticket details show actions, authorization, waiting Inputs, Subscriptions and Assignments |
 | Settings | Sources, Eval, Execution, Prompts and Deployment. Each group includes its save history |
 

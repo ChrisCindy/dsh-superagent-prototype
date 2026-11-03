@@ -132,7 +132,8 @@ it('writes a schema 10 database in its current shape once, so nothing reads an o
   })
   expect(migrated.inputs[0]).toMatchObject({ id: 'i1', kind: 'text', text: expect.stringContaining('"resumed":true') })
   expect(migrated.inputs[0]).not.toMatchObject({ text: expect.stringContaining('reopen') })
-  expect(migrated.inputs[1]).toEqual({ id: 'i2', kind: 'reopen', decisionId: 'd0', at: '0' })
+  // A delivered Input of a follow-up that resumed the ticket says so; its Decision is gone, so it names no Trigger.
+  expect(migrated.inputs[1]).toEqual({ id: 'i2', kind: 'text', text: 'A follow-up resumed this ticket under its Mandate.', at: '0' })
   expect(migrated.inputs.slice(2)).toEqual([{ id: 'i3', kind: 'trigger', triggerId: 'trig-2', at: '4', human: true }, { id: 'i4', kind: 'trigger', triggerId: 'ci-1', at: '5' }])
   expect(migrated).not.toHaveProperty('execution.recoveries')
   expect(store.tickets.get('t2')).toMatchObject({ execution: { name: 'task-2', assignment: 'Read event/old' },
@@ -146,7 +147,8 @@ it('writes a schema 10 database in its current shape once, so nothing reads an o
     mandate: { basis: { via: 'listed', source: 'feishu', scope: { chatId: 'p2p', direct: true }, sender: 'ou_alice', addressed: 'direct' } } })
   expect(store.tickets.get('t3')).not.toHaveProperty('execution')
   // A reason is a code; words the assessor wrote stay as written.
-  expect(store.decisions.get('d2')).toEqual({ ...reopened, reason: [{ code: 'said', values: { text: 'follow-up' } }] })
+  expect(store.decisions.get('d2')).toEqual({ ...reopened, kind: 'ignore',
+    reason: [{ code: 'routed', values: { ticket: 't1' } }, { code: 'said', values: { text: 'follow-up' } }] })
   expect(store.decisions.get('d3')!.reason).toEqual([{ code: 'timeout' }])
   expect(store.decisions.get('d1')!.mandate!.basis).toEqual({ via: 'listed', rules: ['copy'], observation: {}, authority: 'proactive_rule' })
   expect(store.threads.get('github:5')!.evaluating!.basis).toEqual({ via: 'admission', source: 'github', scope: { number: 5 }, row: 'issues',
@@ -202,7 +204,7 @@ it('changes nothing when one step fails: the database stays at schema 10 as it w
     updatedAt: '2', mandate: mandate({ via: 'listed' }), meta: { sourceTriggerId: 'trig-1', workspace: '/w/fix-1' } }
   // The current settings must validate; an invalid value aborts the migration transaction.
   schema10(path, { settings: { executor: { maxWorkers: 'many' } } }, { ticket: [ticket] })
-  expect(() => new Store(path)).toThrow(/^The orchestrator database is unchanged at schema 10: its migration to schema 12 failed: the settings: /)
+  expect(() => new Store(path)).toThrow(new RegExp(`^The orchestrator database is unchanged at schema 10: its migration to schema ${SCHEMA_VERSION} failed: the settings: `))
   const db = new DatabaseSync(path)
   expect(db.prepare("SELECT value FROM kv WHERE key='schema'").get()).toEqual({ value: '10' })
   expect(JSON.parse(String(db.prepare("SELECT value FROM ticket WHERE id='t1'").get()!.value))).toMatchObject({ meta: { workspace: '/w/fix-1' } })
@@ -475,7 +477,7 @@ it('names the ticket it stopped at when a ticket does not read, and leaves the d
   const path = join(directory, 'db.sqlite')
   const { inputs: _inputs, ...broken } = ticket10('t9')
   schema10(path, {}, { ticket: [broken] })
-  expect(() => new Store(path)).toThrow(/^The orchestrator database is unchanged at schema 10: its migration to schema 12 failed: ticket t9: /)
+  expect(() => new Store(path)).toThrow(new RegExp(`^The orchestrator database is unchanged at schema 10: its migration to schema ${SCHEMA_VERSION} failed: ticket t9: `))
   const db = new DatabaseSync(path)
   expect(db.prepare("SELECT value FROM kv WHERE key='schema'").get()).toEqual({ value: '10' })
   expect(JSON.parse(String(db.prepare("SELECT value FROM ticket WHERE id='t9'").get()!.value))).toEqual(broken)
@@ -568,4 +570,36 @@ it('names the kind of each Source stored in a schema 11 database, in every revis
   const again = new Store(path)
   expect(again.get('settings-version:2')).toEqual(migrated)
   again.close()
+})
+
+it('writes the Decisions and Inputs of a follow-up that reopened a ticket in a schema 12 database as routing and resuming do now', () => {
+  const path = join(directory, 'db.sqlite')
+  new Store(path).close()
+  const db = new DatabaseSync(path)
+  db.prepare("UPDATE kv SET value = '12' WHERE key = 'schema'").run()
+  const decision = (id: string, kind: string, fields: object = {}) => ({ id, evalId: `e-${id}`, threadKey: 'github:7', triggerIds: [`trig-${id}`],
+    policyVersion: 'v1', at: '1', kind, reason: [{ code: 'said', values: { text: 'more' } }], strength: 'explicit', ...fields })
+  const legacy = 'reopen'
+  const decisions = [decision('d1', legacy, { ticketId: 't1' }), decision('d2', legacy), decision('d3', 'accept', { ticketId: 't1' })]
+  for (const item of decisions) db.prepare('INSERT INTO decision VALUES (?,?,?)').run(item.id, item.threadKey, JSON.stringify(item))
+  const ticket = { id: 't1', title: 'Fix', decisionId: 'd3', channels: [], assignments: [], undelivered: ['i2'], createdAt: '', updatedAt: '',
+    origin: { triggerId: 'trig-d3', triggerIds: ['trig-d3'] }, mandate: mandate({ via: 'followup' }),
+    inputs: [{ id: 'i1', kind: legacy, decisionId: 'd1', at: '2' }, { id: 'i2', kind: legacy, decisionId: 'gone', at: '3' },
+      { id: 'i3', kind: 'trigger', triggerId: 'trig-x', at: '4', human: true }] }
+  const other = { ...ticket, id: 't2', inputs: [{ id: 'i4', kind: 'text', text: 'hello', at: '1' }], undelivered: [] }
+  for (const item of [ticket, other]) db.prepare('INSERT INTO ticket VALUES (?,?)').run(item.id, JSON.stringify(item))
+  db.close()
+  const store = new Store(path)
+  expect(store.get(KV.store.schema)).toBe(SCHEMA_VERSION)
+  expect(store.decisions.get('d1')).toEqual({ ...decisions[0], kind: 'ignore',
+    reason: [{ code: 'routed', values: { ticket: 't1' } }, { code: 'said', values: { text: 'more' } }] })
+  expect(store.decisions.get('d2')).toEqual({ ...decisions[1], kind: 'ignore' })
+  expect(store.decisions.get('d3')).toEqual(decisions[2])
+  expect(store.tickets.get('t1')!.inputs).toEqual([{ id: 'i1', kind: 'resumed', triggerId: 'trig-d1', at: '2' },
+    { id: 'i2', kind: 'text', text: 'A follow-up resumed this ticket under its Mandate.', at: '3' }, ticket.inputs[2]])
+  expect(store.tickets.get('t1')!.undelivered).toEqual(['i2'])
+  expect(store.tickets.get('t2')).toEqual(other)
+  const kinds = store.db.prepare("SELECT COUNT(*) AS n FROM decision WHERE value ->> '$.kind' = ?").get(legacy)
+  expect(Number(kinds!.n)).toBe(0)
+  store.close()
 })
