@@ -246,9 +246,11 @@ describe('dsh-superagent on a real DeepSeek Harness', () => {
     const saved = await harness.api.saveBlock('source:github-docs', { enabled: true, config: { repository: docs, cli: harness.gh } })
     expect(saved.status, JSON.stringify(saved.body)).toBe(200)
     expect(saved.body).toMatchObject({ restarting: true })
-    const state = await waitFor('both repositories to resolve and the second Source to poll', async () => {
+    const state = await waitFor('both repositories to resolve and both Sources to poll', async () => {
       const answer = await harness.api.request<any>('GET', 'state')
-      return answer.status === 200 && answer.body.setup.accounts?.repositories?.['github-docs'] && answer.body.health['github-docs']?.state === 'ready'
+      return answer.status === 200 && answer.body.setup.accounts?.repositories?.['github-docs']
+        // After the restart each instance's poll loop reports ready on its own first poll, in either order.
+        && answer.body.health['github-docs']?.state === 'ready' && answer.body.health.github?.state === 'ready'
         ? answer.body : undefined
     }, 90_000)
     expect(state.setup).toMatchObject({ problem: null, warnings: [],
