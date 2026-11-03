@@ -62,12 +62,14 @@ Fakes (`fakes/`, executed by Node with type stripping):
 | (c) | An Issue by an allowed login, then a comment by that login that mentions the agent, with its notification. The next poll creates a human Trigger on Thread `github:1`, visible through `GET threads` and `GET threads/github:1`. The main Session's next model request carries exactly one candidate, explicit and from that login. The Issue body, which mentions no one, does not become a candidate |
 | (d) | The scripted main Session accepts. That records an accept Decision and a Ticket, and the acknowledgement is posted once through the fake `gh` with its idempotency marker. The worker Session starts (its id is the Assignment's `ref`). It runs `pwd` in `<stateDir>/work/fix-readme-typo-…`, which matches the Ticket's `directory`. In the same command it writes a file there, which works, writes one in the state directory, which the sandbox denies, and runs `gh pr merge`, which the shim refuses. Then it reports ready. The main Session receives the `worker_report` relay and sends the result, which is posted once through the fake `gh`. The Ticket ends `completed`. No unknown `gh` call was made, and `status` exits 0 |
 | (e) | Saving the Feishu Source with the fake `lark-cli` restarts the service. Setup resolves the bot (`cli_e2efake` / `ou_e2ebot`), and the event consumer reports `feishu` ready. `status` exits 0 |
-| (f) | With the panel headers but without the DeepSeek Harness cookie, `GET state` answers 200, and reading the settings, saving the Policy, pausing and accepting a Policy proposal answer 401 |
+| (f) | `POST sources` adds `github-docs`, switched off, with the first Source's CLI, and restarts nothing. Saving it with the first Source's repository answers 400 `repositoryTwice`. Saving it with `acme/docs`, a second repository of the fake, restarts the service. Setup resolves both repositories on the one agent account with no warning, reads the second one's push access and review rules, and the second Source polls that repository's notifications and reports `github-docs` ready. `POST sources/github-docs/remove` restarts the service without it |
+| (g) | With the panel headers but without the DeepSeek Harness cookie, `GET state` answers 200, and reading the settings, saving the Policy, pausing and accepting a Policy proposal answer 401 |
 
 ## Not covered
 
 - Real model behaviour: the script plays both roles, so prompts and model judgement are out of scope. Inferred
   candidates and Evals (`orchestrator_eval*`, Eval mode `auto`) are not driven.
+- A Ticket from the second repository. The runtime tests check that its workers get that repository in `DSH_SUPERAGENT_GITHUB_REPOSITORY`.
 - Pull requests, CI and git pushes. A worker's `git push` would need GitHub. The fake `gh` refuses `auth git-credential`,
   so no credential would reach one.
 - Feishu messages end to end: the fake can stream events from `events.jsonl`, but no scenario sends one yet.

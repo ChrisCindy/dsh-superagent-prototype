@@ -69,9 +69,11 @@ function route(world: GithubWorld, request: Request, write: (entry: Record<strin
   let match = /^users\/([^/]+)$/.exec(path)
   if (match) { const user = world.users[match[1]!]; if (!user) throw new HttpError(404, 'Not Found'); return user }
   match = /^repos\/([^/]+\/[^/]+)(?:\/(.*))?$/.exec(path)
-  if (!match || match[1]!.toLowerCase() !== world.repository.full_name.toLowerCase()) throw new HttpError(404, 'Not Found')
+  const named = match?.[1]!.toLowerCase()
+  const other = Object.values(world.others ?? {}).find(item => item.full_name.toLowerCase() === named)
+  if (!match || named !== world.repository.full_name.toLowerCase() && !other) throw new HttpError(404, 'Not Found')
   const rest = match[2] ?? ''
-  const repo = world.repository
+  const repo = other ?? world.repository
   const is = (verb: string, pattern: RegExp) => method === verb ? pattern.exec(rest) : null
   if (rest === '' && method === 'GET') {
     return { full_name: repo.full_name, name: repo.full_name.split('/')[1], default_branch: repo.default_branch,
@@ -81,8 +83,11 @@ function route(world: GithubWorld, request: Request, write: (entry: Record<strin
   if ((match = is('GET', /^rulesets\/(\d+)$/))) { const ruleset = world.rulesets[match[1]!]; if (!ruleset) throw new HttpError(404, 'Not Found'); return ruleset }
   if (is('GET', /^notifications$/)) {
     const from = query.get('since')
-    return world.notifications.filter(item => !from || Date.parse(item.updated_at) >= Date.parse(from))
+    return world.notifications.filter(item => item.repository.full_name.toLowerCase() === repo.full_name.toLowerCase()
+      && (!from || Date.parse(item.updated_at) >= Date.parse(from)))
   }
+  // Another repository has no Issues or pull requests.
+  if (other) throw new HttpError(404, 'Not Found')
   if ((match = is('GET', /^issues\/(\d+)$/))) return issueOf(world, match[1]!)
   if ((match = is('GET', /^issues\/(\d+)\/comments$/))) { issueOf(world, match[1]!); return since(world.comments[match[1]!] ?? [], query) }
   if ((match = is('POST', /^issues\/(\d+)\/comments$/))) {
