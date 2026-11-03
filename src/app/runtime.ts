@@ -123,7 +123,7 @@ export class Runtime extends Service implements SourceHost {
         githubSource: (resource, ticketId) => {
           const prefix = resource.slice(0, Math.max(resource.indexOf('/'), 0))
           const ticket = ticketId ? store.tickets.get(ticketId) : undefined
-          if (prefix === GITHUB) return sources.home(GITHUB, ticket && this.originSource(ticket))
+          if (prefix === GITHUB) return sources.home(GITHUB, ticket && this.originTrigger(ticket))
           return prefix && sources.kindOf(prefix)?.kind === GITHUB ? prefix : undefined
         } }
       const sessions = this.sessions = new Sessions({ context: ctx, store, prompts, effects, health: board.claim('models'), masterId,
@@ -138,7 +138,7 @@ export class Runtime extends Service implements SourceHost {
         repliedTo: trigger => repliedTo({ store, sources }, trigger) })
       this.assessor = new MasterAssessor({ get engine() { return runtime.engine }, commands, get deployment() { return setup.deployment }, effects,
         settings: () => store.settings(), paused: () => this.paused(), threadContext: trigger => sources.threadContext(trigger),
-        githubSource: trigger => sources.home(GITHUB, trigger.source),
+        githubSource: trigger => sources.home(GITHUB, trigger),
         deliver: (id, text) => sessions.prompt(masterId, id, text, 'steer'), candidateCard: candidate => candidateCard(links, candidate),
         correlatedThreads: thread => correlatedThreads(store, thread) })
       const outbox = this.outbox = new Outbox({ store, effects, sources, commands, paused: () => this.paused() })
@@ -170,7 +170,7 @@ export class Runtime extends Service implements SourceHost {
         get deployment() { return setup.deployment }, configured: () => setup.configured(),
         get setupProblem() { return setup.problem }, get feishuProblem() { return setup.feishuProblem }, receive: trigger => passes.receive(trigger) }
       this.toolHost = { context: ctx, engine, store, prompts, sessions, settings: this.settings, assessor, resources,
-        github: ticket => runtime.context(GITHUB_KIND, sources.home(GITHUB, runtime.originSource(ticket))),
+        github: ticket => runtime.context(GITHUB_KIND, sources.home(GITHUB, runtime.originTrigger(ticket))),
         requestPass: () => { passes.request() }, sendReplies: () => outbox.sent(),
         quietly: run => { this.quiet++; try { return run() } finally { this.quiet-- } } }
       this.ready = this.initialize()
@@ -184,8 +184,8 @@ export class Runtime extends Service implements SourceHost {
   /** Aborted when dsh-superagent stops or loses its state directory lock, cancelling running reads and subprocesses. */
   get lifetime(): AbortSignal { return this.stopped.signal }
   context(kind: { kind: string; health: readonly string[] }, instance?: string): SourceContext { return sourceContextOf(this.sourceDeps, kind, instance) }
-  /** The Source instance a Ticket's origin Trigger came from, which decides its GitHub repository; undefined when it is gone. */
-  originSource(ticket: Pick<Ticket, 'origin'>): string | undefined { return this.store.triggers.get(ticket.origin.triggerId)?.source }
+  /** A Ticket's origin Trigger, whose Source or primary Thread decides its GitHub repository (`SourceRegistry.home`); undefined when it is gone. */
+  originTrigger(ticket: Pick<Ticket, 'origin'>): Trigger | undefined { return this.store.triggers.get(ticket.origin.triggerId) }
   /** Resolved deployment; throws while waiting for setup (`!configured()`). */
   get deployment(): Deployment { return this.setup.deployment }
   configured(): boolean { return this.setup.configured() }

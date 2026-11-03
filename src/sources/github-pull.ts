@@ -47,7 +47,8 @@ export function claimPull(ctx: SourceContext, ticketId: string, pr: Pull): strin
   const ticket = ctx.tickets.get(ticketId)
   if (!ticket || !liveTicket(ticket)) return 'Ticket ended because its PR was closed'
   const source = ctx.triggers.get(ticket.origin.triggerId)
-  const started = source?.source === ctx.source && source.meta.isPr === true && source.meta.number === pr.number
+  // The origin's primary Thread, not its Source, names the PR: a schedule hit on a PR is on this instance's Thread too.
+  const started = source?.threads[0]?.source === ctx.source && source.meta.isPr === true && source.meta.number === pr.number
   const opened = agentPull(pr, ctx.deployment.github, ctx.commands.repository) && ticketBranch(ticket, pr.head.ref)
   if (!started && !opened) {
     const { login } = ctx.deployment.github

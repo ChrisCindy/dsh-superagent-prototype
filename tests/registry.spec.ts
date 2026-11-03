@@ -197,6 +197,14 @@ describe('Source instances', () => {
     expect(sources.home('github', 'feishu')).toBe('github')
     expect(sources.home('github', undefined)).toBe('github')
     expect(sources.home('feishu', 'github-docs')).toBe('feishu')
+    // Given the Trigger, a Source's own Trigger names its instance, and another Source's Trigger names the instance of its
+    // primary Thread, as a hit another Source put on that GitHub Thread.
+    const on = (source: string, thread: string) => ({ source, threads: [{ source: thread, id: '7' }] })
+    expect(sources.home('github', on('github-docs', 'github-docs'))).toBe('github-docs')
+    expect(sources.home('github', on('schedule', 'github-docs'))).toBe('github-docs')
+    expect(sources.home('github', on('schedule', 'github'))).toBe('github')
+    expect(sources.home('github', on('feishu', 'feishu'))).toBe('github')
+    expect(sources.home('feishu', on('feishu', 'feishu'))).toBe('feishu')
   })
   it('finds a page of each repository in the instance that receives it, and a bare number in every instance', () => {
     const sources = new SourceRegistry(twoRepositories)
