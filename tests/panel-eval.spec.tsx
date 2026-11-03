@@ -5,6 +5,8 @@ import { expect, it } from 'vitest'
 import { en, zh } from '../src/client/locales.ts'
 import { usePanel, mount, remount, settle, all, find, tab, click, type, text, field } from './fixtures/panel.tsx'
 import { server } from './fixtures/panel-server.ts'
+import { scheduleKind } from '../src/sources/schedule.ts'
+import type { SourceKind } from '../src/sources/kind.ts'
 
 usePanel()
 it('opens the Decisions under Policy from the flow line with their reasons, Decisions that start work first, filterable by kind',
@@ -243,4 +245,20 @@ it('presets a rule\'s limits: the files its Tickets may change, one glob per lin
   await settle()
   await click(zh.save)
   expect(server.settings.policy.rules.at(-1)).not.toHaveProperty('limits')
+})
+
+it('lists the schedule entries whose hits may become candidates, which make no explicit request and have no admission table', async () => {
+  server.kinds = [scheduleKind as unknown as SourceKind]
+  await mount()
+  await click(tab(zh['tab.settings']))
+  await click(find(zh['term.eval'], '.dt-settings-link'))
+  expect(all('.dt-subtab').map(item => item.textContent)).toEqual(['飞书', 'GitHub', '定时条件'])
+  await click(find('定时条件', '.dt-subtab'))
+  expect(text()).toContain('命中可以成为候选的条目')
+  expect(text()).toContain('定时条件从不发起明确的请求')
+  expect(document.querySelector('.dt-admission')).toBeNull()
+  await click(all('.dt-part button').find(button => button.textContent === '添加')!)
+  await type(all('.dt-part .dt-rows-item').at(-1)!.querySelector<HTMLInputElement>('input[aria-label="条目"]')!, 'stale')
+  await click(zh.save)
+  expect(server.settings.policy.sources.schedule).toMatchObject({ bots: [{ id: 'stale' }] })
 })

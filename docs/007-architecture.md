@@ -131,7 +131,7 @@ A Mandate's `basis` (`MandateBasis`) records how the gate admitted its Trigger. 
 | `addressed` | An allowed sender addressed the agent |
 | `followup` | A message arrived on a Thread with Tickets |
 | `admission` | An admission-table cell; `observation` marks an inferred candidate |
-| `bot` | A listed bot produced an inferred candidate |
+| `bot` | A listed bot, or a listed schedule entry, produced an inferred candidate |
 
 Trigger and Thread `meta` belong to the Source. The core does not interpret them.
 
@@ -188,7 +188,7 @@ Sources extend the host through `SourceKind`, defined in `src/sources/kind.ts`. 
 
 `SourceRegistry` (`registry.ts`) owns registered kinds and stored instances, and implements the Engine's `SourceScope`. Registration claims health entries on `HealthBoard`; duplicate claims and reserved `sync:` names are refused. A SourceContext writes only through its registration's claimed entries, so reports after unregistration do nothing.
 
-`settings.sources` holds instances by ID, each with its `kind`. A kind's first instance has the kind's ID and exists even when nothing is stored for it. A kind with `multiple` allows more, with IDs `<kind>-<name>` (`instanceIdError`); a new one copies the `shared` configuration keys of the first. The registry finds an instance's kind with `kindOf`, and `home(kind, source)` names the instance a Trigger came from, or the kind's first. Another instance reports its health under the names `instanceHealth` gives and keeps its KV records under `source:<id>:`. Its Trigger IDs and Thread keys start with its ID, so the first instance keeps the names it always had.
+`settings.sources` holds instances by ID, each with its `kind`. A kind's first instance has the kind's ID and exists even when nothing is stored for it. A kind with `multiple` allows more, with IDs `<kind>-<name>` (`instanceIdError`); a new one copies the `shared` configuration keys of the first. The registry finds an instance's kind with `kindOf`, and `home(kind, source)` names the instance of a kind a Trigger came from, or the kind's first. Given the Trigger itself, `home` also takes the Source of its primary Thread: a schedule hit on `github-docs:3` gets the `github-docs` repository for its Ticket's variables, resources and pull request. Another instance reports its health under the names `instanceHealth` gives and keeps its KV records under `source:<id>:`. Its Trigger IDs and Thread keys start with its ID, so the first instance keeps the names it always had.
 
 Registry configuration methods include `kind`, `kindOf`, `home`, `instances`, `instance`, `healthNames`, `validate`, `validatePolicy`, `policyPart`, `channelAllowed`, `declarations`, `environments`, `find` and `scope`. `find` asks each kind that supports search.
 
@@ -257,7 +257,7 @@ Each model request binds the Session to the current prompt revision. The revisio
 | `src/app/tools/main.ts`, `src/app/tools/executor.ts` | Tool arguments of the main Session and the Executor Sessions into calls of the core classes, and their results into cards |
 | `src/app/http.ts`, `src/app/views/`, `src/app/api.ts` | HTTP requests into calls, and Store reads into the panel's views; `api.ts` types every route for the panel |
 | `src/app/resources.ts`, `src/app/links.ts`, `src/app/cards.ts` | Resource names into reads, source messages into links, records into compact cards for models |
-| `src/sources/github*.ts`, `src/sources/feishu*.ts`, `src/sources/poll.ts` | GitHub and Feishu payloads into Triggers and Thread facts, and messages into CLI calls |
+| `src/sources/github*.ts`, `src/sources/feishu*.ts`, `src/sources/schedule.ts`, `src/sources/poll.ts` | GitHub and Feishu payloads and schedule search hits into Triggers and Thread facts, and messages into CLI calls |
 | `src/deployment.ts`, `src/setup.ts`, `src/infra/` | Setup probes and problems, CLI transport, the agent's process environment |
 
 ## Dependency rules
@@ -370,7 +370,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/sources/kind.ts` | The `SourceKind` protocol |
 | `src/sources/registry.ts` | `SourceRegistry` |
 | `src/sources/host.ts` | `SourceHost`, `SourceContext`, `Health`, `health` and the fixed health texts |
-| `src/sources/poll.ts` | What GitHub and Feishu polling share: `POLL_HORIZON_MS`, `polled`, `cursorAt`, and `pollThreads`, which keeps a failure on its Thread as `pollError` |
+| `src/sources/poll.ts` | What the Sources' loops share: `POLL_HORIZON_MS`, `polled`, `cursorAt`, `pollThreads`, which keeps a failure on its Thread as `pollError`, and `pause`, a wait that fake timers drive |
 | `src/sources/github.ts` | The GitHub kind and plugin entry, exported as `./github-watch`: a poll round of notifications, the pull requests of open Tickets with their CI, and subscribed Threads |
 | `src/sources/github-trigger.ts` | GitHub comments, reviews, Issue bodies and CI changes as Triggers, and GitHub addresses |
 | `src/sources/github-pull.ts` | The pull request rules: which pull requests a Ticket follows (`claimPull`, `observePull`), the closes it reports to the Engine, and `pullEndNotices`, the chat notice of a Ticket that ended merged or closed |
@@ -384,6 +384,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/sources/feishu-read.ts` | The `feishu/` reads of a Trigger's message, its root, parent and topic, and `feishuThreadContext`, which gives them to assessments with their images |
 | `src/sources/admission-context.ts` | The bounded window an assessment starts from: the first pages of a Trigger's Thread, read through its kind, and the messages around the Trigger |
 | `src/sources/feishu-image.ts` | Reads a Feishu message's image as an attachment for the assessing Session |
+| `src/sources/schedule.ts` | The schedule kind and plugin entry, exported as `./schedule-watch`: each entry's GitHub search once per period, its hits as Triggers on GitHub Threads, and the period each entry last fired in, kept in KV |
 | `src/client/index.tsx` | The client plugin entry: the sidebar entry, the main panel and the page in DeepSeek Harness's Plugin Manager |
 | `src/client/app.tsx` | The panel: header, search, glossary, tabs and the page of the current route |
 | `src/client/provider.tsx` | What every page reads from its host: copy, calls, navigation, notices, the state poll, and `restart`, which reads the state quickly while dsh-superagent restarts |
@@ -407,7 +408,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/client/locales.ts` | All copy in both languages, and the glossary of [001 Domain model](001-domain.md) |
 | `src/client/client.css`, `css.d.ts` | The panel's stylesheet, loaded as text |
 
-`src/sources/github.ts` and `src/sources/feishu.ts` are also the entries of the two Source plugins, built by `tsdown.config.ts` and exported in `package.json` as `./github-watch` and `./feishu-watch`. The bundle's `cordis.patch.yml` inserts the three plugins, with Feishu disabled.
+`src/sources/github.ts`, `src/sources/feishu.ts` and `src/sources/schedule.ts` are also the entries of the three Source plugins, built by `tsdown.config.ts` and exported in `package.json` as `./github-watch`, `./feishu-watch` and `./schedule-watch`. The bundle's `cordis.patch.yml` inserts the four plugins, with Feishu and the schedule Source disabled.
 
 ## Tests
 
@@ -418,6 +419,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `tests/policy.spec.ts` | Source scope, the gate, the admission table, Mandate revalidation, the Policy version, settings migrations and assessment outcomes |
 | `tests/registry.spec.ts` | `SourceRegistry`: instances and their dispatch by kind, validation, Policy parts, Channels, Thread context, and each instance's health, KV records and variables |
 | `tests/sources.spec.ts` | The Feishu and GitHub Sources on a `SourceContext`: translation, polls and read positions, the pull request rules, health |
+| `tests/schedule.spec.ts` | The schedule Source: entries, searches limited to a repository, Triggers on GitHub Threads, one firing per period across restarts, its Policy part with the accept mode and the proactive limit, and its plugin |
 | `tests/commands.spec.ts` | CLI calls as the deployment's accounts, the Channels' answers, and repository-scoped GitHub calls |
 | `tests/feishu-read.spec.ts`, `tests/github-read.spec.ts` | Feishu and GitHub reads |
 | `tests/admission-context.spec.ts`, `tests/feishu-image.spec.ts` | The Thread window of assessments, and Feishu image reads |
@@ -454,7 +456,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `tests/draft.spec.ts`, `tests/prompt-config.spec.ts`, `tests/markdown.spec.ts`, `tests/marks.spec.ts` | Draft states, merges and the save bar's line; the prompt configuration by section and the line diff; the Markdown subset and its links; the mark of every state the views classify |
 | `tests/locales.spec.ts`, `tests/styles.spec.ts` | The copy in both languages, the stylesheet |
 | `tests/class-docs.spec.ts` | Every class in `src` has a JSDoc block before it |
-| `tests/e2e/superagent.e2e.ts` | Only with `pnpm test:e2e` (tests/e2e/README.md): the bundle in a real DeepSeek Harness installation, through `scripts/dsh-superagent` and the management API, with fake `gh` and `lark-cli` and a scripted model: setup, the API's shapes, a mention through acceptance, the worker and the result reply, the Feishu bot setup, a second GitHub Source for another repository, and the escalations of 009 a worker or local process can try (writing the state directory, merging, the API without the sign-in) |
+| `tests/e2e/superagent.e2e.ts` | Only with `pnpm test:e2e` (tests/e2e/README.md): the bundle in a real DeepSeek Harness installation, through `scripts/dsh-superagent` and the management API, with fake `gh` and `lark-cli` and a scripted model: setup, the API's shapes, a mention through acceptance, the worker and the result reply, the Feishu bot setup, a second GitHub Source for another repository, a schedule entry's Trigger on an Issue's Thread that a restart does not repeat, and the escalations of 009 a worker or local process can try (writing the state directory, merging, the API without the sign-in) |
 | `tests/docs.spec.ts` | Numbered documents link only to earlier ones, every local link resolves, no document has merge conflict markers, and this document's tables list every module and every test |
 
 `tests/fixtures/` holds what several tests share: `host.ts`, a simulated DeepSeek Harness host; `panel-server.ts` and `panel.tsx`, the fake management API and the panel around a page; `connection.ts`, DeepSeek Harness's Connection, which signs in a request that carries its test cookie; `deployment.ts`, a resolved deployment; `git.ts`, the environment of every git the tests start, which names no repository; and `async.ts`.

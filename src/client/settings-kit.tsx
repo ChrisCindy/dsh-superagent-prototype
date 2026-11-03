@@ -199,6 +199,9 @@ function RowsField({ field, value, saved, onChange, labels, refreshLabels }: {
   // Summarize a row by its second column only when that column is free text (e.g., a display name), not a select option.
   const named = field.columns[1]?.type === 'text' ? field.columns[1] : undefined
   const rowName = (row: Row) => (named && row[named.key]) || labels[row[key.key] ?? ''] || row[key.key] || ''
+  // A wide column, such as a search, takes twice the width of the others.
+  const widths = field.columns.some(column => column.type === 'text' && column.wide) ? { ['--dt-row-template' as string]: field.columns
+    .map(column => column.type === 'text' && column.wide ? 'minmax(0, 2fr)' : 'minmax(0, 1fr)').join(' ') } : {}
   const cell = (row: Row, index: number, column: Column) => {
     const id = row[key.key] ?? '', change = (next: string) => set(index, { ...row, [column.key]: next })
     if (column === key && (savedKeys.has(id) || (!choose && labels[id]))) {
@@ -238,7 +241,7 @@ function RowsField({ field, value, saved, onChange, labels, refreshLabels }: {
       {open ? t('collapse') : rows.map(rowName).join(t('listSeparator'))}
     </button>}
     {(rows.length <= ROWS_SHOWN || open) && <ul className="dt-rows"
-      style={{ ['--dt-columns' as string]: field.columns.length }}>{rows.map((row, index) => <li key={index} className="dt-rows-item">
+      style={{ ['--dt-columns' as string]: field.columns.length, ...widths }}>{rows.map((row, index) => <li key={index} className="dt-rows-item">
       {field.columns.map(column => cell(row, index, column))}
       <Button variant="ghost" size="sm" icon={<Icon name="trash" />} aria-label={t('removeRow', { name: labels[row[key.key] ?? '']
         || row[key.key] || label })}

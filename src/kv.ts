@@ -60,4 +60,9 @@ export const KV = {
   feishu: { chats: record<Record<string, boolean>>('feishu-chats'), history: family<string, [chat: string]>('feishu-history:'),
     topics: family<Record<string, string>, [chat: string]>('feishu-history-threads:'),
     seen: family<string[], [thread: string]>('thread-seen:'), initialized: family<boolean, [thread: string]>('thread-initialized:') },
+  /**
+   * Schedule Source: per entry, the last period it fired in (the number of whole intervals since the Unix epoch), when, and how
+   * many hits it took in; a restart in the same period does not fire the entry again.
+   */
+  schedule: { fired: family<{ period: number; at: string; hits: number }, [entry: string]>('schedule-fired:') },
 }

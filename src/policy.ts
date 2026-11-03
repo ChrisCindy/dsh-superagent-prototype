@@ -226,7 +226,10 @@ export function policyVersion(settings: Settings): string {
 export function allowedSender(settings: Settings, actor: ActorRef): z.infer<typeof AllowedSchema> | undefined {
   return settings.policy.sources[actor.source]?.allowed.find(entry => sameName(entry.id, actor.id))
 }
-/** Look up `actor` in the Source's `bots` policy list (validated by the Source's kind), whose messages are admitted as inferred candidates at most. */
+/**
+ * Look up `actor` in the Source's `bots` policy list (validated by the Source's kind), whose messages are admitted as inferred
+ * candidates at most: bots, or, on the schedule Source, the entries whose hits may become candidates.
+ */
 export function listedBot(settings: Settings, actor: ActorRef): z.infer<typeof AllowedSchema> | undefined {
   const bots = z.array(AllowedSchema).catch([]).parse(settings.policy.sources[actor.source]?.bots ?? [])
   return bots.find(entry => sameName(entry.id, actor.id))
@@ -275,7 +278,10 @@ export function policyEffects(tickets: readonly Ticket[], old: Settings, now: Se
 export function settingsPolicy(settings: Settings, sources: SourceScope): Policy {
   const version = policyVersion(settings)
   const mode = settings.eval.mode
-  /** Gate non-human triggers: only listed bots (as inferred candidates) and senderless system/CI events may pass; other bots are rejected. */
+  /**
+   * Gate non-human triggers: only listed bots and schedule entries (as inferred candidates) and senderless system/CI events may
+   * pass; other bots are rejected.
+   */
   const machineGate = (trigger: Trigger): GateResult => {
     const bot = trigger.actor.id ? listedBot(settings, trigger.actor) : undefined
     if (trigger.actor.id && !bot) return { admissible: false, reason: 'not_human' }

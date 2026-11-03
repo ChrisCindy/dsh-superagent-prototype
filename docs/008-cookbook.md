@@ -14,7 +14,7 @@ The example assumes this CLI contract:
 - `hookq reply --conversation <id> --to <message id> --key <key> --text <text>` replies under a message, once per key. For a conversation that was deleted it fails with `{"error": {"code": 410, "message": "…"}}` on standard error.
 - `hookq thread --conversation <id> --root <message id> --json`, with `--after <cursor>` for a later page, prints a page of a thread, oldest first: `{"items": […], "next": "<cursor>"}`, without `next` on the last page.
 
-Put the kind and its plugin entry in `src/sources/webhook.ts`, following `src/sources/github.ts`. If the Source grows, split translation, Channel and polling code into separate modules as the Feishu Source does.
+Put the kind and its plugin entry in `src/sources/webhook.ts`, following `src/sources/github.ts`. If the Source grows, split translation, Channel and polling code into separate modules as the Feishu Source does. `src/sources/schedule.ts` is a small real kind built by this recipe; [Triggers on another Source's Threads](#triggers-on-another-sources-threads) covers what it does differently.
 
 ### 1. Map the events onto the domain
 
@@ -34,13 +34,13 @@ The module imports what the steps below use:
 
 ```ts
 import type { Context } from '@deepseek-ai/cordis'
-import { setTimeout as delay } from 'node:timers/promises'
 import { z } from 'zod'
 import { key, threadKey, type OutboundMessage, type Trigger } from '../core/index.ts'
 import { CliError } from '../infra/commands.ts'
 import { KV } from '../kv.ts'
 import { health, sourceContext, type SourceContext } from './host.ts'
 import type { SourceKind } from './kind.ts'
+import { pause } from './poll.ts'
 ```
 
 ```ts
@@ -74,7 +74,7 @@ export const webhookKind: SourceKind<WebhookConfig> = {
 
 - `kind` is the stable kind id and the ID of its first instance. An instance ID appears in Trigger `source`, Thread-key prefixes, the `source:webhook` settings block and the Source Policy. Set `multiple: true` to let operators add more instances, such as one per queue, and read the instance from `ctx.source` instead of a constant. `shared` lists configuration keys a new instance copies from the first.
 - `schema` validates stored configuration and supplies defaults. Before an operator saves an instance, the registry creates an enabled instance from those defaults. Make defaults receive nothing; this example defaults to no conversations.
-- `fields` generates the Source settings form without custom panel code. A `rows` field edits entries keyed by its first column; `advanced` hides less common settings. Implement `refreshLabels` if the Source can resolve ids to display names. Save those names under `KV.sources.labels(kind)`. Columns with `choose` and `refresh` can then offer them.
+- `fields` generates the Source settings form without custom panel code. A `rows` field edits entries keyed by its first column; once saved, that column cannot be edited. A text column with `wide: true` takes twice the width of the others, for long values such as a search. `advanced` hides less common settings. Implement `refreshLabels` if the Source can resolve ids to display names. Save those names under `KV.sources.labels(kind)`. Columns with `choose` and `refresh` can then offer them.
 - Optional `facts(deployment)` displays values derived by setup, such as the account behind a CLI. Setup currently checks only GitHub and Feishu fields listed in `SETUP_FIELDS`, so this example supplies no facts.
 - `health` declares the Source's health entries, initially `starting`. Registration claims each name and refuses collisions with entries such as `runtime`, `reply`, `worker` or effect kinds. Use the kind's name and reserve `sync:<id>` for Policy syncs. An `error` makes the status script exit 2 and the hourly check notify the operator, so report it only when human action may be needed.
 
@@ -147,6 +147,8 @@ The Engine calls `scope` through `SourceRegistry` for each incoming Trigger. Out
 `observed: true` means the Source receives unaddressed messages in that scope, allowing admission-table decisions for them. `row` identifies the corresponding admission row.
 
 Revalidation calls `scope` with the Mandate's stored metadata. Make it depend only on `meta` and configuration. Resuming requires `listened`, not `observed`. Without `scope`, a kind receives every Trigger it produces but observes none.
+
+The panel words a filter `reason` by `reason.<code>` in `src/client/locales.ts`, such as `reason.conversation_not_listed`. Without that key it shows the code itself.
 
 ### 5. Replies: the Channel
 
@@ -228,9 +230,10 @@ If messages reply to earlier messages, add `repliesTo(trigger)`. It returns the 
 ```
 
 - `schema` validates the Source Policy, including `allowed` sender ids. Id comparison is case-insensitive. Admission tables are validated separately and shared across kinds. This Policy part is saved at `policy.sources.webhook` and contributes to the Policy version.
-- `fields` generates the form under **Eval → On each Source**, beginning with `allowed`. `explicit` explains how to address the agent. Optional `unnamed: {person, bot}` supplies display labels for opaque ids such as Feishu's `ou_…`; this example omits it because queue ids are readable names.
+- `fields` generates the form under **Eval → On each Source**, normally beginning with `allowed`. `explicit` explains how to address the agent. Optional `unnamed: {person, bot}` supplies display labels for opaque ids such as Feishu's `ou_…`; this example omits it because queue ids are readable names.
 - `rows(config)` lists admission scopes and their available cells. Each row id must match the `row` returned by `scope`. Unaddressed-message cells are available only where the Source observes those messages. Kinds without `rows` use default cells.
-- Optional `bots` lists bots eligible for inferred candidacy, using the same entry shape as `allowed`. Without it, no bot is admitted.
+- Optional `bots` lists bots eligible for inferred candidacy, using the same entry shape as `allowed`. Without it, no bot is admitted. The gate admits a listed bot's Trigger (`human: false`, its id as the actor) only where `scope` says `listened`, and only when it addresses the agent or `scope` says `observed`. It is an inferred candidate, so the accept mode and the rules apply.
+- A kind whose Triggers have no person behind them, such as the schedule Source, still declares `allowed`, as `z.array(…).max(0).default([])`, and leaves it out of `fields`. It lists in `bots` the actors that may make inferred candidates.
 - Optional `sync: {label, ready(part), run(host, part, signal)}` refreshes membership at startup and on **Sync now**. Feishu uses chat membership. Failures appear under `sync:<id>` and retry after one minute, doubling to one hour until successful.
 
 ### 8. Variables for the Executor
@@ -292,7 +295,7 @@ async function watch(ctx: SourceContext, signal: AbortSignal): Promise<void> {
         }
       }
     }
-    await delay((config?.pollSeconds ?? 30) * 1000, undefined, { signal }).catch(() => {})
+    await pause((config?.pollSeconds ?? 30) * 1000, signal)
   }
 }
 
@@ -325,7 +328,7 @@ export async function pollQueue(ctx: SourceContext, signal: AbortSignal): Promis
 - **Thread metadata.** After receiving a Trigger, call `ctx.threads.describe(key, {label, url, facts})` to populate its display information. `ctx.threads.patch(key, meta)` delegates to `threads.patchMeta`, setting Source-owned keys or removing them when the value is `undefined`. Both ignore absent Threads, including those of filtered Triggers.
 - **Per-item errors.** Count malformed items and continue rather than failing the entire batch. `validItems(item, list, tally)` in `src/infra/commands.ts` supports this pattern. For independently polled Threads, use `pollThreads` from `src/sources/poll.ts`; it records each failure as `pollError`. Its `polled` predicate keeps live subscriptions and a two-week window after the later of the last Trigger and Ticket end.
 - **Health.** Write only declared entries through `ctx.report`. `health(state, code, values)` provides fixed messages such as `setupPending`, `sourceOff` and `pollFailures`. Count consecutive failures before reporting `error`.
-- **Abort.** Pass the signal to `ctx.commands.withSignal(signal)` and to `delay`, and check it between items, so a stop or a restart ends the loop at once.
+- **Abort.** Pass the signal to `ctx.commands.withSignal(signal)` and to `pause` (`src/sources/poll.ts`), and check it between items, so a stop or a restart ends the loop at once. `pause` waits on the global `setTimeout`, so a test drives the loop with `vi.useFakeTimers()`, as the GitHub and schedule Sources' tests do.
 
 This example does not send Source-originated notices. A Source that needs them calls `ctx.notify`; Outbox delivers them like other replies.
 
@@ -348,6 +351,8 @@ Then export the built file in `package.json` by adding `"./webhook-watch": "./li
       disabled: true
 ```
 
+`tests/bundle-patch.spec.ts` lists every row the patch inserts, so add the new row there too. Add a commented entry to `examples/profile.cordis.patch.yml`, as Feishu's.
+
 Enable the plugin in a profile's `cordis.patch.yml` with `id: dsh-superagent-webhook` and `disabled: false`. Build and restart. The new Source appears in Sources settings and under **Eval → On each Source**.
 
 Add its module and spec to the module and test tables in [007 Architecture](007-architecture.md). `tests/docs.spec.ts` checks that both indexes are complete.
@@ -356,7 +361,7 @@ Add its module and spec to the module and test tables in [007 Architecture](007-
 
 Create `tests/webhook.spec.ts` using the pattern in `tests/sources.spec.ts`: a real Store in a temporary directory, a `SourceRegistry` with `HealthBoard`, an Engine with stand-in ports, and a `SourceContext` from `sourceContextOf`.
 
-Mock CLI calls by spying on `Commands.run`. Also spy on `withSignal`, because it normally returns a new `Commands` instance.
+Mock CLI calls by spying on `Commands.prototype`. `ctx.commands` is a copy scoped to the instance, and `withSignal` makes another, so a spy on one instance misses them; every copy inherits the prototype's methods. Restore the spies after each test with `vi.restoreAllMocks()`.
 
 ```ts
 function host(overrides: Partial<SourceContextDeps> = {}) {
@@ -380,14 +385,13 @@ function host(overrides: Partial<SourceContextDeps> = {}) {
   return { ...deps, store, engine, commands, receive, health: board.all, ctx: sourceContextOf(deps, webhookKind) }
 }
 /** The queue as `hookq` answers it. */
-function queue(h: ReturnType<typeof host>, answer: () => unknown) {
-  vi.spyOn(h.commands, 'withSignal').mockReturnValue(h.commands)
-  return vi.spyOn(h.commands, 'run').mockImplementation(async () => JSON.stringify(answer()))
+function queue(answer: () => unknown) {
+  return vi.spyOn(Commands.prototype, 'run').mockImplementation(async () => JSON.stringify(answer()))
 }
 
 it('takes in what the queue holds after the cursor, once, and moves the cursor after it', async () => {
   const h = host()
-  queue(h, () => ({ me: 'agent', items: [message('m1'), { id: 'broken' }, message('m2', { conversation: 'elsewhere' })], next: 3 }))
+  queue(() => ({ me: 'agent', items: [message('m1'), { id: 'broken' }, message('m2', { conversation: 'elsewhere' })], next: 3 }))
   expect(await pollQueue(h.ctx, new AbortController().signal)).toEqual({ read: 3, unreadable: 1 })
   expect(await h.receive.mock.results[0]!.value).toBe('stored')
   expect(await h.receive.mock.results[1]!.value).toBe('filtered')
@@ -421,5 +425,20 @@ it('takes in what the queue holds after the cursor, once, and moves the cursor a
 7. Give it a part of the Policy with `allowed` and the admission rows.
 8. Register its execution environment variables.
 9. Write the plugin entry and a loop that waits for setup, follows the switch, moves cursors after `receive`, keeps errors per item, reports health and stops on abort; name the cursors in `KV`.
-10. Add the build entry, the export and the `cordis.patch.yml` insert, and list the module and its spec in the tables of 007.
-11. Test it as `tests/sources.spec.ts` tests the other Sources.
+10. Add the build entry, the export, the `cordis.patch.yml` insert with its row in `tests/bundle-patch.spec.ts`, and list the module and its spec in the tables of 007.
+11. Test it as `tests/sources.spec.ts` and `tests/schedule.spec.ts` test the other Sources.
+
+### Triggers on another Source's Threads
+
+A Source can put its Triggers on another Source's Threads. The schedule Source does: an entry's GitHub search runs once per interval, and each hit becomes a Trigger on that Issue's Thread, `github:<n>` or `<instance>:<n>`. The Trigger's `source` is the producing instance, `schedule`, and its `threads[0]` is the GitHub Thread. The host then splits the work this way:
+
+- **Scope and Policy.** `scope` and the Policy part are those of the Trigger's `source`, the schedule Source. Revalidation calls its `scope` too.
+- **Replies.** The Trigger's `channel` names the GitHub instance, built with `githubChannel`. Outbox sends through the GitHub kind, so the schedule kind has no `channel`.
+- **Thread context.** The registry reads it through the Trigger's own kind. The schedule kind passes the read on to `githubThreadContext` with `commands.forSource(trigger.threads[0].source)`.
+- **Repository.** `SourceRegistry.home(kind, trigger)` takes the Trigger's `source` when it is of the kind, else the Source of its primary Thread. The variables of a Ticket, its `github/` resources and the pull request it may follow so use that Thread's repository. Put `number` and `isPr` in `meta`, as GitHub Triggers do.
+- **Proactive limit.** `eval.maxInferredPerHour` counts candidates by their Thread's Source, so a schedule hit counts for the GitHub Source.
+- **Thread facts.** `ctx.threads.describe` takes any Thread key. The schedule Source labels the GitHub Thread with the Issue's number and title.
+
+`Commands.api` allows only paths under the instance's repository. A call outside it, such as `search/issues`, uses `Commands.gh` and keeps itself to the repository: the schedule Source adds `repo:<owner/name>` to the query, refuses a query that names another `repo:`, `org:`, `user:` or `owner:`, since GitHub joins repeated `repo:` qualifiers with OR, and drops hits from other repositories.
+
+A condition that needs waiting needs no cursor. The schedule Source keeps, per entry, the period it last fired in (`KV.schedule.fired`), and the Trigger id names the entry, the period and the hit. A restart in the same period searches nothing, and a lost record still takes each hit in only once.

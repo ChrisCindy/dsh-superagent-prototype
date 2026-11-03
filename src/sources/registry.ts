@@ -67,10 +67,13 @@ export class SourceRegistry implements SourceScope {
   kindOf(id: string, settings = this.settings()): SourceKind | undefined { return this.kinds.get(settings.sources[id]?.kind ?? id) }
   /**
    * The instance of `kind` that `source` names, or the kind's first instance when `source` (such as a Feishu Trigger's) names
-   * none of that kind.
+   * none of that kind. For a Trigger: the Source it came from when that is of `kind`, else the Source of its primary Thread when
+   * that is, so a Trigger one Source places on another's Thread (a schedule hit on an Issue) takes that Thread's instance.
    */
-  home(kind: string, source: string | undefined, settings = this.settings()): string {
-    return source !== undefined && (settings.sources[source]?.kind ?? source) === kind ? source : kind
+  home(kind: string, source: string | Pick<Trigger, 'source' | 'threads'> | undefined, settings = this.settings()): string {
+    const named = (id: string | undefined) => id !== undefined && (settings.sources[id]?.kind ?? id) === kind
+    if (typeof source === 'object') return named(source.source) ? source.source : this.home(kind, source.threads[0]?.source, settings)
+    return named(source) ? source! : kind
   }
   /**
    * Every registered kind's instances, kinds in ID order and the first instance of each before the others in ID order, followed
@@ -127,10 +130,10 @@ export class SourceRegistry implements SourceScope {
     return [...this.kinds.values()].sort((a, b) => a.kind.localeCompare(b.kind)).flatMap(kind => kind.environment ? [{ kind: kind.kind, variables: kind.environment.variables }] : [])
   }
   /**
-   * The enabled instance whose variables each kind contributes: the instance `origin` names (the Source a Ticket's Trigger
-   * came from) when it is of that kind, else the kind's first instance.
+   * The enabled instance whose variables each kind contributes: the instance `origin` (a Ticket's Trigger, or a Source ID) has
+   * of that kind (see `home`), else the kind's first instance.
    */
-  environments(settings = this.settings(), origin?: string) {
+  environments(settings = this.settings(), origin?: string | Pick<Trigger, 'source' | 'threads'>) {
     return [...this.kinds.values()].sort((a, b) => a.kind.localeCompare(b.kind)).flatMap(kind => {
       const id = this.home(kind.kind, origin, settings)
       const instance = this.resolve(kind, id, settings.sources[id])
