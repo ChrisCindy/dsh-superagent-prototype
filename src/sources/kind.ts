@@ -179,14 +179,18 @@ export interface SourceKind<C extends Record<string, unknown> = Record<string, u
   threadContext?: ThreadContext<C>
   /**
    * Reads a file, or lists a directory, of the repository an assessment reads, with the commands of the instance the Trigger came
-   * from (`SourceRegistry.home`); the first installed kind with `read`, in ID order, serves these reads.
+   * from (`SourceRegistry.home`); the kind of the Trigger's Source, or of its primary Thread's, serves them when it has `read`, else
+   * the first installed kind with `read`, in ID order.
    */
   read?(commands: Commands, path: string, kind: 'file' | 'directory'): Promise<string>
   /** Maps a search query to an instance's candidate Thread keys (such as `github:12`) and Trigger search terms (such as a Feishu `om_` ID). */
   find?(query: string, instance: SourceInstance<C>): { threads: string[]; terms: string[] }
   /** Returns the ID of the Trigger whose message this Trigger replies to, when derivable without a network read. */
   repliesTo?(trigger: Trigger): string | undefined
-  /** Binding and merging of the changes an Executor reports; the first installed kind with `claim`, in ID order, provides it. */
+  /**
+   * Binding and merging of the changes an Executor reports; the kind of the Ticket's origin Source, or of its primary Thread's,
+   * provides it when it has `claim`, else the first installed kind with `claim`, in ID order.
+   */
   claim?: SourceClaim
   /**
    * Runs in the transaction that ends a ticket, with the context of the kind's first instance, so the kind can tell the ticket's

@@ -16,6 +16,7 @@ import { DINGTALK_API, DingtalkApi, DingtalkCredentialsError, TOPIC_ROBOT, crede
   from './infra/dingtalk.ts'
 import { sameName } from './infra/text.ts'
 import { SetupError, setupWarning, type SetupCode, type SetupWarning } from './setup.ts'
+import type { CodehostDeployment } from './codehost.ts'
 
 const reason = (error: unknown): string => error instanceof Error ? error.message : String(error)
 const absolute = (description: string) => s.string().pattern(/^\//).description(`${description} Absolute path.`)
@@ -85,9 +86,20 @@ export interface GithubAccount { cli: string; login: string; noreply: string }
 export interface Deployment extends Machine {
   /** The canonical owner/name of each resolved GitHub Source instance, by instance ID; the first instance's ID is `github`. */
   repositories: Record<string, string>
-  github: GithubAccount
+  /** The agent's GitHub account; none when the GitHub Source is off and a code-host Source serves instead (`githubSkipped`). */
+  github?: GithubAccount
   feishu?: FeishuBot
   dingtalk?: DingtalkApp
+  /** The code-host Sources' adapter, account and repositories, when one is on. */
+  codehost?: CodehostDeployment
+}
+/**
+ * The agent's GitHub account.
+ * @throws when setup resolved none, because the GitHub Source is off.
+ */
+export function githubAccount(deployment: Pick<Deployment, 'github'>): GithubAccount {
+  if (!deployment.github) throw new Error('The GitHub Source is off: this installation has no GitHub account')
+  return deployment.github
 }
 export interface FeishuBot { cli: string; appId: string; brand: 'feishu' | 'lark'; botId: string; name: string }
 
@@ -156,7 +168,7 @@ export function sameAccount(id: string, resolved: { repository: string; account:
  * Verifies each GitHub Source instance (`githubInstances`) in order: the agent's GitHub CLI identity, which every instance
  * shares, and push access to each instance's repository. The first instance's CLI is the one workers call as gh.
  */
-export async function resolveDeployment(machine: Machine, instances: readonly { id: string; config: unknown }[], probe: Probe, path = process.env.PATH ?? ''): Promise<Deployment> {
+export async function resolveDeployment(machine: Machine, instances: readonly { id: string; config: unknown }[], probe: Probe, path = process.env.PATH ?? ''): Promise<Deployment & { github: GithubAccount }> {
   const resolved: { id: string; repository: string; account: GithubAccount }[] = []
   for (const instance of instances) {
     const found = await resolveGithub(machine, instance, probe, path)

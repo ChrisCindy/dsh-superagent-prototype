@@ -75,6 +75,11 @@ export const KV = {
    * many hits it took in; a restart in the same period does not fire the entry again.
    */
   schedule: { fired: family<{ period: number; at: string; hits: number }, [entry: string]>('schedule-fired:') },
+  /**
+   * Code-host Source: the adapter's event cursor, which it alone reads, and per pull request Thread (`!12`) its CI fingerprint and
+   * revision (`revision` counts reported CI changes so each produces a distinct Trigger ID).
+   */
+  codehost: { cursor: record<string>('codehost-cursor'), ci: family<{ fingerprint: string; revision: number }, [thread: string]>('codehost-ci:') },
 }
 
 /**
@@ -85,4 +90,5 @@ export const THREAD_RECORDS: readonly { kind: string; prefix: string; by: 'key' 
   { kind: 'feishu', prefix: KV.feishu.seen.prefix, by: 'key' }, { kind: 'feishu', prefix: KV.feishu.initialized.prefix, by: 'key' },
   { kind: 'github', prefix: KV.github.cursor.prefix, by: 'id' }, { kind: 'github', prefix: KV.github.ci.prefix, by: 'id' },
   { kind: 'dingtalk', prefix: KV.dingtalk.transcript.prefix, by: 'id' },
+  { kind: 'codehost', prefix: KV.codehost.ci.prefix, by: 'id' },
 ]

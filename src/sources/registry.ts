@@ -185,11 +185,21 @@ export class SourceRegistry implements SourceScope {
     return { id, title: kind.title.en, resources: kind.resources, config: this.resolve(kind, id, settings.sources[id]).config }
   }
   /**
-   * The installed kind that binds the changes Executors report (the first with `claim`, in ID order) and its instance that
-   * `origin` has (see `home`), or undefined when no installed kind has `claim`.
+   * The installed kind with `hook` that serves `origin`: the kind of the Source `origin` names, or of its primary Thread's Source,
+   * when that kind has the hook (a GitHub Ticket uses GitHub, a code-host Ticket the code host), else the first kind with it, in ID
+   * order.
+   */
+  private serving(hook: 'claim' | 'read', origin: string | Pick<Trigger, 'source' | 'threads'> | undefined, settings: Settings): SourceKind | undefined {
+    const ids = typeof origin === 'object' ? [origin.source, origin.threads[0]?.source] : [origin]
+    const own = ids.map(id => id === undefined ? undefined : this.kindOf(id, settings)).find(kind => kind?.[hook])
+    return own ?? this.installed().find(item => item[hook])
+  }
+  /**
+   * The installed kind that binds the changes Executors report (`serving`) and its instance that `origin` has (see `home`), or
+   * undefined when no installed kind has `claim`.
    */
   claimant(origin?: string | Pick<Trigger, 'source' | 'threads'>, settings = this.settings()): { kind: SourceKind; id: string } | undefined {
-    const kind = [...this.kinds.values()].sort((a, b) => a.kind.localeCompare(b.kind)).find(item => item.claim)
+    const kind = this.serving('claim', origin, settings)
     return kind && { kind, id: this.home(kind.kind, origin, settings) }
   }
   /** The packaged skills of the installed kinds that apply to `deployment` (`SourceKind.skill`), kinds in ID order. */
@@ -197,17 +207,20 @@ export class SourceRegistry implements SourceScope {
     return this.installed().flatMap(kind => kind.skill && (kind.skill.active?.(deployment) ?? true) ? [kind.skill.name] : [])
   }
   /**
-   * Reads `path` of the repository an assessment of `trigger` reads, through the first installed kind with `read`, in ID order,
-   * with the commands of its instance that `trigger` has (see `home`).
+   * Reads `path` of the repository an assessment of `trigger` reads, through the kind with `read` that serves it (`serving`), with
+   * the commands of its instance that `trigger` has (see `home`).
    * @throws when no installed kind has `read`.
    */
   async readRepository(commands: Commands, trigger: Pick<Trigger, 'source' | 'threads'>, path: string, kind: 'file' | 'directory'): Promise<string> {
-    const reader = this.installed().find(item => item.read)
+    const reader = this.serving('read', trigger, this.settings())
     if (!reader?.read) throw new Error('No installed Source reads repository files')
     return reader.read(commands.forSource(this.home(reader.kind, trigger)), path, kind)
   }
-  /** The number of the change a ticket card shows, as the claiming kind's `claim.pull` gives it. */
-  pull(ticket: Pick<Ticket, 'follows'>): number | undefined { return this.claimant()?.kind.claim!.pull(ticket) }
+  /** The number of the change a ticket card shows, as the first claiming kind, in ID order, that finds one gives it. */
+  pull(ticket: Pick<Ticket, 'follows'>): number | undefined {
+    for (const kind of this.installed()) { const pull = kind.claim?.pull(ticket); if (pull !== undefined) return pull }
+    return undefined
+  }
   find(query: string): { threads: string[]; terms: string[] } {
     const found = this.instances().flatMap(instance => {
       const kind = instance.installed ? this.kinds.get(instance.kind) : undefined

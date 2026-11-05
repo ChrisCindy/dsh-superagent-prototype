@@ -3,6 +3,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { UserError } from '../core/index.ts'
 import { checkMerging, executable, githubInstances, resolveDeployment, resolveDingtalkApp, resolveFeishuBot, resolveGithub, sameAccount, workerProbe,
   type Deployment, type Machine } from '../deployment.ts'
+import { CODEHOST, codehostInstances, resolveCodehost } from '../codehost.ts'
 import { agentVariables, applyEnvironment, verifyEnvironment, withoutDirectory, workerBin, writeEnvironment } from '../infra/environment.ts'
 import { sameName } from '../infra/text.ts'
 import type { MergeConfig, Settings, SettingsBlock } from '../policy.ts'
@@ -28,9 +29,17 @@ const setupFields = ({ sources }: Settings, kinds: SetupKinds) => JSON.stringify
   const others = Object.keys(sources).filter(id => id !== kind && sources[id]!.kind === kind && sources[id]!.enabled).sort()
   return [kind, ...others].map(id => [id, ...keys.map(key => sources[id]?.config[key] ?? '')])
 }))
-/** Whether a save changes a field setup reads, of the installed `kinds` (`SourceRegistry.installed`). */
+/**
+ * Whether setup leaves GitHub out: the GitHub Source is switched off while a code-host Source is on, so the code host serves
+ * instead and no GitHub account is needed.
+ */
+export const githubSkipped = ({ sources }: Pick<Settings, 'sources'>): boolean =>
+  sources.github?.enabled === false && codehostInstances(sources).length > 0
+/** Which Sources setup resolves beyond their fields: the code-host instances that are on, and whether GitHub is left out. */
+const resolvedSources = (settings: Settings) => JSON.stringify([codehostInstances(settings.sources).map(item => item.id), githubSkipped(settings)])
+/** Whether a save changes a field setup reads, of the installed `kinds` (`SourceRegistry.installed`), or which Sources it resolves. */
 export const setupChanged = (before: Settings, after: Settings, kinds: SetupKinds): boolean =>
-  setupFields(before, kinds) !== setupFields(after, kinds)
+  setupFields(before, kinds) !== setupFields(after, kinds) || resolvedSources(before) !== resolvedSources(after)
 
 /**
  * Resolves each GitHub Source instance's repository, the GitHub account they share, the optional Feishu bot by probing CLIs and the optional DingTalk app through its OpenAPI, then writes and applies the isolated git and shim environment used by worker processes.
@@ -88,6 +97,12 @@ export class Setup {
     const own = (error: unknown) => { if (!(error instanceof SetupError) || (error.place === kind && problemSource(error.problem) === id)) throw error }
     if (kind === 'feishu') { await resolveFeishuBot(machine, settings.sources[id]?.config, this.probe()).catch(own); return }
     if (kind === 'dingtalk') { await resolveDingtalkApp(settings.sources[id]?.config).catch(own); return }
+    // Code-host instances share one adapter and account, so each is checked with the others that are on.
+    if (kind === CODEHOST) {
+      const instances = codehostInstances(settings.sources)
+      if (instances.some(item => item.id === id)) await resolveCodehost(machine, instances, this.probe()).catch(own)
+      return
+    }
     if (kind !== 'github') return
     const instances = githubInstances(settings.sources)
     const instance = instances.find(item => item.id === id)
@@ -128,7 +143,8 @@ export class Setup {
       login = (await this.probe()([cli, 'api', 'user', '--jq', '.login'])).trim()
     } catch (error) { throw new UserError('mergeCliFailed', { cli: merge.cli, error: error instanceof Error ? error.message : String(error) }) }
     if (!login) throw new UserError('mergeCliFailed', { cli: merge.cli, error: 'it printed no login' })
-    if (sameName(login, this.resolved.github.login)) throw new UserError('mergeCliAgent', { cli: merge.cli, account: this.resolved.github.login })
+    const agent = this.resolved.github?.login
+    if (agent && sameName(login, agent)) throw new UserError('mergeCliAgent', { cli: merge.cli, account: agent })
   }
   async blockCommands(blocked: readonly string[]): Promise<void> {
     if (this.resolved) await writeEnvironment(this.resolved, blocked)
@@ -143,7 +159,11 @@ export class Setup {
     const { context, machine, lifetime } = this.host
     this.checkConfinement(settings)
     const probe = this.probe()
-    const deployment = await resolveDeployment(machine, githubInstances(settings.sources), probe)
+    // With GitHub switched off, a code-host Source is the only code host, and setup resolves no GitHub account.
+    const deployment: Deployment = githubSkipped(settings) ? { ...machine, repositories: {} }
+      : await resolveDeployment(machine, githubInstances(settings.sources), probe)
+    const instances = codehostInstances(settings.sources)
+    const codehost = instances.length ? await resolveCodehost(machine, instances, probe) : undefined
     const feishu = await resolveFeishuBot(machine, settings.sources.feishu?.config, probe).catch((error: unknown) => {
       if (!(error instanceof SetupError)) throw error
       this.feishuProblem = error.problem
@@ -156,12 +176,15 @@ export class Setup {
       context.logger.warn('dsh-superagent leaves DingTalk out: %s', error.message)
       return undefined
     })
-    const resolved = { ...deployment, ...(feishu ? { feishu } : {}), ...(dingtalk ? { dingtalk } : {}) }
+    const resolved: Deployment = { ...deployment, ...(feishu ? { feishu } : {}), ...(dingtalk ? { dingtalk } : {}),
+      ...(codehost ? { codehost: codehost.codehost } : {}) }
     // Each repository has its own default branch and rules, so each GitHub instance is checked on its own.
     const warnings: SetupWarning[] = []
-    for (const [id, repository] of Object.entries(resolved.repositories)) {
-      for (const warning of await checkMerging({ repository, github: resolved.github }, probe)) warnings.push(setupWarning(warning.code, warning.values, id))
+    const { github } = resolved
+    for (const [id, repository] of github ? Object.entries(resolved.repositories) : []) {
+      for (const warning of await checkMerging({ repository, github: github! }, probe)) warnings.push(setupWarning(warning.code, warning.values, id))
     }
+    warnings.push(...codehost?.warnings ?? [])
     this.warnings = warnings
     for (const warning of this.warnings) context.logger.warn('dsh-superagent setup warning: %s', warning.detail)
     const machineProblem = (error: unknown): never => {

@@ -90,6 +90,10 @@ The host recognizes GitHub Apps, logins ending in `[bot]`, and Feishu bots as bo
 
 An automated reviewer using an ordinary account counts as a person to the host. Its comments reach subscribed Tickets and generate follow-up notices. Team prompt text must identify such accounts as automated reviewers.
 
+### Code-host Sources
+
+A code-host Source's part of the Policy lists allowed logins and bots in the code host's own identities, as GitHub's does. An allowed login addresses the agent by mentioning it, by assigning it an Issue, or by requesting its review of a pull request; the last two count as a direct address. The code host's adapter marks bots and service accounts, which only make inferred candidates when listed. The admission table has rows for new Issues, new pull requests and comments; each receives unaddressed messages only with its observe switch.
+
 ### Schedule entries
 
 The optional schedule Source holds conditions that need waiting, such as "an Issue nobody took up for two days". Each entry runs a GitHub search in one GitHub Source's repository once per interval. Each hit becomes a Trigger on that Issue's or pull request's Thread, such as `github:12`. Its actor is the entry, and no person sent it.

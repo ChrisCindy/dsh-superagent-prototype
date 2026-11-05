@@ -30,6 +30,7 @@ Read the numbered documents in order; each builds only on the ones before it.
 - [007 Architecture](docs/007-architecture.md)
 - [008 Cookbook](docs/008-cookbook.md): adding a Source
 - [009 Security](docs/009-security.md): trust, escalation paths and remaining risks
+- [010 Code-host adapter](docs/010-codehost-adapter.md): the contract of the adapter command through which the code-host Source reaches a company's own code host
 - [Architecture decision records](docs/adr/README.md): why the design is as it is, from worker OS isolation to host-checked merges
 
 ## Development

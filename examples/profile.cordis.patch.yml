@@ -16,3 +16,6 @@
 # DingTalk is optional too: uncomment to enable its Source, then set where its app credentials are on the DingTalk Source.
 # - id: dsh-superagent-dingtalk
 #   disabled: false
+# The code-host Source is optional: uncomment to enable it, then set its adapter and repository on the Code host Source (docs/010).
+# - id: dsh-superagent-codehost
+#   disabled: false

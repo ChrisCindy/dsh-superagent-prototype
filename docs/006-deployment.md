@@ -83,6 +83,16 @@ If a toolchain cannot run in the sandbox, set **Sandbox** to **Full access** in 
 
 For auto-merge, sign another account that may merge in to its own wrapper, such as `gh-merge` with its own `GH_CONFIG_DIR`, and set it as the merge CLI in the Execution settings. GitHub attributes a merge to the account that enabled auto-merge, so it must not be the agent account; the host refuses a merge CLI signed in to it. Without one, people merge every pull request.
 
+### Code host through an adapter (optional)
+
+A company's own code host, such as a modified self-managed GitLab reached through an internal CLI, is served by the code-host Source. dsh-superagent has no client for it: the operator writes an adapter command that answers the operations of the contract in docs/010-codehost-adapter.md, as the agent's account, starting from `examples/codehost-adapter/codehost-adapter.mjs`.
+
+1. Create an agent account on the code host with push access to each repository (Developer, not Maintainer, so it cannot merge or push to protected branches), and give the adapter its credential in a file only the profile's OS user can read, or through the internal CLI's own sign-in.
+2. Enable `dsh-superagent-codehost` in the profile's `cordis.patch.yml`, restart, and set the **Agent adapter** and **Repository** on the Code host Source. For merges, write a second adapter acting as an account that may merge and set it as the **Merge adapter**. Optionally name the internal CLI and the merge commands it must refuse.
+3. If the code host replaces GitHub, switch the GitHub Source off: setup then resolves no GitHub account. Each change restarts dsh-superagent.
+
+Setup checks the adapter's contract version and required operations, the account (shared by every code-host instance), push access to each repository, the merge adapter's account and the worker CLI, and warns about missing optional operations, about review rules the code host does not enforce or the adapter cannot read (`protection`), and about a worker CLI with no refused command.
+
 ### Feishu bot (optional)
 
 1. Create a self-built app with the bot capability. Grant it the permissions to receive message events, read and send chat messages, and read chat members, then publish the app version.
@@ -302,7 +312,7 @@ Setup uses the DeepSeek Harness subprocess service, as worker shells do. It remo
 
 Setup first checks how Sessions are confined: the profile must hold the permission presets the sandbox setting uses, and no writable root may contain or lie inside the state directory, `$DSH_HOME` or the profile directory, or, under the workspace sandbox, lack the sandbox's grant.
 
-Setup verifies each GitHub Source's repository and the agent's push access to it, checks that every GitHub Source's CLI is signed in to the same agent account and that no repository is listed twice, writes the worker environment, and checks that git uses only the agent credentials for github.com. A Feishu setup failure disables only the Feishu Source. For DingTalk, setup reads the app credentials, gets an access token and opens a Stream mode connection; a failure disables only the DingTalk Source.
+Setup verifies each GitHub Source's repository and the agent's push access to it, checks that every GitHub Source's CLI is signed in to the same agent account and that no repository is listed twice, writes the worker environment, and checks that git uses only the agent credentials for github.com. A Feishu setup failure disables only the Feishu Source. For DingTalk, setup reads the app credentials, gets an access token and opens a Stream mode connection; a failure disables only the DingTalk Source. With the GitHub Source switched off and a code-host Source on, setup skips GitHub and resolves the code host instead (docs/010); the shims' `gh` then fails, the code host's worker CLI, when one is set, gets a shim of its own, and git uses the adapter as the credential helper of the code host's clone URL.
 
 Setup also reads, as the agent account and for each repository, the rulesets of the default branch (`repos/<repository>/rules/branches/<branch>`, and `rulesets/<id>` for whether the account can bypass one) and its branch protection (`branches/<branch>/protection`). When no rule requires at least one approving review that a push dismisses, or the agent account can bypass the rule that does, it records a setup warning. When it cannot read them, such as a 403 or 404 for an account without admin rights, the warning says it cannot verify. A warning never stops dsh-superagent: Overview and the GitHub Source show it with its fix, and **Check again** runs setup once the repository settings changed.
 

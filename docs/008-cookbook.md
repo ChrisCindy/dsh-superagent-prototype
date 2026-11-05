@@ -421,8 +421,8 @@ The host reaches a Source only through its kind, so a kind that needs more decla
 - `channel.limit`: the most words a reply may have. Feishu sets one; Outbox refuses a longer reply.
 - `channel.messageLink`: looks up the link of a Trigger's own message when the event carried none, within the kind's own time limit.
 - `resources`: originals that `orchestrator_read` serves under the kind's ID, such as `github/…`, with `references` for the reads `trigger/<id>` shows as `context`.
-- `read(commands, path, kind)`: a file, or a directory listing, of the repository an assessment reads. The first installed kind with `read` serves it.
-- `claim`: binds the changes an Executor reports, such as a pull request, and merges one. The first installed kind with `claim` provides it.
+- `read(commands, path, kind)`: a file, or a directory listing, of the repository an assessment reads. The kind of the Trigger's Source, or of its primary Thread's, serves it when it has `read`; otherwise the first installed kind with `read`.
+- `claim`: binds the changes an Executor reports, such as a pull request, and merges one. The kind of the Ticket's origin Source, or of its primary Thread's, provides it when it has `claim`; otherwise the first installed kind with `claim`. The code-host kind (`src/sources/codehost.ts`) is a second example of both.
 - `ticketEnded(ctx, ticket)`: runs in the transaction that ends a Ticket, to tell its conversations through `ctx.notify`, as GitHub does when the pull request merged.
 - `skill`: names a packaged skill, `skills/dsh-superagent-<name>/SKILL.md`, that every Session gets while the kind is installed. With `active(deployment)`, only while that holds, as Feishu's needs a Feishu bot.
 
