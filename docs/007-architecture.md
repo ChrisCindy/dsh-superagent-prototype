@@ -6,23 +6,7 @@ This is the developer guide to the implementation. It maps the concepts in [001 
 
 Core classes own domain concepts and external boundaries behind small interfaces. Glue translates tool arguments, HTTP requests, Source payloads and DeepSeek Harness events into calls to those classes, then turns results into cards, views and messages.
 
-```mermaid
-flowchart TB
-  plugins[Source plugins] -->|SourceContext| engine
-  tools[Session tools] --> engine
-  http[Management routes] --> engine
-  engine[Engine] -->|Repositories| store[Store]
-  engine -->|Policy| policy[Policy]
-  engine -->|SourceScope| registry[SourceRegistry]
-  engine -->|Assessor| assessor[MasterAssessor]
-  engine -->|Executor| executor[DshExecutor]
-  assessor -->|decide| engine
-  engine -->|Outbox| outbox[Outbox]
-  executor -->|assignmentStarted, inputsDelivered, report| engine
-  settings[Settings] -->|policyChanged| engine
-  assessor & executor & sessions[Sessions] & outbox -->|enqueue| effects[Effects]
-  effects --> store
-```
+![Glue calls the Engine; the Engine reaches the Store, Policy, SourceRegistry, MasterAssessor, Executors and Outbox through its ports; the MasterAssessor and the Executors call back; several parts enqueue effects, which the Store keeps](images/core-classes.svg)
 
 `Runtime` (`src/app/runtime.ts`) constructs the application, supplies dependencies, and owns startup and shutdown. `Engine` constructs its own internal parts. The Executor and Assessor call back into the Engine, so Runtime gives them getters rather than requiring construction in a circular order.
 
@@ -509,7 +493,7 @@ Each row is the first paragraph of the comment its file opens with; `node script
 | `tests/styles.spec.ts` | The stylesheet: only classes a component uses, and one rule per line |
 | `tests/class-docs.spec.ts` | Every class in `src` has a JSDoc block before it |
 | `tests/e2e/superagent.e2e.ts` | Only with `pnpm test:e2e` (tests/e2e/README.md): the bundle in a real DeepSeek Harness installation, through `scripts/dsh-superagent` and the management API, with fake `gh` and `lark-cli` and a scripted model: setup, the API's shapes, a mention through acceptance, the worker and the result reply, the Feishu bot setup, a second GitHub Source for another repository, a schedule entry's Trigger on an Issue's Thread that a restart does not repeat, and the escalations of 009 a worker or local process can try (writing the state directory, merging, the API without the sign-in) |
-| `tests/docs.spec.ts` | Numbered documents link only to earlier ones, every local link and image resolves, no document has merge conflict markers, and the module and test tables of 007 Architecture list every module and every test, as `scripts/doc-tables.ts` writes them |
+| `tests/docs.spec.ts` | Numbered documents link only to earlier ones, every local link and image resolves, no document has merge conflict markers or a Mermaid block, and the module and test tables of 007 Architecture list every module and every test, as `scripts/doc-tables.ts` writes them |
 
 <!-- tests:end -->
 

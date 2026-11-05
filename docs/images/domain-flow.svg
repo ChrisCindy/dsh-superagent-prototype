@@ -1,0 +1,119 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1064 496" width="1064" height="496" role="img" aria-labelledby="title desc">
+  <title id="title">How work flows through the domain</title>
+  <desc id="desc">Source instances (GitHub per repository, Feishu, schedule) send Triggers to Threads. A Thread sends batches to Eval and fans Triggers out to subscribed Tickets. Eval accepts with a Mandate, stops or holds a Ticket, or records a Decision with no work. A Policy change sends a notice to the Tickets it bears on. A Ticket runs through Assignments on an Executor chosen by name, and writes back to its Source through a Channel.</desc>
+  <style>
+    .bg { fill: #ffffff; stroke: #d0d7de; }
+    text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif; fill: #1f2328; }
+    .title { font-size: 16px; font-weight: 600; }
+    .sub { font-size: 12px; fill: #59636e; }
+    .label { font-size: 12.5px; paint-order: stroke; stroke: #ffffff; stroke-width: 5px; stroke-linejoin: round; }
+    .chip-title { font-size: 13.5px; font-weight: 600; }
+    .src { fill: #ddf4ff; stroke: #0969da; }
+    .chip { fill: #ffffff; stroke: #54aeff; }
+    .core { fill: #fbefff; stroke: #8250df; }
+    .exec { fill: #dafbe1; stroke: #1a7f37; }
+    .chip-exec { fill: #ffffff; stroke: #4ac26b; }
+    .policy { fill: #fff8c5; stroke: #9a6700; }
+    .muted { fill: #f6f8fa; stroke: #818b98; }
+    .edge { fill: none; stroke: #59636e; stroke-width: 1.6px; }
+    .head { fill: #59636e; }
+    .dashed { stroke-dasharray: 5 4; }
+    @media (prefers-color-scheme: dark) {
+      .bg { fill: #0d1117; stroke: #3d444d; }
+      text { fill: #f0f6fc; }
+      .sub { fill: #9198a1; }
+      .label { stroke: #0d1117; }
+      .src { fill: #0c2d6b; stroke: #4493f8; }
+      .chip { fill: #0d1117; stroke: #1f6feb; }
+      .core { fill: #2a1650; stroke: #ab7df8; }
+      .exec { fill: #04260f; stroke: #3fb950; }
+      .chip-exec { fill: #0d1117; stroke: #238636; }
+      .policy { fill: #2e2410; stroke: #d29922; }
+      .muted { fill: #151b23; stroke: #656c76; }
+      .edge { stroke: #9198a1; }
+      .head { fill: #9198a1; }
+    }
+  </style>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path class="head" d="M0,0 L10,5 L0,10 z"/>
+    </marker>
+  </defs>
+
+  <rect class="bg" x="0.5" y="0.5" width="1063" height="495" rx="12"/>
+
+  <!-- Sources -->
+  <rect class="src" x="24" y="76" width="224" height="270" rx="10" stroke-width="1.5"/>
+  <text class="title" x="40" y="104">Source instances</text>
+  <text class="sub" x="40" y="122">each with its own ID and cursor</text>
+  <rect class="chip" x="40" y="136" width="192" height="48" rx="7"/>
+  <text class="chip-title" x="52" y="156">GitHub</text>
+  <text class="sub" x="52" y="174">one per repository</text>
+  <rect class="chip" x="40" y="194" width="192" height="48" rx="7"/>
+  <text class="chip-title" x="52" y="214">Feishu</text>
+  <text class="sub" x="52" y="232">chats, direct messages</text>
+  <rect class="chip" x="40" y="252" width="192" height="48" rx="7"/>
+  <text class="chip-title" x="52" y="272">Schedule</text>
+  <text class="sub" x="52" y="290">GitHub searches on a timer</text>
+
+  <!-- Thread -->
+  <rect class="core" x="324" y="166" width="160" height="64" rx="10" stroke-width="1.5"/>
+  <text class="title" x="404" y="192" text-anchor="middle">Thread</text>
+  <text class="sub" x="404" y="212" text-anchor="middle">Triggers in time order</text>
+
+  <!-- Eval -->
+  <rect class="core" x="584" y="36" width="200" height="72" rx="10" stroke-width="1.5"/>
+  <text class="title" x="684" y="66" text-anchor="middle">Eval</text>
+  <text class="sub" x="684" y="86" text-anchor="middle">gate, then assessment</text>
+
+  <!-- Decision with no work -->
+  <rect class="muted" x="864" y="36" width="176" height="72" rx="10" stroke-width="1.5"/>
+  <text class="title" x="952" y="66" text-anchor="middle">Decision only</text>
+  <text class="sub" x="952" y="86" text-anchor="middle">ignore, unavailable</text>
+
+  <!-- Ticket -->
+  <rect class="core" x="584" y="276" width="200" height="72" rx="10" stroke-width="1.5"/>
+  <text class="title" x="684" y="306" text-anchor="middle">Ticket</text>
+  <text class="sub" x="684" y="326" text-anchor="middle">authorized work, its Mandate</text>
+
+  <!-- Executors -->
+  <rect class="exec" x="864" y="238" width="176" height="148" rx="10" stroke-width="1.5"/>
+  <text class="title" x="880" y="264">Executors</text>
+  <text class="sub" x="880" y="281">chosen by name</text>
+  <rect class="chip-exec" x="880" y="294" width="144" height="34" rx="7"/>
+  <text class="chip-title" x="952" y="316" text-anchor="middle">dsh (default)</text>
+  <rect class="chip-exec dashed" x="880" y="338" width="144" height="34" rx="7"/>
+  <text class="sub" x="952" y="360" text-anchor="middle">another, by name</text>
+
+  <!-- Policy -->
+  <rect class="policy" x="584" y="416" width="200" height="56" rx="10" stroke-width="1.5"/>
+  <text class="title" x="684" y="440" text-anchor="middle">Policy</text>
+  <text class="sub" x="684" y="458" text-anchor="middle">versioned rules, per Source</text>
+
+  <!-- Edges -->
+  <line class="edge" x1="248" y1="198" x2="322" y2="198" marker-end="url(#arrow)"/>
+  <text class="label" x="285" y="188" text-anchor="middle">Trigger</text>
+
+  <line class="edge" x1="484" y1="180" x2="582" y2="88" marker-end="url(#arrow)"/>
+  <text class="label" x="524" y="126" text-anchor="end">batch</text>
+
+  <line class="edge" x1="484" y1="216" x2="582" y2="302" marker-end="url(#arrow)"/>
+  <text class="label" x="522" y="270" text-anchor="end">fan-out to</text>
+  <text class="label" x="522" y="285" text-anchor="end">subscribed Tickets</text>
+
+  <line class="edge" x1="684" y1="108" x2="684" y2="274" marker-end="url(#arrow)"/>
+  <text class="label" x="696" y="184">accept with Mandate,</text>
+  <text class="label" x="696" y="200">stop, hold</text>
+
+  <line class="edge" x1="784" y1="72" x2="862" y2="72" marker-end="url(#arrow)"/>
+  <text class="label" x="823" y="62" text-anchor="middle">no work</text>
+
+  <line class="edge" x1="784" y1="312" x2="862" y2="312" marker-end="url(#arrow)"/>
+  <text class="label" x="823" y="302" text-anchor="middle">Assignment</text>
+
+  <line class="edge" x1="584" y1="334" x2="250" y2="334" marker-end="url(#arrow)"/>
+  <text class="label" x="416" y="326" text-anchor="middle">Channel: acknowledgement, replies, results</text>
+
+  <line class="edge" x1="684" y1="416" x2="684" y2="350" marker-end="url(#arrow)"/>
+  <text class="label" x="696" y="388">change: notice</text>
+</svg>

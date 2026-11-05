@@ -6,17 +6,7 @@ This document names the concepts of dsh-superagent and the rules each one keeps.
 
 Work moves from Trigger to Eval to execution. A Source produces Triggers. A Trigger fans out as context to the Tickets subscribed to its Threads. A person's message that reached a Ticket this way stays with that Ticket; every other Trigger enters Eval, which decides whether it asks for new work. When Eval accepts, it creates a Ticket with a Mandate. An Assignment hands the Ticket to an Executor, and results go back to the Source through a Channel.
 
-```mermaid
-flowchart LR
-  S[Source] -->|Trigger| T[Thread]
-  T -->|batch| E[Eval]
-  T -->|Subscription fan-out| K[Ticket]
-  E -->|accept with Mandate / stop| K
-  E -->|ignore / unavailable| X[recorded]
-  P[Policy change] -->|notice| K
-  K -->|Assignment| W[Executor]
-  K -->|Channel| S
-```
+![Source instances send Triggers to Threads; a Thread batches them to Eval and fans them out to subscribed Tickets; Eval accepts, stops or holds a Ticket or records a Decision only; a Ticket runs through Assignments on a named Executor and replies through a Channel; a Policy change sends Tickets a notice](images/domain-flow.svg)
 
 ## Concepts
 

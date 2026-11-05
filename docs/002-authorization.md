@@ -28,6 +28,8 @@ The main Session receives a follow-up notice. While an Executor owns the message
 
 A message has one state on each Ticket it reached. The states `delivered`, `read` and `taken` own it. A Ticket owns it while the Ticket is live, even after a person removes its Subscription, and while it is ended, not by a person, with the message waiting to resume it.
 
+![The states of a follow-up on one Ticket and the events that move it between them, as the table below lists](images/followup-owners.svg)
+
 | From | Event | To |
 | --- | --- | --- |
 | none | It reaches the Ticket on a Thread of its own, or the main Session attaches it | `delivered` |

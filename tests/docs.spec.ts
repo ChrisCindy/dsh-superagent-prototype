@@ -1,6 +1,7 @@
 /**
- * Numbered documents link only to earlier ones, every local link and image resolves, no document has merge conflict markers, and the
- * module and test tables of 007 Architecture list every module and every test, as `scripts/doc-tables.ts` writes them
+ * Numbered documents link only to earlier ones, every local link and image resolves, no document has merge conflict markers or a
+ * Mermaid block, and the module and test tables of 007 Architecture list every module and every test, as `scripts/doc-tables.ts` writes
+ * them
  */
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
@@ -59,6 +60,9 @@ describe('documentation', () => {
   })
   it('leaves no merge conflict markers in any document', () => {
     expect(documents.filter(path => /^(<{7}|>{7}) /m.test(read(path)))).toEqual([])
+  })
+  it('draws diagrams as SVG files under docs/images, not as Mermaid blocks', () => {
+    expect(documents.filter(path => /^```mermaid/m.test(read(path)))).toEqual([])
   })
   it('lists every module of src in the module table of 007 Architecture, and only files that exist', () => {
     const modules = listed('Modules')
