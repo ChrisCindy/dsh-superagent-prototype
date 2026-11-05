@@ -9,6 +9,7 @@ import type { PolicyProposal } from './app/settings.ts'
 import type { SettingsVersion } from './app/store.ts'
 import type { SettingsSave } from './policy.ts'
 import type { Retry } from './sources/github.ts'
+import type { DingtalkEntry } from './sources/dingtalk-trigger.ts'
 
 /** Key of a KV record whose value has type `V`; a plain string represents an untyped key. */
 export type Key<V> = string & { readonly __value?: V }
@@ -63,6 +64,13 @@ export const KV = {
     topics: family<Record<string, string>, [chat: string]>('feishu-history-threads:'),
     seen: family<string[], [thread: string]>('thread-seen:'), initialized: family<boolean, [thread: string]>('thread-initialized:') },
   /**
+   * DingTalk Source: per conversation and sender, the Thread they or the robot last wrote in there and when, which a later
+   * message within the Source's Thread window joins; and per Thread, the messages the Source received and sent on it, newest
+   * last, which DingTalk keeps no history of that a robot could read.
+   */
+  dingtalk: { window: family<{ thread: string; at: string }, [conversation: string, sender: string]>('dingtalk-window:'),
+    transcript: family<DingtalkEntry[], [thread: string]>('dingtalk-thread:') },
+  /**
    * Schedule Source: per entry, the last period it fired in (the number of whole intervals since the Unix epoch), when, and how
    * many hits it took in; a restart in the same period does not fire the entry again.
    */
@@ -76,4 +84,5 @@ export const KV = {
 export const THREAD_RECORDS: readonly { kind: string; prefix: string; by: 'key' | 'id' }[] = [
   { kind: 'feishu', prefix: KV.feishu.seen.prefix, by: 'key' }, { kind: 'feishu', prefix: KV.feishu.initialized.prefix, by: 'key' },
   { kind: 'github', prefix: KV.github.cursor.prefix, by: 'id' }, { kind: 'github', prefix: KV.github.ci.prefix, by: 'id' },
+  { kind: 'dingtalk', prefix: KV.dingtalk.transcript.prefix, by: 'id' },
 ]

@@ -132,11 +132,18 @@ it('keeps only the newest logs it wrote for the profile', async () => {
   expect(logs.filter(name => name.startsWith('dsh-superagent-other-'))).toHaveLength(25)
   expect(logs).toContain('dsh-superagent-20260901-000000-1.log')
 }, 20_000)
-it('reports a service whose Feishu bot setup could not check as running, and reads an answer with keys missing', async () => {
+it('reports a service whose Feishu bot or DingTalk app setup could not check as running, and reads an answer with keys missing', async () => {
   processes(service(sleeper()))
   const feishu = { health: { runtime: { state: 'ready', detail: '' }, feishu: { state: 'paused', detail: '' } },
     setup: { problem: null, feishuProblem: { code: 'feishuNoBot', detail: 'No bot' } } }
   expect(await run('status', '--url', await answering(feishu, true))).toMatchObject({ code: 0 })
+  server!.close()
+  // So does one whose DingTalk app setup could not verify; status names it beside Feishu's.
+  const dingtalk = { health: { runtime: { state: 'ready', detail: '' }, dingtalk: { state: 'paused', detail: '' } },
+    setup: { problem: null, feishuProblem: null, dingtalkProblem: { code: 'dingtalkStreamRefused', detail: 'No stream' } } }
+  const answered = await run('status', '--url', await answering(dingtalk, true))
+  expect(answered).toMatchObject({ code: 0 })
+  expect(JSON.parse(answered.stdout)).toMatchObject({ dingtalk: { code: 'dingtalkStreamRefused' } })
   server!.close()
   expect(await run('status', '--url', await answering({ health: { runtime: { state: 'ready' } } }, true))).toMatchObject({ code: 0 })
   server!.close()

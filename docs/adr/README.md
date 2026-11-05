@@ -14,5 +14,6 @@ The numbered documents in `docs/` describe how dsh-superagent works now. These r
 | [0006](0006-host-checked-merges.md) | Merges go through host checks and a separate account, backed by branch protection | Accepted |
 | [0007](0007-permission-presets.md) | Sessions run under dsh-superagent's own permission presets with approval `never` | Accepted |
 | [0008](0008-github-webhook-mode.md) | GitHub webhooks as a supplement to polling | Proposed, deferred |
+| [0009](0009-dingtalk-stream-and-threads.md) | DingTalk through Stream mode in the host process, with Threads by quote and window | Accepted |
 
 To add one, copy the layout of the latest record: a title, then Status, Date and Related, then Context, Decision, Consequences and Alternatives considered. Number it after the last one and add it to this table.

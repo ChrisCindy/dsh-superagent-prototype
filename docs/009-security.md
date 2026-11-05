@@ -8,7 +8,7 @@ The rule from 002 holds throughout: messages, comments and quoted documents are 
 
 | Data | Trusted | Why |
 | --- | --- | --- |
-| A Trigger's `actor`, `human`, `addressed` and `threads` | Yes | The Source derives them from the platform's own fields, such as the GitHub login or the Feishu sender id, not from message text |
+| A Trigger's `actor`, `human`, `addressed` and `threads` | Yes | The Source derives them from the platform's own fields, such as the GitHub login, the Feishu sender id or DingTalk's `senderStaffId` and `isInAtList`, not from message text |
 | A Trigger's `text`, quotes, attachments and links | No | Anyone who can write in the conversation controls them |
 | Source `meta` read from a platform record | As far as the platform vouches for it | A number or a state is the platform's; a title or a body is text |
 | An Executor's Report, question and pull-request binding | No | The model writes them; the host checks each against the Ticket (ownership, the pull-request rules) |
@@ -29,6 +29,7 @@ The rule from 002 holds throughout: messages, comments and quoted documents are 
 ## Remaining risks
 
 - **The same OS user.** Workers run as the operator's user. The file sandbox stops writes, not reads, and does not govern the network, so a worker can read `$DSH_HOME/.credentials.yaml` and the startup log and so obtain the session cookie. Run the whole profile as a dedicated OS user so the operator's own files and credentials are out of reach (006, Dedicated OS user). Under that user a worker can still read the profile's credentials, the cookie, the database and the merge account's token. The planned next step runs workers as a second user through DeepSeek Harness's SSH provider. A container per Ticket is deferred. `docs/adr/0001-worker-os-isolation.md` gives the reasons, the threat model and what the proof of concept showed.
+- **The DingTalk app's credentials.** The DingTalk Source's settings name only where the AppKey and AppSecret are: a file only its owner may read (setup refuses one with group or other permissions), or a variable whose name contains SECRET, which DeepSeek Harness strips from every subprocess, workers included. They are never in the database, the panel, `Deployment` or a log, and workers get no DingTalk command. Under the same OS user a worker can still read the file, or the host process's environment in `/proc`; a second OS user for workers closes that, as for the other credentials. The access token lives in the host's memory only. `docs/adr/0009-dingtalk-stream-and-threads.md` gives the reasons.
 - **Shims are not a boundary.** A worker can run a program by its absolute path, including `gh` with the agent's token. GitHub's branch protection is what makes an unchecked merge fail; keep it on.
 - **`sandbox: full`** turns the file sandbox off for every Session. Use it only to recover a toolchain that the sandbox breaks, and switch back.
 - **Prompt rules.** Review rounds, when to ask a person, and any scope a rule does not express as limits are still prompt text that the host does not check. Of the limits, the host checks the files of the pull requests a Ticket opened, acknowledgements, binding a pull request and merge requests; it does not check `git push`, comments the worker posts with `gh`, or changes outside pull requests (002, Mandate limits).

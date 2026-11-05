@@ -17,6 +17,7 @@
     "./github-watch": "./lib/github-watch.js",
     "./feishu-watch": "./lib/feishu-watch.js",
     "./schedule-watch": "./lib/schedule-watch.js",
+    "./dingtalk-watch": "./lib/dingtalk-watch.js",
     "./package.json": "./package.json",
     "./locale/*.json": "./locale/*.json"
   },

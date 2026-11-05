@@ -1,6 +1,6 @@
 /**
  * What the Sources' loops share: `POLL_HORIZON_MS`, `polled`, `cursorAt`, `pollThreads`, which keeps a failure on its Thread as
- * `pollError`, and `pause`, a wait that fake timers drive
+ * `pollError`, `consumerRetry`, the backoff of a live consumer, and `pause`, a wait that fake timers drive
  */
 import { liveTicket, type Thread } from '../core/index.ts'
 import type { SourceContext } from './host.ts'
@@ -32,6 +32,9 @@ export async function pollThreads(ctx: SourceContext, source: string, stopped: (
     }
   }
 }
+/** Wait before restarting a live consumer: 1s after a run that stayed up for a minute, otherwise exponential backoff up to 60s. */
+export const consumerRetry = (previous: number | undefined, ranMs: number): number =>
+  previous === undefined || ranMs >= 60_000 ? 1000 : Math.min(previous * 2, 60_000)
 /** Waits `ms` or until `signal` aborts using global `setTimeout` so test fake timers can drive polling loops. */
 export function pause(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise(resolve => {

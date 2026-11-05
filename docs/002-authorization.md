@@ -67,6 +67,7 @@ For an unlisted person, an explicit admission cell takes precedence even on a Th
 Each Source's Policy has an admission table. Its rows are receiving scopes:
 
 - **Feishu:** each configured chat, other chats the bot receives mentions from, and direct messages. Other chats are received only when **其他群** is set to **仅 @** on the Feishu card.
+- **DingTalk:** each configured group, other groups whose mentions of the robot it receives, and direct messages, as for Feishu. A DingTalk robot receives only the group messages that mention it unless DingTalk sends it more, so a group set to **全部消息** may observe nothing beyond the mentions.
 - **GitHub:** new Issues, new pull requests, comments and the default branch's CI.
 
 A row has up to three cells. Each cell decides whether a message becomes an explicit request, an inferred candidate or nothing:
@@ -85,7 +86,7 @@ The admission table is part of the Policy version. Weakening a cell does not imm
 
 ### Bots and automated reviewers
 
-The host recognizes GitHub Apps, logins ending in `[bot]`, and Feishu bots as bots. A Source can list bots such as `dependabot[bot]` whose messages may become inferred candidates. They must either address the agent or post in a scope that receives every message. They cannot make explicit requests or stop Tickets.
+The host recognizes GitHub Apps, logins ending in `[bot]`, and Feishu bots as bots. A DingTalk robot receives no other robot's messages, so the DingTalk Source has no bot list. A Source can list bots such as `dependabot[bot]` whose messages may become inferred candidates. They must either address the agent or post in a scope that receives every message. They cannot make explicit requests or stop Tickets.
 
 An automated reviewer using an ordinary account counts as a person to the host. Its comments reach subscribed Tickets and generate follow-up notices. Team prompt text must identify such accounts as automated reviewers.
 

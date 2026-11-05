@@ -7,6 +7,7 @@ Use this guide to install, configure and operate dsh-superagent. It covers accou
 - **A dedicated DeepSeek Harness profile**, called `superagent` in this guide. Create it from the Web profile template. It loads the bundle and serves its panel on `127.0.0.1`. Keep it separate from the profile you work in: the plugin changes process-wide `PATH` and git settings, and its process needs independent restarts and upgrades.
 - **An agent GitHub account.** The agent comments, pushes branches and opens pull requests as this account, through a GitHub CLI signed in only as that account.
 - **Optional:** a Feishu bot for chat requests.
+- **Optional:** a DingTalk (钉钉) robot for chat requests, through an enterprise-internal app.
 
 Plugin configuration holds the state directory and machine limits. Use the panel for everything else: Sources for the repository and accounts, Policy for allowed lists, and Execution for worker directories and commands.
 
@@ -55,6 +56,7 @@ If a toolchain cannot run in the sandbox, set **Sandbox** to **Full access** in 
 - A repository on github.com; GitHub Enterprise Server is not supported. To create a checkout per Ticket, keep a local clone from which the prepare command can add worktrees. Install `git-lfs` if that repository uses Git LFS.
 - A model provider configured for DeepSeek Harness. dsh-superagent uses the profile's default model unless the Eval or Execution settings name another.
 - For Feishu: `lark-cli` (tested with 1.0.90) and a Feishu or Lark app with a bot
+- For DingTalk: an enterprise-internal app with a robot, and outbound HTTPS and WebSocket access to `api.dingtalk.com`; no public URL is needed
 
 ## Accounts
 
@@ -103,6 +105,23 @@ For auto-merge, sign another account that may merge in to its own wrapper, such 
 
    Both configurations share the keychain entry for the app secret. To remove only the bot configuration, delete its directory; do not run `lark-cli config remove`, which would affect the shared secret.
 
+### DingTalk robot (optional)
+
+1. In the DingTalk developer console, create an enterprise-internal app (企业内部应用) and add the robot capability. Set the robot's message receiving mode (消息接收模式) to **Stream mode**; an HTTP callback is not used.
+2. Grant the app the permissions to send robot messages to groups and people (企业内机器人发送消息权限, `qyapi_robot_sendmsg`) and to download the files of robot messages (the robot message file download permission), then publish the app version. Until a version is published, DingTalk may leave out the sender's staff ID.
+3. Put the app's AppKey (Client ID) and AppSecret (Client Secret) in a file that only the user dsh-superagent runs as may read:
+
+   ```sh
+   umask 077
+   printf '{"appKey": "%s", "appSecret": "%s"}\n' '<AppKey>' '<AppSecret>' > ~/.dsh-superagent-dingtalk.json
+   chmod 600 ~/.dsh-superagent-dingtalk.json
+   ```
+
+   Add `"robotCode"` when the robot's code differs from the AppKey. Instead of a file, the same JSON can be in an environment variable of the dsh-superagent process whose name contains `SECRET`, such as `DINGTALK_SECRET`, named as `env:DINGTALK_SECRET`. DeepSeek Harness removes such variables from every subprocess it starts, workers included.
+4. Add the robot to each group it should listen in. A group robot receives only the messages that mention it, unless DingTalk lets the robot receive all of the group's messages.
+
+dsh-superagent reads the credentials at setup and whenever it requests an access token; the settings, the panel and the logs hold only where they are. Setup refuses a file that its group or others may read, and a variable without `SECRET` in its name. `docs/adr/0009-dingtalk-stream-and-threads.md` gives the reasons for Stream mode and for how messages form Threads.
+
 ## Install
 
 Run this block once, on a machine that has no `superagent` profile yet:
@@ -123,7 +142,7 @@ Run the profile-creation command only for a new installation. If the profile alr
 
 ## Machine configuration
 
-Copy [examples/profile.cordis.patch.yml](../examples/profile.cordis.patch.yml) to `~/.dsh/profiles/superagent/cordis.patch.yml`, replacing that file, and replace every `<placeholder>`. For Feishu, also enable the `dsh-superagent-feishu` entry there; for the schedule Source, the `dsh-superagent-schedule` entry. The `webserver` entry sets the panel's port.
+Copy [examples/profile.cordis.patch.yml](../examples/profile.cordis.patch.yml) to `~/.dsh/profiles/superagent/cordis.patch.yml`, replacing that file, and replace every `<placeholder>`. For Feishu, also enable the `dsh-superagent-feishu` entry there; for the schedule Source, the `dsh-superagent-schedule` entry; for DingTalk, the `dsh-superagent-dingtalk` entry. The `webserver` entry sets the panel's port.
 
 | Key | Required | Meaning |
 | --- | --- | --- |
@@ -157,7 +176,7 @@ scripts/dsh-superagent status
 | 2 | It runs, but a part other than the runtime, such as a Source or a Policy sync (`sync:<source id>`), reports an error; a restart does not fix it |
 | 3 | It runs and waits for setup; a restart does not fix it |
 
-A Source that is still starting counts as normal operation. So does a Feishu bot that setup could not check.
+A Source that is still starting counts as normal operation. So does a Feishu bot or a DingTalk app that setup could not check.
 
 `status` returns failed parts and their details under `errors`, and setup requirements under `setup`. `start` and `restart` print those problems as lines; they exit 1 if the service never comes up. Only an intentional `stop` pauses automatic recovery.
 
@@ -250,6 +269,7 @@ Health entries are grouped by responsibility:
 | `assessment`, `launch`, `delivery`, `relay`, `notice`, `reply` | Stored work described in [003 Execution](003-execution.md); delivery counts waiting work, while reply covers Channel messages |
 | `worker` | Executor Session event handling; appears after its first failure |
 | `github`, `feishu`, `history` | Source polling, events and history recovery; another GitHub Source reports under its ID, such as `github-docs` |
+| `dingtalk` | The DingTalk Stream mode connection: `starting` while it connects or connects again, `error` after three failed connections in a row, with the last error |
 | `sync:<source id>` | Allowed-list synchronization |
 
 A refusal has a status and `error`, its English text:
@@ -261,8 +281,8 @@ A refusal has a status and `error`, its English text:
 
 The blocks:
 
-- `source:<id>`, such as `source:github`, `source:github-docs` or `source:feishu`: `{"enabled": true, "config": {…}}`. GitHub's config has `repository` and `cli`, and the switches `observeIssues`, `observePulls`, `observeComments` and `observeCi`, off by default, which receive every new Issue, new pull request and comment in the repository and the default branch's CI; Feishu's has `cli`, `chats` as `[{"chatId": "oc_…", "name": "…", "listen": "mentions"}]` (or `"all"`), `directMessages`, and `otherChats` as `"none"` or `"mentions"`. The schedule Source's has `entries` as `[{"id": "stale", "description": "…", "every": "6h", "query": "is:issue is:open no:assignee updated:<{now-48h}", "github": "github"}]`: `every` is from `15m` to `30d`, and the query may not name `repo:`, `org:`, `user:` or `owner:`.
-- `policy`: `{"rules": […], "sources": {"github": {"allowed": [{"id": "<login>"}], "bots": [{"id": "dependabot[bot]"}]}, "feishu": {"allowed": [{"id": "ou_…", "name": "…"}], "syncChat": "oc_…", "admission": {"oc_…": {"unlistedAddressed": "explicit"}}}}}`. `bots` lists the bots whose messages may become inferred candidates; for `schedule`, which has no `allowed`, it lists the entries whose hits may. An `admission` row is keyed by chat id, `other` or `direct` for Feishu, and by `issues`, `pulls`, `comments` or `ci` for GitHub; an unset cell takes its default (see [002 Authorization](002-authorization.md)).
+- `source:<id>`, such as `source:github`, `source:github-docs` or `source:feishu`: `{"enabled": true, "config": {…}}`. GitHub's config has `repository` and `cli`, and the switches `observeIssues`, `observePulls`, `observeComments` and `observeCi`, off by default, which receive every new Issue, new pull request and comment in the repository and the default branch's CI; Feishu's has `cli`, `chats` as `[{"chatId": "oc_…", "name": "…", "listen": "mentions"}]` (or `"all"`), `directMessages`, and `otherChats` as `"none"` or `"mentions"`. The schedule Source's has `entries` as `[{"id": "stale", "description": "…", "every": "6h", "query": "is:issue is:open no:assignee updated:<{now-48h}", "github": "github"}]`: `every` is from `15m` to `30d`, and the query may not name `repo:`, `org:`, `user:` or `owner:`. DingTalk's has `credentials`, an absolute path or `env:NAME`, `endpoint`, `https://api.dingtalk.com` by default, `chats` as `[{"conversationId": "cid…", "name": "…", "listen": "mentions"}]` (or `"all"`), `directMessages`, `otherChats` as `"none"` or `"mentions"`, and `threadMinutes`, 30 by default, the window within which a person's next message to the robot stays on their Thread (0 switches it off).
+- `policy`: `{"rules": […], "sources": {"github": {"allowed": [{"id": "<login>"}], "bots": [{"id": "dependabot[bot]"}]}, "feishu": {"allowed": [{"id": "ou_…", "name": "…"}], "syncChat": "oc_…", "admission": {"oc_…": {"unlistedAddressed": "explicit"}}}}}`. `bots` lists the bots whose messages may become inferred candidates; for `schedule`, which has no `allowed`, it lists the entries whose hits may. DingTalk's part is `{"allowed": [{"id": "<senderStaffId>", "name": "…"}], "admission": {…}}`, with no bot list. An `admission` row is keyed by chat id, `other` or `direct` for Feishu, by conversation id, `other` or `direct` for DingTalk, and by `issues`, `pulls`, `comments` or `ci` for GitHub; an unset cell takes its default (see [002 Authorization](002-authorization.md)).
 - `eval`: `mode`, `timeoutSeconds`, `maxInferredPerHour` and `model`.
 - `executor`: `model`, `maxWorkers`, `directory`, `prepare`, `blockedCommands`, `sandbox` (`workspace`, the default, or `full`) and `writableRoots`, absolute paths, and `merge`, `{"cli": "", "method": "squash", "maxLines": 200, "requireApprovals": 1}`, and `budget`, `{"turns": 300, "minutes": 120, "tokens": null}` (see [003 Execution](003-execution.md)). The main Session's tools cannot change `directory`, `prepare`, `blockedCommands`, `sandbox`, `writableRoots`, `merge` or `budget`. Saves that change `sandbox` or `writableRoots` are checked as setup checks them, and restart. A save that changes `merge.cli` first runs it, as setup probes CLIs, and refuses one that cannot read its account or is signed in to the agent account; merge settings take effect without a restart. The processing pause is a setting of its own, `paused`, which `POST executor/pause` sets.
 
@@ -282,7 +302,7 @@ Setup uses the DeepSeek Harness subprocess service, as worker shells do. It remo
 
 Setup first checks how Sessions are confined: the profile must hold the permission presets the sandbox setting uses, and no writable root may contain or lie inside the state directory, `$DSH_HOME` or the profile directory, or, under the workspace sandbox, lack the sandbox's grant.
 
-Setup verifies each GitHub Source's repository and the agent's push access to it, checks that every GitHub Source's CLI is signed in to the same agent account and that no repository is listed twice, writes the worker environment, and checks that git uses only the agent credentials for github.com. A Feishu setup failure disables only the Feishu Source.
+Setup verifies each GitHub Source's repository and the agent's push access to it, checks that every GitHub Source's CLI is signed in to the same agent account and that no repository is listed twice, writes the worker environment, and checks that git uses only the agent credentials for github.com. A Feishu setup failure disables only the Feishu Source. For DingTalk, setup reads the app credentials, gets an access token and opens a Stream mode connection; a failure disables only the DingTalk Source.
 
 Setup also reads, as the agent account and for each repository, the rulesets of the default branch (`repos/<repository>/rules/branches/<branch>`, and `rulesets/<id>` for whether the account can bypass one) and its branch protection (`branches/<branch>/protection`). When no rule requires at least one approving review that a push dismisses, or the agent account can bypass the rule that does, it records a setup warning. When it cannot read them, such as a 403 or 404 for an account without admin rights, the warning says it cannot verify. A warning never stops dsh-superagent: Overview and the GitHub Source show it with its fix, and **Check again** runs setup once the repository settings changed.
 
@@ -295,7 +315,7 @@ A file in `worker-bin` or `worker-gitconfig` that dsh-superagent did not write s
 
 ## Try it
 
-From an allowed GitHub account, open an Issue or post a comment containing `@<agent login> <request>`. Within a polling interval (one minute by default), Overview should show a Ticket. The agent acknowledges the request, works in its own Session and directory, and delivers in the original conversation. For Feishu, mention the bot in a configured chat.
+From an allowed GitHub account, open an Issue or post a comment containing `@<agent login> <request>`. Within a polling interval (one minute by default), Overview should show a Ticket. The agent acknowledges the request, works in its own Session and directory, and delivers in the original conversation. For Feishu, mention the bot in a configured chat; for DingTalk, mention the robot in a configured group, or message it directly.
 
 ## Upgrade
 
@@ -341,6 +361,13 @@ Setup problems appear on the overview with a link to the fix, in the panel's lan
 | `The bot lark-cli allows user identities` | Point the Feishu Source at a bot-only configuration, as in Feishu bot above |
 | `The bot lark-cli does not work.` or `The bot identity of app … is …` | Check the configuration's app id and secret |
 | `The Feishu bot is not a member of the chat.` | Add the bot to the chat in the chat's settings; the next attempt succeeds |
+| `The DingTalk app credentials cannot be read: …` | Point the DingTalk Source at an existing file, owned by the user dsh-superagent runs as, or at a set variable |
+| `Others may read the DingTalk app credentials in …` | Run `chmod 600` on the file |
+| `The DingTalk app credentials are not JSON with appKey and appSecret.` | Write the file as in DingTalk robot above |
+| `The variable … that holds the DingTalk app credentials must have SECRET in its name …` | Rename the variable, such as `DINGTALK_SECRET`, and restart dsh-superagent with it set |
+| `DingTalk gave the app no access token …` | Check the AppKey and AppSecret, and that the app is not disabled |
+| `DingTalk refused a Stream mode connection for the app …` | Set the robot's message receiving mode to Stream mode and publish the app version, then choose **Check again** |
+| DingTalk health reports `… consecutive failed connections` | The machine cannot reach DingTalk's gateway, or the app's Stream mode was switched off; the Source keeps trying with a growing delay |
 | `… does not require an approving review that a new push dismisses …` (warning) | In a branch protection rule or ruleset of the default branch, require at least one approving review and dismiss stale approvals on a push, then choose **Check again** |
 | `@… may bypass the review rules of …` (warning) | Remove the agent account from the bypass list, or turn on **Do not allow bypassing the above settings** (enforce for administrators), then choose **Check again** |
 | `@… cannot read the review rules of …` (warning) | The agent account may not read branch protection, usually without admin rights; check the rules yourself in the repository settings. The warning stays while the account cannot read them |

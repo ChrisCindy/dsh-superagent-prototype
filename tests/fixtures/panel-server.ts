@@ -266,9 +266,9 @@ function initial(): PanelServer {
   const defaults = { revision: 0, previousRevision: null, savedAt: '', source: 'defaults' }
   return {
     health: {}, down: false, pending: 0, opened: [], requests: [], misuse: [], queued: new Set(), dropped: [], failing: [], metrics: METRICS, observed: [],
-    setup: { machine: MACHINE, problem: null, feishuProblem: null, warnings: [],
+    setup: { machine: MACHINE, problem: null, feishuProblem: null, dingtalkProblem: null, warnings: [],
       accounts: { repository: 'acme/widgets', repositories: { github: 'acme/widgets' }, agent: 'agent-bot', feishu: { appId: 'cli_bot', brand: 'feishu', botId: 'ou_bot',
-        name: 'Widgets Bot' } } },
+        name: 'Widgets Bot' }, dingtalk: null } },
     settings, revisions: { policy: 3, eval: 1, executor: 0 },
     prompts: { masterId: 'master', sections: TEAM_SECTIONS, skillName: SKILL_NAME.source, builtin: ['feishu', 'github'],
       skillPrefix: SKILL_PREFIX, revision: 0, current: { ...defaults, config: defaultPrompts() },

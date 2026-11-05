@@ -1,5 +1,5 @@
 /**
- * The plugin `Config` and `Machine`; `resolveDeployment` and `resolveFeishuBot` read the repository and the accounts from the Source
+ * The plugin `Config` and `Machine`; `resolveDeployment`, `resolveFeishuBot` and `resolveDingtalkApp` read the repository and the accounts from the Source
  * settings, each CLI run as Executor shells run it; `checkMerging` reads, as the agent account, whether GitHub requires a review before a
  * merge to the default branch. The code names no person, account or organization
  */
@@ -12,6 +12,8 @@ import s from '@deepseek-ai/schemastery'
 import { z } from 'zod'
 import type { SubprocessRuntime } from '@deepseek-ai/dsh-subprocess'
 import { runAsWorker, sameDirectory, withoutDirectory, workerBin } from './infra/environment.ts'
+import { DINGTALK_API, DingtalkApi, DingtalkCredentialsError, TOPIC_ROBOT, credentialsLocator, dingtalkEndpoint, type DingtalkApp }
+  from './infra/dingtalk.ts'
 import { sameName } from './infra/text.ts'
 import { SetupError, setupWarning, type SetupCode, type SetupWarning } from './setup.ts'
 
@@ -59,6 +61,14 @@ export const GithubAccountsSchema = z.object({
   cli: z.string().trim().default(''),
 })
 export const FeishuBotSchema = z.object({ cli: z.string().trim().default('') })
+/**
+ * The DingTalk Source's setup fields: where the app's credentials are (an absolute path or `env:NAME`, never the credentials
+ * themselves), and the OpenAPI origin.
+ */
+export const DingtalkAppSchema = z.object({
+  credentials: z.string().trim().refine(value => !value || credentialsLocator(value), 'An absolute path or env:NAME').default(''),
+  endpoint: z.string().trim().min(1).default(DINGTALK_API),
+})
 type StoredSources = Readonly<Record<string, { kind: string; enabled: boolean; config: Record<string, unknown> }>>
 /**
  * The GitHub Source instances setup resolves: the first instance (`github`) always, as the one every installation needs, and
@@ -77,6 +87,7 @@ export interface Deployment extends Machine {
   repositories: Record<string, string>
   github: GithubAccount
   feishu?: FeishuBot
+  dingtalk?: DingtalkApp
 }
 export interface FeishuBot { cli: string; appId: string; brand: 'feishu' | 'lark'; botId: string; name: string }
 
@@ -235,4 +246,31 @@ export async function resolveFeishuBot(machine: Machine, feishu: unknown, probe:
   const info = parsed(BotInfo, (await run('api', 'GET', '/open-apis/bot/v3/info', '--as', 'bot', '--format', 'ndjson')).split('\n')[0] ?? '')
   if (!info) return fail(new SetupError('feishuNoBot'))
   return { cli, appId: status.appId, brand: status.brand, botId: info.bot.open_id, name: info.bot.app_name }
+}
+
+/**
+ * Verifies the DingTalk Source's app: reads its credentials where the configuration names them, refusing a file that others may
+ * read and a variable DSH would pass on to workers, gets an access token, and opens a Stream mode connection for robot messages,
+ * which it leaves unused. Undefined when the Source names no credentials.
+ * @throws SetupError of the `dingtalk` place.
+ */
+export async function resolveDingtalkApp(dingtalk: unknown, fetcher: typeof globalThis.fetch = globalThis.fetch,
+  env: NodeJS.ProcessEnv = process.env): Promise<DingtalkApp | undefined> {
+  const parsed = DingtalkAppSchema.safeParse(dingtalk ?? {})
+  if (!parsed.success) throw new SetupError('dingtalkCredentialsUnreadable', { reason: 'the credentials are named by neither an absolute path nor env:NAME' })
+  const { credentials, endpoint: origin } = parsed.data
+  if (!credentials) return undefined
+  let endpoint: string
+  try { endpoint = dingtalkEndpoint(origin) } catch { throw new SetupError('dingtalkEndpointInvalid', { endpoint: origin }) }
+  const api = new DingtalkApi({ credentials, endpoint, robotCode: '' }, fetcher, Date.now, env)
+  const read = await api.credentials().catch((error: unknown) => {
+    if (!(error instanceof DingtalkCredentialsError)) throw new SetupError('dingtalkCredentialsUnreadable', { reason: reason(error) })
+    if (error.reason === 'exposed') throw new SetupError('dingtalkCredentialsExposed', { file: credentials })
+    if (error.reason === 'malformed') throw new SetupError('dingtalkCredentialsMalformed')
+    if (error.reason === 'variable') throw new SetupError('dingtalkCredentialsVariable', { variable: credentials.slice('env:'.length) })
+    throw new SetupError('dingtalkCredentialsUnreadable', { reason: error.message })
+  })
+  await api.accessToken().catch((error: unknown) => { throw new SetupError('dingtalkCredentialsRejected', { output: reason(error) }) })
+  await api.openStream([TOPIC_ROBOT]).catch((error: unknown) => { throw new SetupError('dingtalkStreamRefused', { output: reason(error) }) })
+  return { credentials, endpoint, robotCode: read.robotCode }
 }
