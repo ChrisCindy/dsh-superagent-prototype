@@ -55,10 +55,10 @@ The concepts above and their rules are reusable. The Source implementations, the
 
 | Part | In this repository |
 | --- | --- |
-| Source | Feishu: live events, history recovery, polling of subscribed topics. GitHub: notifications, subscribed Issues and pull requests, CI changes, pull requests merged or closed, and, where switched on, every new Issue, pull request and comment in the repository and the default branch's CI. Schedule: conditions that need waiting, as GitHub searches run once per interval; each hit is a Trigger on its Issue's or pull request's Thread |
+| Source | Feishu: live events, history recovery, polling of subscribed topics. GitHub: notifications, subscribed Issues and pull requests, CI changes, pull requests merged or closed, and, where switched on, every new Issue, pull request and comment in the repository and the default branch's CI. Schedule: conditions that need waiting, as GitHub searches run once per interval; each hit is a Trigger on its Issue's or pull request's Thread. DingTalk: robot messages through Stream mode; a Thread follows quote replies, and a person's messages to the robot within a time window |
 | Policy | Assessment rules, and each Source's allowed list, its sync, its bot list and its admission table; for the schedule Source, the entries whose hits may become candidates |
 | Executor | By default the DshExecutor (`dsh`): a DSH Executor Session and a directory per Ticket, in an execution environment whose variables the Executor and the Sources register. Other Executors can run beside it |
-| Channel | Feishu topic replies, GitHub comments and review thread replies |
+| Channel | Feishu topic replies, GitHub comments and review thread replies, DingTalk robot messages to a group or a person |
 
 ## Glossary
 
