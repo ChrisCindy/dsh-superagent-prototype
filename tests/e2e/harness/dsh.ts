@@ -87,6 +87,8 @@ export interface HarnessOptions {
   feishu?: boolean
   /** Enables the bundle's schedule Source plugin in the profile. */
   schedule?: boolean
+  /** Enables the bundle's DingTalk Source plugin in the profile. */
+  dingtalk?: boolean
   script: Script
 }
 
@@ -165,7 +167,8 @@ export class DshHarness implements HarnessFields {
       '- id: dsh-superagent', '  config:', `    stateDir: ${dirs.stateDir}`,
       '- id: llm-deepseek', '  config:', `    baseURL: ${llm.baseURL}`,
       ...options.feishu ? ['- id: dsh-superagent-feishu', '  disabled: false'] : [],
-      ...options.schedule ? ['- id: dsh-superagent-schedule', '  disabled: false'] : [], ''].join('\n'))
+      ...options.schedule ? ['- id: dsh-superagent-schedule', '  disabled: false'] : [],
+      ...options.dingtalk ? ['- id: dsh-superagent-dingtalk', '  disabled: false'] : [], ''].join('\n'))
     return harness
   }
 

@@ -1,7 +1,7 @@
 /** Setup, and `setupChanged`, whether a save changes a field setup reads */
 import type { Context } from '@deepseek-ai/cordis'
 import { UserError } from '../core/index.ts'
-import { checkMerging, executable, githubInstances, resolveDeployment, resolveFeishuBot, resolveGithub, sameAccount, workerProbe,
+import { checkMerging, executable, githubInstances, resolveDeployment, resolveDingtalkApp, resolveFeishuBot, resolveGithub, sameAccount, workerProbe,
   type Deployment, type Machine } from '../deployment.ts'
 import { agentVariables, applyEnvironment, verifyEnvironment, withoutDirectory, workerBin, writeEnvironment } from '../infra/environment.ts'
 import { sameName } from '../infra/text.ts'
@@ -33,13 +33,15 @@ export const setupChanged = (before: Settings, after: Settings, kinds: SetupKind
   setupFields(before, kinds) !== setupFields(after, kinds)
 
 /**
- * Resolves each GitHub Source instance's repository, the GitHub account they share, and the optional Feishu bot by probing CLIs, then writes and applies the isolated git and shim environment used by worker processes.
+ * Resolves each GitHub Source instance's repository, the GitHub account they share, the optional Feishu bot by probing CLIs and the optional DingTalk app through its OpenAPI, then writes and applies the isolated git and shim environment used by worker processes.
  * `Runtime` runs it at startup to gate orchestration readiness, while `Settings` uses it to validate account changes, update blocked command shims, and schedule restarts.
  */
 export class Setup {
   private resolved?: Deployment
   problem?: SetupProblem
   feishuProblem?: SetupProblem
+  /** Why setup left the DingTalk Source out although it names app credentials; it pauses only that Source. */
+  dingtalkProblem?: SetupProblem
   /** Findings that leave dsh-superagent running, such as a default branch whose merges GitHub does not gate on a review. */
   warnings: SetupWarning[] = []
   /** PATH with the worker shim directory removed so the host's own CLI calls invoke the real binaries. */
@@ -69,7 +71,7 @@ export class Setup {
   }
   /** Trigger a restart to re-run setup, refusing if setup and Feishu are already healthy and nothing warns, so running assignments are not interrupted. */
   check(): void {
-    if (this.configured() && !this.feishuProblem && !this.warnings.length) throw new UserError('setupComplete')
+    if (this.configured() && !this.feishuProblem && !this.dingtalkProblem && !this.warnings.length) throw new UserError('setupComplete')
     this.restart()
   }
   /** Defer the restart to the next macrotask so the current HTTP or tool caller receives its response first. */
@@ -85,6 +87,7 @@ export class Setup {
     const kind = settings.sources[id]?.kind ?? id
     const own = (error: unknown) => { if (!(error instanceof SetupError) || (error.place === kind && problemSource(error.problem) === id)) throw error }
     if (kind === 'feishu') { await resolveFeishuBot(machine, settings.sources[id]?.config, this.probe()).catch(own); return }
+    if (kind === 'dingtalk') { await resolveDingtalkApp(settings.sources[id]?.config).catch(own); return }
     if (kind !== 'github') return
     const instances = githubInstances(settings.sources)
     const instance = instances.find(item => item.id === id)
@@ -147,7 +150,13 @@ export class Setup {
       context.logger.warn('dsh-superagent leaves Feishu out: %s', error.message)
       return undefined
     })
-    const resolved = { ...deployment, ...(feishu ? { feishu } : {}) }
+    const dingtalk = await resolveDingtalkApp(settings.sources.dingtalk?.config).catch((error: unknown) => {
+      if (!(error instanceof SetupError)) throw error
+      this.dingtalkProblem = error.problem
+      context.logger.warn('dsh-superagent leaves DingTalk out: %s', error.message)
+      return undefined
+    })
+    const resolved = { ...deployment, ...(feishu ? { feishu } : {}), ...(dingtalk ? { dingtalk } : {}) }
     // Each repository has its own default branch and rules, so each GitHub instance is checked on its own.
     const warnings: SetupWarning[] = []
     for (const [id, repository] of Object.entries(resolved.repositories)) {

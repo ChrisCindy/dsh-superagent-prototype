@@ -6,7 +6,7 @@ import { expect, it } from 'vitest'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 /** The modules of one Source, which only reach the application through the SourceKind contract and SourceHost. */
-const SPECIFIC = /^src\/sources\/(github|feishu)[^/]*$/
+const SPECIFIC = /^src\/sources\/(github|feishu|dingtalk)[^/]*$/
 
 /** Each module that `file` imports, statically or dynamically, as a path relative to the repository root. */
 function imports(file: string): string[] {

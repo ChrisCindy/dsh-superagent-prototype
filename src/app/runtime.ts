@@ -176,7 +176,8 @@ export class Runtime extends Service implements SourceHost {
         health: this.runtimeHealth, lifetime: this.lifetime, configured: () => setup.configured(), closing: () => this.closing() })
       this.sourceDeps = { store, engine, outbox, commands, sources, get ready() { return runtime.ready },
         get deployment() { return setup.deployment }, configured: () => setup.configured(),
-        get setupProblem() { return setup.problem }, get feishuProblem() { return setup.feishuProblem }, receive: trigger => passes.receive(trigger) }
+        get setupProblem() { return setup.problem }, get feishuProblem() { return setup.feishuProblem },
+        get dingtalkProblem() { return setup.dingtalkProblem }, receive: trigger => passes.receive(trigger) }
       this.toolHost = { context: ctx, engine, store, prompts, sessions, settings: this.settings, assessor, resources,
         claims: ticket => {
           const claimant = sources.claimant(runtime.originTrigger(ticket))
@@ -225,6 +226,8 @@ export class Runtime extends Service implements SourceHost {
   get setupProblem(): SetupProblem | undefined { return this.setup.problem }
   /** Why the Feishu bot is unavailable even though the Feishu Source configures a CLI. */
   get feishuProblem(): SetupProblem | undefined { return this.setup.feishuProblem }
+  /** Why the DingTalk app is unavailable even though the DingTalk Source names its credentials. */
+  get dingtalkProblem(): SetupProblem | undefined { return this.setup.dingtalkProblem }
   /** Setup findings that leave dsh-superagent running, such as merges GitHub does not gate on a review. */
   get setupWarnings(): readonly SetupWarning[] { return this.setup.warnings }
   /** Links each channel through its Source instance, with that instance's repository. */
@@ -272,6 +275,7 @@ export class Runtime extends Service implements SourceHost {
     return { store, sources, prompts, sessions, settings, engine, executor, executors, health, machine, masterId, ready, sourceLinks,
       get deployment() { return setup.deployment },
       get setupProblem() { return setup.problem }, get feishuProblem() { return setup.feishuProblem },
+      get dingtalkProblem() { return setup.dingtalkProblem },
       get setupWarnings() { return setup.warnings },
       configured: () => setup.configured(), links: () => runtime.links(), ticketEnvironment: ticket => runtime.ticketEnvironment(ticket),
       checkSetup: () => { setup.check() }, requestPass: () => { passes.request() }, models: () => this.ctx.sessionController.modelCatalog() }

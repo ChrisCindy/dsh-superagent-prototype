@@ -13,3 +13,6 @@
 # The schedule Source is optional too: uncomment to enable it, then add its entries on the Schedule Source.
 # - id: dsh-superagent-schedule
 #   disabled: false
+# DingTalk is optional too: uncomment to enable its Source, then set where its app credentials are on the DingTalk Source.
+# - id: dsh-superagent-dingtalk
+#   disabled: false

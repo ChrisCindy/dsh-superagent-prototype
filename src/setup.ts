@@ -4,7 +4,7 @@
  */
 import { fill } from './infra/text.ts'
 
-export type SetupPlace = 'deployment' | 'execution' | 'github' | 'feishu'
+export type SetupPlace = 'deployment' | 'execution' | 'github' | 'feishu' | 'dingtalk'
 export const SETUP_PROBLEMS = {
   foreignFile: ['deployment', '{file} was not written by dsh-superagent; move it, or choose another state directory.'],
   gitTooOld: ['deployment', 'git does not read the github.com credential configuration dsh-superagent writes; dsh-superagent needs git 2.32 or later.'],
@@ -28,6 +28,13 @@ export const SETUP_PROBLEMS = {
   feishuBotNotReady: ['feishu', 'The bot identity of app {app} is {status}; configure the app secret with lark-cli.'],
   feishuUserIdentity: ['feishu', 'The bot lark-cli allows user identities (strict mode {mode}); give the bot its own lark-cli configuration in strict mode bot, as docs/006-deployment.md describes.'],
   feishuNoBot: ['feishu', 'The Feishu bot API did not return the bot\'s open_id.'],
+  dingtalkCredentialsUnreadable: ['dingtalk', 'The DingTalk app credentials cannot be read: {reason}.'],
+  dingtalkCredentialsExposed: ['dingtalk', 'Others may read the DingTalk app credentials in {file}; make the file readable only by the user dsh-superagent runs as (chmod 600).'],
+  dingtalkCredentialsMalformed: ['dingtalk', 'The DingTalk app credentials are not JSON with appKey and appSecret.'],
+  dingtalkCredentialsVariable: ['dingtalk', 'The variable {variable} that holds the DingTalk app credentials must have SECRET in its name, so DeepSeek Harness keeps it from workers.'],
+  dingtalkEndpointInvalid: ['dingtalk', 'The DingTalk OpenAPI endpoint {endpoint} is not an https URL.'],
+  dingtalkCredentialsRejected: ['dingtalk', 'DingTalk gave the app no access token; check its AppKey and AppSecret.'],
+  dingtalkStreamRefused: ['dingtalk', 'DingTalk refused a Stream mode connection for the app; set the robot\'s message receiving mode to Stream mode, as docs/006-deployment.md describes.'],
 } as const satisfies Record<string, readonly [SetupPlace, string]>
 export type SetupCode = keyof typeof SETUP_PROBLEMS
 /** `source` names the Source instance a problem of a Source place belongs to, when it is not the kind's first instance. */

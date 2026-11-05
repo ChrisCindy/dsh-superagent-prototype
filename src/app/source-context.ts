@@ -22,6 +22,8 @@ export interface SourceContextDeps {
   readonly setupProblem?: SetupProblem | undefined
   /** Why setup found no Feishu bot even though the Feishu Source names a CLI. */
   readonly feishuProblem?: SetupProblem | undefined
+  /** Why setup left the DingTalk app out even though the DingTalk Source names its credentials. */
+  readonly dingtalkProblem?: SetupProblem | undefined
   /** Hands a Trigger to the Engine and schedules the pass that assesses it. */
   receive(trigger: Trigger): ReceiveResult | Promise<ReceiveResult>
 }
@@ -44,7 +46,7 @@ export function sourceContextOf(deps: SourceContextDeps, kind: { kind: string; h
     ready: deps.ready,
     configured: () => deps.configured(),
     get problem() {
-      return [deps.feishuProblem, deps.setupProblem].find(problem => problem?.place === kind.kind && (problem.source ?? problem.place) === instance)
+      return [deps.feishuProblem, deps.dingtalkProblem, deps.setupProblem].find(problem => problem?.place === kind.kind && (problem.source ?? problem.place) === instance)
     },
     config: <C extends Record<string, unknown>>(id = instance) => {
       const found = deps.sources.instance<C>(id)

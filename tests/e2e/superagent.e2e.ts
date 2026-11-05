@@ -1,26 +1,29 @@
 /**
  * Only with `pnpm test:e2e` (tests/e2e/README.md): the bundle in a real DeepSeek Harness installation, through `scripts/dsh-superagent` and
- * the management API, with fake `gh` and `lark-cli` and a scripted model: setup, the API's shapes, a mention through acceptance, the worker
+ * the management API, with fake `gh`, `lark-cli` and DingTalk and a scripted model: setup, the API's shapes, a mention through acceptance, the worker
  * and the result reply, the Feishu bot setup, a second GitHub Source for another repository, a schedule entry's Trigger on an Issue's
- * Thread that a restart does not repeat, and the escalations of 009 a worker or local process can try (writing the state directory,
+ * Thread that a restart does not repeat, the DingTalk Source's setup and a mention of its robot carried to the replies in the group,
+ * and the escalations of 009 a worker or local process can try (writing the state directory,
  * merging, the API without the sign-in)
  *
  * The scenarios share one installation and run in order, each starting where the previous one left the service.
  */
-import { writeFileSync } from 'node:fs'
+import { chmodSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
+import { FAKE_APP, FakeDingtalk } from './fakes/dingtalk.ts'
 import { readLog } from './fakes/store.ts'
 import { DshHarness, waitFor } from './harness/dsh.ts'
 import { ACKNOWLEDGEMENT, cards, RESULT, superagentScript } from './harness/script.ts'
 import { existsSync } from 'node:fs'
 
 let harness: DshHarness
+let dingtalk: FakeDingtalk | undefined
 const ALLOWED = 'alice'
 
-beforeAll(async () => { harness = await DshHarness.create({ script: superagentScript(), feishu: true, schedule: true }) })
+beforeAll(async () => { harness = await DshHarness.create({ script: superagentScript(), feishu: true, schedule: true, dingtalk: true }) })
 afterEach(context => { if (context.task.result?.state === 'fail') harness.failed = true })
-afterAll(async () => { await harness?.teardown() })
+afterAll(async () => { await harness?.teardown(); await dingtalk?.close() })
 
 describe('dsh-superagent on a real DeepSeek Harness', () => {
   it('(a) reports setup at startup, and saving the GitHub Source with the fake gh resolves it', async () => {
@@ -275,7 +278,7 @@ describe('dsh-superagent on a real DeepSeek Harness', () => {
       return answer.status === 200 && answer.body.setup.accounts && !answer.body.setup.accounts.repositories['github-docs']
         && answer.body.health.runtime?.state === 'ready' && !answer.body.health['github-docs'] ? true : undefined
     }, 90_000)
-    expect((await harness.api.get('settings')).sources.map((source: any) => source.id)).toEqual(['feishu', 'github', 'schedule'])
+    expect((await harness.api.get('settings')).sources.map((source: any) => source.id)).toEqual(['dingtalk', 'feishu', 'github', 'schedule'])
     const status = await harness.status()
     expect(status.code, status.stdout).toBe(0)
   })
@@ -341,6 +344,74 @@ describe('dsh-superagent on a real DeepSeek Harness', () => {
     const timeline = (await harness.api.get(`threads/${encodeURIComponent(thread(stale.number))}`)).timeline
     expect(timeline.filter((item: any) => item.source === 'schedule')).toHaveLength(1)
     expect(readLog<{ argv: string[]; unknown?: boolean }>(`${harness.runDir}/fake-github`, 'calls').filter(call => call.unknown)).toEqual([])
+    const status = await harness.status()
+    expect(status.code, status.stdout).toBe(0)
+  })
+
+  it('(i) sets up the DingTalk Source over Stream mode, and carries a mention of the robot to replies in the group', async () => {
+    dingtalk = await new FakeDingtalk().start()
+    // docs/006 DingTalk robot: the app's credentials in a file only its owner may read; the settings name only the file.
+    const credentials = join(harness.home, 'dingtalk-app.json')
+    writeFileSync(credentials, JSON.stringify(FAKE_APP), { mode: 0o644 })
+    const group = 'cidE2EgroupA1'
+    const config = { credentials, endpoint: dingtalk.origin, chats: [{ conversationId: group, name: 'E2E group', listen: 'mentions' }],
+      directMessages: true, otherChats: 'none', threadMinutes: 30 }
+    const exposed = await harness.api.saveBlock('source:dingtalk', { enabled: true, config })
+    expect(exposed.status).toBe(400)
+    expect(exposed.body.setup).toMatchObject({ place: 'dingtalk', code: 'dingtalkCredentialsExposed' })
+    chmodSync(credentials, 0o600)
+    const saved = await harness.api.saveBlock('source:dingtalk', { enabled: true, config })
+    expect(saved.status, JSON.stringify(saved.body)).toBe(200)
+    expect(saved.body).toMatchObject({ restarting: true })
+    const state = await waitFor('the DingTalk app to resolve and its Stream mode connection to be ready', async () => {
+      const answer = await harness.api.request<any>('GET', 'state')
+      return answer.status === 200 && answer.body.setup.accounts?.dingtalk && answer.body.health.dingtalk?.state === 'ready' ? answer.body : undefined
+    }, 90_000)
+    expect(state.setup).toMatchObject({ problem: null, dingtalkProblem: null, accounts: { dingtalk: { verified: true } } })
+    // Neither the settings nor the state carry the secret.
+    expect(JSON.stringify(await harness.api.get('settings'))).not.toContain(FAKE_APP.appSecret)
+    expect(JSON.stringify(state)).not.toContain(FAKE_APP.appSecret)
+    expect(dingtalk.calls.map(call => call.path)).toEqual(expect.arrayContaining(['/v1.0/oauth2/accessToken', '/v1.0/gateway/connections/open']))
+    expect(dingtalk.live(), 'an open Stream mode connection').toBeDefined()
+
+    // The staff ID of the person who asks is on the Policy's DingTalk list.
+    const policy = (await harness.api.get('settings')).blocks.policy
+    const staffId = 'e2e-alice'
+    const value = { ...policy.value, sources: { ...policy.value.sources, dingtalk: { allowed: [{ id: staffId, name: 'Alice' }] } } }
+    expect(await harness.api.put('settings/policy', { value, revision: policy.revision })).toMatchObject({ saved: expect.anything(), restarting: false })
+
+    // A mention of the robot in the group arrives over the connection, becomes a Trigger on a new Thread, and is acknowledged.
+    const msgId = 'msgE2Ementionaaaa1'
+    const frame = dingtalk.push({ msgId, conversationId: group, conversationType: '2', conversationTitle: 'E2E group', msgtype: 'text',
+      createAt: Date.now(), senderId: '$:LWCP_v1:$e2ealice', senderStaffId: staffId, senderNick: 'Alice', isAdmin: false, isInAtList: true,
+      chatbotUserId: '$:LWCP_v1:$e2ebot', robotCode: FAKE_APP.appKey, text: { content: ' please fix the typo "widgts" in README.md' } })
+    const key = `dingtalk:${group}:${msgId}`
+    const detail = await waitFor('the DingTalk Trigger on its Thread', async () => {
+      const answer = await harness.api.request<any>('GET', `threads/${encodeURIComponent(key)}`)
+      return answer.status === 200 && answer.body.timeline.some((item: any) => item.source === 'dingtalk') ? answer.body : undefined
+    }, 30_000, 500)
+    debug('thread-after-dingtalk', detail)
+    const trigger = detail.timeline.find((item: any) => item.source === 'dingtalk')
+    expect(trigger).toMatchObject({ human: true, threads: [key] })
+    expect(trigger.text).toContain('widgts')
+    expect(JSON.stringify(trigger.actor)).toContain(staffId)
+    expect(await waitFor('the acknowledgement of the frame', () => dingtalk!.acks.find(ack => ack.messageId === frame), 10_000)).toMatchObject({ code: 200 })
+
+    // The main Session accepts; the acknowledgement and the result go to the group as the robot, addressed to Alice.
+    const card = await waitFor('the DingTalk candidate', () => harness.llm.byRole('main').flatMap(item => cards(item.latest))
+      .find(item => item.trigger_id === trigger.id), 60_000)
+    expect(card).toMatchObject({ kind: 'candidate', strength: 'explicit', thread: key })
+    const sent = await waitFor('the acknowledgement and the result in the group', () => {
+      const sends = dingtalk!.sends()
+      return sends.length >= 2 ? sends : undefined
+    }, 240_000, 1000)
+    debug('dingtalk-sends', sent)
+    const texts = sent.map(call => JSON.parse(String(call.body.msgParam)).text as string)
+    expect(sent.map(call => call.path)).toEqual(['/v1.0/robot/groupMessages/send', '/v1.0/robot/groupMessages/send'])
+    expect(sent[0]!.body).toMatchObject({ robotCode: FAKE_APP.appKey, openConversationId: group, msgKey: 'sampleMarkdown' })
+    expect(texts[0]).toContain(ACKNOWLEDGEMENT)
+    expect(texts[1]).toContain(RESULT)
+    for (const text of texts) expect(text.startsWith('@Alice ')).toBe(true)
     const status = await harness.status()
     expect(status.code, status.stdout).toBe(0)
   })
