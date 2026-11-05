@@ -1,10 +1,10 @@
 /**
  * Only with `pnpm test:e2e` (tests/e2e/README.md): the bundle in a real DeepSeek Harness installation, through `scripts/dsh-superagent` and
- * the management API, with fake `gh`, `lark-cli` and DingTalk and a scripted model: setup, the API's shapes, a mention through acceptance, the worker
+ * the management API, with fake `gh`, `lark-cli`, DingTalk and code-host adapter and a scripted model: setup, the API's shapes, a mention through acceptance, the worker
  * and the result reply, the Feishu bot setup, a second GitHub Source for another repository, a schedule entry's Trigger on an Issue's
  * Thread that a restart does not repeat, the DingTalk Source's setup and a mention of its robot carried to the replies in the group,
- * and the escalations of 009 a worker or local process can try (writing the state directory,
- * merging, the API without the sign-in)
+ * a code-host Source on the fake adapter of docs/010 from setup to the result reply, and the escalations of 009 a worker or local
+ * process can try (writing the state directory, merging, the API without the sign-in)
  *
  * The scenarios share one installation and run in order, each starting where the previous one left the service.
  */
@@ -21,7 +21,8 @@ let harness: DshHarness
 let dingtalk: FakeDingtalk | undefined
 const ALLOWED = 'alice'
 
-beforeAll(async () => { harness = await DshHarness.create({ script: superagentScript(), feishu: true, schedule: true, dingtalk: true }) })
+beforeAll(async () => { harness = await DshHarness.create({ script: superagentScript(), feishu: true, schedule: true, dingtalk: true,
+  codehost: true }) })
 afterEach(context => { if (context.task.result?.state === 'fail') harness.failed = true })
 afterAll(async () => { await harness?.teardown(); await dingtalk?.close() })
 
@@ -278,7 +279,7 @@ describe('dsh-superagent on a real DeepSeek Harness', () => {
       return answer.status === 200 && answer.body.setup.accounts && !answer.body.setup.accounts.repositories['github-docs']
         && answer.body.health.runtime?.state === 'ready' && !answer.body.health['github-docs'] ? true : undefined
     }, 90_000)
-    expect((await harness.api.get('settings')).sources.map((source: any) => source.id)).toEqual(['dingtalk', 'feishu', 'github', 'schedule'])
+    expect((await harness.api.get('settings')).sources.map((source: any) => source.id)).toEqual(['codehost', 'dingtalk', 'feishu', 'github', 'schedule'])
     const status = await harness.status()
     expect(status.code, status.stdout).toBe(0)
   })
@@ -412,6 +413,65 @@ describe('dsh-superagent on a real DeepSeek Harness', () => {
     expect(texts[0]).toContain(ACKNOWLEDGEMENT)
     expect(texts[1]).toContain(RESULT)
     for (const text of texts) expect(text.startsWith('@Alice ')).toBe(true)
+    const status = await harness.status()
+    expect(status.code, status.stdout).toBe(0)
+  })
+
+  it('(j) sets up a code-host Source on the fake adapter and carries a mention there through acceptance to the result reply', async () => {
+    const codehostDir = `${harness.runDir}/fake-codehost`
+    const saved = await harness.api.saveBlock('source:codehost', { enabled: true, config: { adapter: harness.adapter, repository: harness.repository, pollSeconds: 30 } })
+    expect(saved.status, JSON.stringify(saved.body)).toBe(200)
+    expect(saved.body).toMatchObject({ restarting: true })
+    const state = await waitFor('the code-host Source to resolve and poll', async () => {
+      const answer = await harness.api.request<any>('GET', 'state')
+      return answer.status === 200 && answer.body.setup.accounts?.repositories?.codehost && answer.body.health.codehost?.state === 'ready'
+        && answer.body.health.github?.state === 'ready' ? answer.body : undefined
+    }, 150_000, 1000)
+    expect(state.setup).toMatchObject({ problem: null, accounts: { repository: harness.repository, repositories: { github: harness.repository, codehost: harness.repository } } })
+    // The fake answers no files, checks, approvals, contents, protection or merge: setup names them and cannot check the review rules.
+    const warnings = state.setup.warnings.filter((warning: any) => warning.place === 'codehost')
+    expect(warnings.map((warning: any) => warning.code).sort()).toEqual(['codehostCapabilities', 'codehostMergeUnverified'])
+    expect(warnings.find((warning: any) => warning.code === 'codehostCapabilities').values.missing).toBe('files, checks, approvals, contents, protection, merge')
+    const operations = () => readLog<{ operation: string; unknown?: boolean }>(codehostDir, 'calls')
+    expect(operations().map(call => call.operation)).toEqual(expect.arrayContaining(['describe', 'whoami', 'repository', 'events']))
+
+    const settings = await harness.api.get('settings')
+    const policy = settings.blocks.policy
+    const value = { ...policy.value, sources: { ...policy.value.sources, codehost: { allowed: [{ id: ALLOWED }] } } }
+    expect(await harness.api.put('settings/policy', { value, revision: policy.revision })).toMatchObject({ policy_changed: true })
+
+    // The adapter's first events call answered the cursor of now; what happens after it comes in a later round.
+    const issue = harness.codehost.openIssue(ALLOWED, 'Typo in README', 'The README misspells the project name.')
+    const comment = harness.codehost.mention(issue.number, ALLOWED, `@${harness.agent} please fix the typo "widgts" in README.md`)
+    const key = `codehost:${issue.number}`
+    const detail = await waitFor('the Trigger on the code-host Thread', async () => {
+      const answer = await harness.api.request<any>('GET', `threads/${encodeURIComponent(key)}`)
+      return answer.status === 200 && answer.body.timeline.some((item: any) => item.text?.includes('widgts')) ? answer.body : undefined
+    }, 120_000, 1000)
+    debug('codehost-thread-after-mention', detail)
+    const trigger = detail.timeline.find((item: any) => item.text.includes('widgts'))
+    expect(trigger).toMatchObject({ source: 'codehost', human: true, url: comment.url, threads: [key] })
+    const decided = await waitFor('the accept Decision on the code-host Trigger', async () => (await harness.api.get(`threads/${encodeURIComponent(key)}`))
+      .decisions.find((decision: any) => decision.kind === 'accept' && decision.triggerIds.includes(trigger.id)), 90_000)
+    const card = harness.llm.byRole('main').flatMap(item => cards(item.latest)).find(item => item.trigger_id === trigger.id)
+    expect(card).toMatchObject({ kind: 'candidate', from: ALLOWED, thread: key, strength: 'explicit' })
+
+    // The acknowledgement and the result go out through the adapter's comment operation, once each, with the idempotency marker.
+    const posted = () => readLog<{ kind: string; type: string; number: number; body: string; key: string }>(codehostDir, 'writes')
+    const ack = await waitFor('the acknowledgement on the code host', () => posted().find(write => write.body.includes(ACKNOWLEDGEMENT)), 60_000)
+    expect(ack).toMatchObject({ kind: 'comment', type: 'issue', number: issue.number })
+    expect(ack.body).toMatch(/<!-- dsh-superagent:[^>]+ -->/)
+    const result = await waitFor('the result on the code host', () => posted().find(write => write.body.includes(RESULT)), 180_000)
+    expect(result).toMatchObject({ kind: 'comment', type: 'issue', number: issue.number })
+    expect(posted().map(write => write.body.split('\n')[0])).toEqual([ACKNOWLEDGEMENT, RESULT])
+    const ticket = await waitFor('the code-host Ticket to end', async () => {
+      const answer = await harness.api.get(`tickets/${decided.ticketId}`)
+      return answer.ended ? answer : undefined
+    }, 30_000)
+    expect(ticket.ended).toMatchObject({ outcome: 'completed' })
+    // Nothing of the code-host Ticket went to GitHub, and the bundle asked the adapter only what describe lists.
+    expect(writes().filter(write => write.kind === 'comment')).toHaveLength(2)
+    expect(operations().filter(call => call.unknown)).toEqual([])
     const status = await harness.status()
     expect(status.code, status.stdout).toBe(0)
   })
