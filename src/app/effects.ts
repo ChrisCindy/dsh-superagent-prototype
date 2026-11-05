@@ -25,6 +25,8 @@ export interface EffectPayloads {
   notice: { value: Record<string, unknown>; summary: string }
   /** Send a message for a Channel through its Source; the key is the message ID, whose receipt the Outbox keeps. */
   reply: Record<string, never>
+  /** Prune what the retention settings no longer keep, then queue the next prune a day later; the key is `daily`. */
+  prune: Record<string, never>
 }
 export type EffectKind = keyof EffectPayloads
 interface Handler<K extends EffectKind> {
@@ -61,11 +63,14 @@ export class Effects {
   constructor(private readonly store: Store, private readonly board: Pick<HealthBoard, 'claim'>, private readonly now = () => Date.now()) {
     this.seq = Number(store.db.prepare('SELECT IFNULL(MAX(seq), 0) AS seq FROM effect').get()?.seq ?? 0)
   }
-  /** Upserts an effect in the caller's transaction, coalescing with any waiting row of the same kind and key while keeping its queue position. */
-  enqueue<K extends EffectKind>(kind: K, key: string, payload: EffectPayloads[K]): void {
+  /**
+   * Upserts an effect in the caller's transaction, coalescing with any waiting row of the same kind and key while keeping its queue position.
+   * @param due - When it may run, in epoch milliseconds: now unless a later time is given, as the daily prune is.
+   */
+  enqueue<K extends EffectKind>(kind: K, key: string, payload: EffectPayloads[K], due = this.now()): void {
     this.store.db.prepare(`INSERT INTO effect (kind, key, value, seq, due, since) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(kind, key) DO UPDATE
       SET value = excluded.value, generation = generation + 1, attempts = 0, error = '', due = excluded.due`)
-      .run(kind, key, JSON.stringify(payload), ++this.seq, this.now(), new Date(this.now()).toISOString())
+      .run(kind, key, JSON.stringify(payload), ++this.seq, due, new Date(this.now()).toISOString())
     this.kick()
   }
   handle<K extends EffectKind>(kind: K, run: Handler<K>['run'], options: Options<K> = {}): void {

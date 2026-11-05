@@ -6,7 +6,6 @@ import { basename } from 'node:path'
 import { z } from 'zod'
 import { isoTime, key, readEvery, said, type AcceptMode, type AdmissionCell, type ChannelRef, type Decision, type Execution, type Follow, type MandateBasis,
   type Owner, type Reason, type Thread, type Ticket, type TicketInput, type TriggerDisposition } from '../core/index.ts'
-import { feishuChatLink } from '../sources/feishu-channel.ts'
 import { POLL_HORIZON_MS } from '../sources/poll.ts'
 import { SettingsSchema, policyVersion, type SettingsOrigin } from '../policy.ts'
 import { autoMergeThreshold, teamDefaults } from './context.ts'
@@ -670,6 +669,9 @@ function feishuDirectAddresses(store: Store): void {
     if (ticket.channels.some(direct)) store.tickets.save({ ...ticket, channels: ticket.channels.map(marked) })
   }
 }
+/** The Feishu or Lark AppLink of a chat, as the Feishu Source wrote it at schema 11; the migration keeps its own copy. */
+const chatLink = (brand: 'feishu' | 'lark', chatId: string): string =>
+  `https://applink.${brand === 'lark' ? 'larksuite.com' : 'feishu.cn'}/client/chat/open?openChatId=${encodeURIComponent(chatId)}`
 /** Backfill chat URLs onto Feishu threads created before threads stored their own URL, inferring the brand from existing trigger URLs. */
 function feishuThreadLinks(store: Store): void {
   const lark = store.db.prepare(`SELECT 1 FROM trigger WHERE value ->> '$.source' = 'feishu'
@@ -677,7 +679,7 @@ function feishuThreadLinks(store: Store): void {
   for (const thread of store.threads.list()) {
     if (thread.ref.source !== 'feishu' || typeof thread.meta.url === 'string' || store.read.firstTrigger(thread.key)?.url) continue
     const chatId = thread.ref.id.split(':')[0]
-    if (chatId) store.threads.save({ ...thread, meta: { ...thread.meta, url: feishuChatLink(lark ? 'lark' : 'feishu', chatId) } })
+    if (chatId) store.threads.save({ ...thread, meta: { ...thread.meta, url: chatLink(lark ? 'lark' : 'feishu', chatId) } })
   }
 }
 /**

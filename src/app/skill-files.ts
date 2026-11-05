@@ -1,5 +1,5 @@
 /** Loads packaged built-in skill definitions and prompt templates from disk. */
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import { packagePath } from '../infra/paths.ts'
 /**
  * Reads a packaged text file with normalized Unix line endings.
@@ -21,7 +21,10 @@ function load(name: string) {
   if (!match) throw new Error(`Invalid packaged skill: ${path}`)
   return { name: match[1]!, description: match[2]!, content: match[3]!, path }
 }
-export const bundledSkills = { feishu: load('feishu'), github: load('github') }
+/** The packaged skills (`skills/dsh-superagent-<name>`), by name in name order; a Source kind names the one it brings (`SourceKind.skill`). */
+export const bundledSkills: Readonly<Record<string, ReturnType<typeof load>>> = Object.fromEntries(readdirSync(packagePath('skills'))
+  .filter(directory => directory.startsWith('dsh-superagent-')).sort().map(directory => directory.slice('dsh-superagent-'.length))
+  .map(name => [name, load(name)]))
 /**
  * Loads a built-in prompt file (`prompts/<name>.md`). Source `.md` files are written one sentence per line for
  * readable diffs; `promptFile` joins lines within each paragraph with spaces while keeping blank-line paragraph breaks.

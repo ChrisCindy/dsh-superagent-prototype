@@ -82,6 +82,8 @@ export interface ExecutorHost {
   sourceLink(trigger: Trigger, signal?: AbortSignal): Promise<{ source_url?: string; source_url_read?: string }>
   /** Stored Trigger of the message `trigger` replies to, when it replies to one. */
   repliedTo(trigger: Trigger): Trigger | undefined
+  /** The number of the change a ticket card in a relay shows (`SourceRegistry.pull`). */
+  pullOf(ticket: Pick<Ticket, 'follows'>): number | undefined
 }
 /** Looks up a ticket's origin trigger in Store. */
 export const sourceTrigger = (host: { store: Pick<Store, 'triggers'> }, ticket: Ticket): Trigger | undefined =>
@@ -465,10 +467,12 @@ export class DshExecutor implements Executor {
   private failed(ticketId: string, summary: string): void {
     this.host.store.atomic(() => {
       const updated = this.host.engine.report(ticketId, { state: 'failed', summary })
-      this.relay(resultRelay(updated, 'failed', summary))
+      this.relay(resultRelay(updated, 'failed', summary, this.pullOf))
     })
   }
   private relay({ id, text }: { id: string; text: string }): void { this.host.sessions.relay(id, text) }
+  /** The change number of a ticket card in a relay, as the host gives it. */
+  private readonly pullOf = (ticket: Pick<Ticket, 'follows'>): number | undefined => this.host.pullOf(ticket)
   private async launch(ticket: Ticket, assignment: Assignment): Promise<void> {
     const current = () => {
       if (this.host.closing()) throw new Error('dsh-superagent is stopping')
@@ -585,7 +589,7 @@ export class DshExecutor implements Executor {
     this.host.store.atomic(() => {
       const updated = this.host.engine.budgetSpent(ticketId, assignment.id, question)
       if (updated.assignments.find(item => item.id === assignment.id)?.endedReason !== 'budgetSpent') return
-      const relay = reportRelay(updated, { state: 'blocked', summary: question, question })
+      const relay = reportRelay(updated, { state: 'blocked', summary: question, question }, this.pullOf)
       if (relay) this.relay(relay)
     })
   }
@@ -744,9 +748,9 @@ export class DshExecutor implements Executor {
       const before = latestReport(current)?.summary ?? ''
       const updated = this.host.engine.report(ticket.id, { state: 'waiting', summary: said || before })
       // A quiet final after orchestrator_report is not a new status or an empty handoff.
-      if (said) this.relay(resultRelay(updated, 'waiting', said))
+      if (said) this.relay(resultRelay(updated, 'waiting', said, this.pullOf))
       else if (!before.trim()) {
-        this.relay(resultRelay(updated, 'waiting', 'Worker ended without a status report. Use orchestrator_ticket_request_status to request one.'))
+        this.relay(resultRelay(updated, 'waiting', 'Worker ended without a status report. Use orchestrator_ticket_request_status to request one.', this.pullOf))
       }
     })
   }

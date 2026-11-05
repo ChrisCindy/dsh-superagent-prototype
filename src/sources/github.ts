@@ -4,12 +4,13 @@ import { key, type Thread } from '../core/index.ts'
 import { sameName } from '../infra/text.ts'
 import { GithubAccountsSchema } from '../deployment.ts'
 import { CliError, validItems, type Tally } from '../infra/commands.ts'
-import { ciCounts, ciFact, ciFailures, ciSummary, githubThreadContext, pullChecks } from './github-read.ts'
+import { ciCounts, ciFact, ciFailures, ciSummary, githubThreadContext, pullChecks, readGithub, readRepositoryPath } from './github-read.ts'
 import { branchCiTrigger, ciTrigger, commentTrigger, CommentSchema, githubAddress, issueTrigger, IssueSchema, pullTrigger, SOURCE }
   from './github-trigger.ts'
 import { githubLink, sendGithub } from './github-channel.ts'
 import type { GithubComment, PullRef } from './github-trigger.ts'
-import { observePull, pullsOf, readPull, type Pull } from './github-pull.ts'
+import { claimPull, observePull, pullEndNotices, pullOf, pullsOf, readPull, readyChanges, type Pull } from './github-pull.ts'
+import { requestMerge } from './github-merge.ts'
 import { health, sourceContext, type Health, type SourceContext } from './host.ts'
 import { KV } from '../kv.ts'
 import { cursorAt, pause, POLL_HORIZON_MS, pollThreads as pollEach } from './poll.ts'
@@ -39,6 +40,7 @@ export const githubKind: SourceKind<GithubConfig> = {
   kind: SOURCE,
   title: { zh: 'GitHub', en: 'GitHub' },
   description: { zh: '智能体的 GitHub 账号；接收仓库里发给它的通知、已订阅 Issue 与 PR 的讨论、CI 状态变化和 PR 合并关闭。每个仓库一个 GitHub 来源，共用智能体的账号。', en: 'The agent\'s GitHub accounts; receives notifications to it in the repository, discussion on subscribed Issues and PRs, CI changes, and PR merge or close. Each repository has its own GitHub Source, and they share the agent\'s account.' },
+  setup: Object.keys(GithubAccountsSchema.shape),
   schema: GithubConfigSchema,
   fields: [
     { key: 'repository', type: 'text', pattern: '[A-Za-z0-9_.\\-]+/[A-Za-z0-9_.\\-]+', label: { zh: '监听的仓库', en: 'Repository' },
@@ -65,13 +67,37 @@ export const githubKind: SourceKind<GithubConfig> = {
   // Every GitHub instance acts as the one agent account, so a new instance starts with the first instance's CLI.
   shared: ['cli'],
   channel: { send: sendGithub, link: githubLink },
+  resources: {
+    names: [{ name: 'github/…', holds: 'a GitHub original, as the dsh-superagent-github skill describes; another GitHub Source\'s under its id, such as github-docs/…' }],
+    open: ({ resource, prefix, commands }) => () => readGithub(commands, resource, prefix),
+  },
   threadContext: githubThreadContext,
+  read: readRepositoryPath,
+  skill: { name: 'github' },
   // `#12` or `12` names Thread 12 of every instance; the page of an Issue or PR names it on the instance of that repository, or
   // on every instance whose repository is not set.
   find: (query, { id, config }) => {
     const page = /github\.com\/([^/]+\/[^/]+)\/(?:pull|issues)\/(\d+)/.exec(query)
     const number = page && (!config.repository || sameName(page[1]!, config.repository)) ? page[2] : page ? undefined : /^#?(\d+)$/.exec(query.trim())?.[1]
     return { threads: number ? [`${id}:${number}`] : [], terms: [] }
+  },
+  // A ticket claims its source PR, or a PR of the agent account from a branch named after it; the host checks a merge request.
+  claim: {
+    account: ctx => ctx.deployment.github.login,
+    pull: ticket => pullOf(ticket),
+    async report(ctx, ticket, report, signal) {
+      const pull = report.pull !== undefined ? await readPull(ctx, report.pull, signal) : undefined
+      // The host reads what each PR the ticket opened changes, so a ready report beyond the Mandate's paths waits for a person.
+      const changes = await readyChanges(ctx, ticket, report.state, pull, signal)
+      return { changes, bind: () => pull ? claimPull(ctx, ticket.id, pull) : undefined }
+    },
+    merge: (ctx, ticket, pull, merge, signal) => requestMerge(ctx, ticket, pull, merge, signal),
+  },
+  // A ticket that ends with its PR tells its other conversations, such as a Feishu chat, that the PR merged or closed.
+  ticketEnded(ctx, ticket) {
+    if (!ctx.configured()) return
+    const request = ctx.triggers.get(ticket.origin.triggerId)?.text ?? ''
+    for (const message of pullEndNotices(ticket, request, ctx.deployment.repositories)) ctx.notify(message)
   },
   policy: {
     schema: z.object({ allowed: z.array(z.object({ id: z.string().regex(/^[A-Za-z0-9-]+$/) }).strict()).default([]),

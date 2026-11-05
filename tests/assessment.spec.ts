@@ -44,7 +44,7 @@ function setup(strength: 'explicit' | 'inferred' = 'inferred', bodies = Array.fr
   const host: AssessorHost = {
     correlatedThreads: thread => correlatedThreads(records, thread),
     get engine() { return engine }, commands, deployment: testDeployment(), settings: () => SettingsSchema.parse({}),
-    threadContext: threadContext ?? (trigger => sources.threadContext(trigger)), githubSource: () => 'github',
+    threadContext: threadContext ?? (trigger => sources.threadContext(trigger)), readRepository: (commands, trigger, path, kind) => sources.readRepository(commands, trigger, path, kind), pull: ticket => sources.pull(ticket),
     effects: { enqueue: () => {}, handle: () => {} }, paused: () => false, deliver: async () => {}, candidateCard: async candidate => ({ eval_id: candidate.evalId }),
   }
   const assessor = new MasterAssessor(host)

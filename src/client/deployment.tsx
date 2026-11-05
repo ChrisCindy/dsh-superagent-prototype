@@ -10,7 +10,7 @@ import type { SetupView } from './api.ts'
 import { InfoTip, Input } from './controls.tsx'
 import { SaveBar, useDraft } from './draft.tsx'
 import { PanelProvider, usePanel, usePanelData } from './provider.tsx'
-import { Field, Fields } from './settings-kit.tsx'
+import { ConfigHistory, Field, Fields, numberOf, useBlockDraft, useSettings } from './settings-kit.tsx'
 import { setupText, type T } from './text.ts'
 import { CheckSetupButton, Hint, KeyValues, Section, SetupMessage } from './widgets.tsx'
 
@@ -81,6 +81,36 @@ export function DeploymentPage({ setup, form, accounts: showAccounts }: { setup:
     </Fields>
     {editable && <SaveBar {...draft} onDiscard={draft.discard} />}
   </form>
+}
+
+/**
+ * How long the daily prune keeps records: days after a Thread's last Trigger and a Ticket's end, and how many settings and
+ * prompt versions. A panel-only settings block, so it renders inside the settings, not on the Plugin Manager page.
+ */
+export function RetentionBlock() {
+  const { t } = usePanel()
+  const block = useSettings().settings.blocks.retention
+  const saved = { days: String(block.value.days), settingsVersions: String(block.value.settingsVersions),
+    promptVersions: String(block.value.promptVersions) }
+  const draft = useBlockDraft('retention', saved, block.revision, value => ({ days: numberOf(value.days),
+    settingsVersions: numberOf(value.settingsVersions), promptVersions: numberOf(value.promptVersions) }))
+  const field = (key: keyof typeof saved, label: string, limits: { min: number; max: number }, hint?: string) => <Field label={label}
+    hint={hint}>
+    <Input type="number" min={limits.min} max={limits.max} step={1} required value={draft.value[key]}
+      onChange={event => draft.edit({ ...draft.value, [key]: event.target.value })} />
+  </Field>
+  return <div className="dt-form">
+    <form className="dt-form dt-block" onSubmit={event => { void draft.submit(event) }}>
+      <Fields disabled={draft.busy}>
+        <h2 className="dt-block-title">{t('retention')}<InfoTip text={t('retentionIntro')} /></h2>
+        {field('days', t('retentionDays'), LIMITS.retentionDays, t('retentionDaysHint'))}
+        {field('settingsVersions', t('retentionSettings'), LIMITS.retentionVersions)}
+        {field('promptVersions', t('retentionPrompts'), LIMITS.retentionVersions)}
+      </Fields>
+      <SaveBar {...draft} onDiscard={draft.discard} />
+    </form>
+    <ConfigHistory blocks={['retention']} />
+  </div>
 }
 
 /** Plugin Manager config page; includes derived repository and accounts because Source settings live in the main panel. */

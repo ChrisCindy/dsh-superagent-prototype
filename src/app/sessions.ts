@@ -43,7 +43,7 @@ export interface SessionsHost {
  * What Sessions registered for an agent it decorated: the releases of its prompt section, tools and skill scope, the scope
  * its skills are registered in, and the skills of one prompt revision; for a worker's subagent, only its tool limits.
  */
-interface SessionBinding { disposers: (() => void)[]; scope?: Context; skills?: { revision: number; dispose: () => void }; subagent?: true }
+interface SessionBinding { disposers: (() => void)[]; scope?: Context; skills?: { revision: number; names: string; dispose: () => void }; subagent?: true }
 
 /** The agent presets Executor Sessions and the main Session are created with, which the bundle's patch defines. */
 export const WORKER_PRESET = 'dsh-superagent-worker', ROUTER_PRESET = 'dsh-superagent-router'
@@ -327,20 +327,31 @@ export class Sessions {
     if (ticketId === undefined || !this.host.store.tickets.get(ticketId)) return
     this.bindings.set(agent, { disposers: this.workOnly(agent, ticketId), subagent: true })
   }
-  /** Register the skills of a prompt version in the agent's skill scope, in place of an earlier version's. */
+  /**
+   * Register the skills of a prompt version in the agent's skill scope, in place of an earlier version's, and again when the
+   * Source skills change, such as when a Source kind registers after the Session started.
+   */
   private bindSkills(binding: SessionBinding, version: PromptVersion): void {
     const { scope, skills: previous } = binding
-    if (!scope || previous?.revision === version.revision) return
+    if (!scope) return
+    const skills = this.host.prompts.skills(version.config)
+    const names = skills.map(([name]) => name).join('\n')
+    if (previous?.revision === version.revision && previous.names === names) return
     previous?.dispose()
     const disposers: (() => void)[] = []
-    for (const [name, content] of this.host.prompts.skills(version.config)) {
-      const bundled = name === 'feishu' || name === 'github' ? bundledSkills[name] : undefined
+    for (const [name, content] of skills) {
+      const bundled = Object.hasOwn(bundledSkills, name) ? bundledSkills[name] : undefined
       const body = version.config.skills[name] ?? ''
       const description = bundled?.description ?? (body.replace(/\s+/g, ' ').slice(0, 120) || 'Custom dsh-superagent operational skill.')
       disposers.push(scope.skills.register({ name: `${SKILL_PREFIX}${name}`, description, content, source: 'runtime',
         ...(bundled ? { resourceBase: { kind: 'directory' as const, path: dirname(bundled.path) } } : {}) }))
     }
-    binding.skills = { revision: version.revision, dispose: () => { disposers.forEach(dispose => dispose()) } }
+    binding.skills = { revision: version.revision, names, dispose: () => { disposers.forEach(dispose => dispose()) } }
+  }
+  /** Rebinds each Session's skills, so the skill of a Source kind that registers or unregisters is added or removed. */
+  refreshSkills(): void {
+    const version = this.host.prompts.current()
+    for (const binding of this.bindings.values()) this.bindSkills(binding, version)
   }
   /** Return the current prompt version, updating the agent's skills and recording the revision in Store when bound to a model request. */
   private promptFor(agent: Agent, bind: boolean): PromptVersion {

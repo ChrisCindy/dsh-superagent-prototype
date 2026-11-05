@@ -150,3 +150,17 @@ it('ends a restart that never stopped answering after half a minute, and reads t
   await advance(2_000)
   expect(reads()).toBe(ended + 1)
 })
+
+it('saves the retention block below the Deployment settings, as the panel alone may', async () => {
+  server.form = fakeForm().form
+  at({ page: 'settings', query: { group: 'deployment' } })
+  await mount()
+  expect(text()).toContain(zh.retention)
+  expect(field<HTMLInputElement>(zh.retentionDays).value).toBe('90')
+  await type(field<HTMLInputElement>(zh.retentionDays), '30')
+  // Only this block's save bar shows, since the Deployment settings above have no draft.
+  await click(zh.save)
+  expect(server.requests.filter(request => request.method === 'PUT')).toEqual([{ path: 'settings/retention', method: 'PUT',
+    body: { value: { days: 30, settingsVersions: 200, promptVersions: 200 }, revision: 0 } }])
+  expect(server.settings.retention.days).toBe(30)
+})

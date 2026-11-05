@@ -1,11 +1,9 @@
 /** Source message link resolution and candidate card assembly for the main Session. */
 import { handbacksOf, reachedTickets, type Candidate, type Thread, type Ticket, type Trigger } from '../core/index.ts'
 import type { Commands } from '../infra/commands.ts'
-import { readFeishuLink } from '../sources/feishu-read.ts'
-import { feishuRef, feishuSettings } from '../sources/feishu.ts'
 import type { SourceRegistry } from '../sources/registry.ts'
 import { triggerMessage } from '../executor/dsh.ts'
-import { CORRELATED, correlatedCard, relatedTickets, ticketCard, triggerCard } from './cards.ts'
+import { CORRELATED, correlatedCard, relatedTickets, ticketCard, triggerCard, type PullOf } from './cards.ts'
 import type { Store } from './store.ts'
 import type { TextCache } from './cache.ts'
 import { attribute } from './views/text.ts'
@@ -19,25 +17,25 @@ export interface LinkHost {
   readonly lifetime: AbortSignal
 }
 
-/** Resolves and caches a trigger's external message URL, falling back to a readable resource path when lookup fails. */
+/**
+ * Resolves and caches a trigger's external message URL through its Channel's `messageLink`, falling back to the resource that
+ * reads the message when the lookup fails.
+ */
 export async function sourceLink(host: LinkHost, trigger: Trigger, signal?: AbortSignal): Promise<{ source_url?: string; source_url_read?: string }> {
   if (trigger.url) return { source_url: trigger.url }
-  const ref = feishuRef(trigger)
-  if (!ref) return {}
-  const cacheKey = `${ref.chatId}:${ref.messageId}`
-  const cached = host.links.get(cacheKey)
+  const link = host.sources.messageLink(trigger)
+  if (!link) return {}
+  const cached = host.links.get(link.key)
   if (cached) return { source_url: cached }
   let url: string
-  try {
-    const timeout = AbortSignal.timeout(feishuSettings(host.sources).linkTimeoutMs)
-    url = await readFeishuLink(host.commands.withSignal(AbortSignal.any([signal ?? host.lifetime, timeout])), ref)
-  } catch {
+  try { url = await link.read(host.commands, signal ?? host.lifetime) }
+  catch {
     host.lifetime.throwIfAborted()
     signal?.throwIfAborted()
     // Optional link enrichment may fail independently of the retained source message.
-    return { source_url_read: `feishu/${trigger.id}/message` }
+    return { source_url_read: link.fallback }
   }
-  host.links.set(cacheKey, url)
+  host.links.set(link.key, url)
   return { source_url: url }
 }
 
@@ -81,10 +79,11 @@ export async function candidateCard(host: LinkHost, candidate: Candidate) {
     .map(item => ({ trigger_id: trigger.id, ticket_id: item.ticketId, reason: item.reason })))
   // Format the primary trigger like a worker input (including the message it replies to) and summarize earlier batch triggers as cards.
   const others = candidate.triggers.filter(trigger => trigger.id !== primary.id)
+  const pullOf: PullOf = ticket => host.sources.pull(ticket)
   return { ...triggerMessage(primary, await sourceLink(host, primary), undefined, repliedTo(host, primary)), strength: candidate.strength,
     mode: settings.eval.mode, ...others.length ? { batch: others.map(trigger => triggerCard(trigger)) } : {},
-    ...handedBack.length ? { handed_back: handedBack } : {}, ...relatedTickets(candidate.tickets),
-    ...(delivered.length ? { delivered_to: delivered } : {}), ...(referenced.length ? { referenced_tickets: referenced.map(ticketCard) } : {}),
+    ...handedBack.length ? { handed_back: handedBack } : {}, ...relatedTickets(candidate.tickets, pullOf),
+    ...(delivered.length ? { delivered_to: delivered } : {}), ...(referenced.length ? { referenced_tickets: referenced.map(ticket => ticketCard(ticket, pullOf)) } : {}),
     ...correlatedThreads(host.store, candidate.thread),
     next_action: candidate.strength === 'explicit' ? 'Route it with orchestrator_route as dispatch says: accept, attach, stop or ignore.'
       : 'Ignore it with orchestrator_route if the card shows it touches no enabled rule; else assess it with orchestrator_eval, orchestrator_eval_read, then orchestrator_eval_decide.' }

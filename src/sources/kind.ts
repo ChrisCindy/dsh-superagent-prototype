@@ -1,9 +1,10 @@
 /** SourceKind plugin contract: configuration schema, UI form fields, policy integration, channel adapter, and thread context reader. */
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { z } from 'zod'
-import type { OutboundMessage, ScopeResult, Trigger } from '../core/index.ts'
+import type { OutboundMessage, PullChanges, ScopeResult, Ticket, Trigger } from '../core/index.ts'
 import type { Deployment } from '../deployment.ts'
 import type { Commands } from '../infra/commands.ts'
+import type { MergeConfig } from '../policy.ts'
 import type { SourceContext, SourceHost } from './host.ts'
 
 export interface Localized { zh: string; en: string }
@@ -46,6 +47,8 @@ export interface ChannelLink { url: string; label: Localized; triggerId?: string
 export interface ChannelLinks { repository?: string; feishu?: Deployment['feishu'] }
 /** Outbound messaging adapter for a source kind's threads. */
 export interface SourceChannel<C> {
+  /** Most words a reply may have; Outbox refuses a longer reply before queueing it. Without it, replies have no limit. */
+  limit?: number
   /** Whether a reply may still go to `address`; without it, every address may receive replies. */
   allowed?(address: Record<string, string>, config: C): boolean
   /**
@@ -55,6 +58,20 @@ export interface SourceChannel<C> {
   send(host: Pick<SourceContext, 'commands'>, message: OutboundMessage): Promise<'sent' | 'gone'>
   /** Returns the URL and label for `address`; `url` is empty when `links` lack the required deployment info. */
   link(address: Record<string, string>, links: ChannelLinks): ChannelLink
+  /** Looks up the URL of a Trigger's own message when its event carried none; without it, such a Trigger has no link. */
+  messageLink?: MessageLink<C>
+}
+/** Lookup of a Trigger's message URL, which the host caches. */
+export interface MessageLink<C> {
+  /** The message's key in the link cache, ending with the ID that search matches; undefined when the Trigger names no message. */
+  key(trigger: Trigger): string | undefined
+  /**
+   * Reads the URL within the kind's own time limit.
+   * @throws when it cannot, such as after a timeout or for a deleted message.
+   */
+  read(commands: Commands, trigger: Trigger, config: C, signal: AbortSignal): Promise<string>
+  /** The resource that reads the message itself, which the host offers when the lookup fails. */
+  fallback(trigger: Trigger): string
 }
 /** Normalized message returned by thread context readers; `bot` marks a non-human sender whose message can never authorize work on its own (at most an inferred candidate). */
 export interface ContextMessage {
@@ -74,6 +91,50 @@ export interface ThreadContext<C> {
   /** Reads one image of a message in the Trigger's Thread as an attachment for `agent`. */
   image?(agent: Agent, commands: Commands, trigger: Trigger, message: { id: string; text: string }, key: string, stateDir: string,
     signal: AbortSignal): Promise<unknown>
+}
+/** What a Source kind's resource read receives: the name, the instance's commands and configuration, and a Trigger lookup. */
+export interface ResourceRead<C> {
+  /** The resource name, which starts with `prefix` and a slash. */
+  resource: string
+  /** The kind's ID, or the ID of the other instance of the kind whose resource this is, such as `github-docs`. */
+  prefix: string
+  /** Commands of that instance. */
+  commands: Commands
+  config: C
+  /** The Trigger `id`, which the reading Session may read. @throws for an unknown Trigger, or one the Session may not read. */
+  trigger(id: string): Trigger
+}
+/** Originals of a Source kind that `orchestrator_read` serves, under the kind's ID or another instance's. */
+export interface SourceResources<C> {
+  /** The resources `orchestrator_read` lists after the host's own, by name and what each holds; Executor Sessions read them too. */
+  names: readonly { name: string; holds: string }[]
+  /**
+   * Checks a resource name and the reader's access, and returns the read that fetches it; the host calls the read at offset 0
+   * and serves the JSON of its result in pages from a cache after.
+   * @throws for a name the kind does not serve, or a Trigger the reader may not read.
+   */
+  open(input: ResourceRead<C>): () => Promise<unknown>
+  /** Resources that read around a Trigger of this kind, which `trigger/<id>` shows as `context`; undefined for none. */
+  references?(trigger: Trigger): Record<string, string> | undefined
+}
+/**
+ * How a kind binds the changes an Executor reports, such as pull requests, to its ticket, and merges one. The host calls it
+ * with the context of the kind's instance the ticket came from (`SourceRegistry.home`), else the first.
+ */
+export interface SourceClaim {
+  /** The account whose changes from a branch named after the ticket the ticket may claim, which the report tool names. */
+  account(ctx: SourceContext): string
+  /** The number of the change a ticket card shows: the newest open one it follows on the kind's first instance, else the newest. */
+  pull(ticket: Pick<Ticket, 'follows'>): number | undefined
+  /**
+   * Prepares a report before its transaction: reads change `pull` when one is reported, and for a `ready` report under a
+   * Mandate with paths, the files of each open change the ticket opened, as `changes`. `bind`, which the host calls in the
+   * report's transaction before recording it, binds the reported change, or returns why it cannot.
+   */
+  report(ctx: SourceContext, ticket: Ticket, report: { state: string; pull?: number }, signal: AbortSignal):
+    Promise<{ changes: PullChanges[]; bind(): string | undefined }>
+  /** Checks change `pull` against the merge settings and the ticket's limits, and enables its auto-merge or lists each failed check. */
+  merge(ctx: SourceContext, ticket: Ticket, pull: number, merge: MergeConfig, signal: AbortSignal): Promise<unknown>
 }
 export interface TriggerContext {
   readonly messageId: string
@@ -95,6 +156,11 @@ export interface SourceKind<C extends Record<string, unknown> = Record<string, u
   description: Localized
   /** Read-only status facts derived from `deployment` (undefined while waiting for setup), keyed by field key. */
   facts?(deployment: Deployment | undefined): Record<string, Localized | string>
+  /**
+   * Configuration keys that setup reads, such as an account CLI: of the kind's first instance, and of each other instance while it
+   * is on. Only the panel may change one; a change is checked before it is saved and restarts dsh-superagent.
+   */
+  setup?: readonly string[]
   /** Validates stored and submitted configuration and fills defaults. */
   schema: z.ZodType<C>
   fields: FieldSpec[]
@@ -107,16 +173,35 @@ export interface SourceKind<C extends Record<string, unknown> = Record<string, u
   scope?(input: { meta: Record<string, unknown> }, config: C): ScopeResult
   /** Outbound reply adapter; kinds without `channel` produce no replies or channel checks. */
   channel?: SourceChannel<C>
+  /** Originals `orchestrator_read` serves under the kind's ID and its other instances' IDs. */
+  resources?: SourceResources<C>
   /** Bounded context reader for assessments; assessments of a kind without `threadContext` read none. */
   threadContext?: ThreadContext<C>
+  /**
+   * Reads a file, or lists a directory, of the repository an assessment reads, with the commands of the instance the Trigger came
+   * from (`SourceRegistry.home`); the first installed kind with `read`, in ID order, serves these reads.
+   */
+  read?(commands: Commands, path: string, kind: 'file' | 'directory'): Promise<string>
   /** Maps a search query to an instance's candidate Thread keys (such as `github:12`) and Trigger search terms (such as a Feishu `om_` ID). */
   find?(query: string, instance: SourceInstance<C>): { threads: string[]; terms: string[] }
   /** Returns the ID of the Trigger whose message this Trigger replies to, when derivable without a network read. */
   repliesTo?(trigger: Trigger): string | undefined
+  /** Binding and merging of the changes an Executor reports; the first installed kind with `claim`, in ID order, provides it. */
+  claim?: SourceClaim
+  /**
+   * Runs in the transaction that ends a ticket, with the context of the kind's first instance, so the kind can tell the ticket's
+   * conversations through `ctx.notify`, such as that its pull request merged.
+   */
+  ticketEnded?(ctx: SourceContext, ticket: Ticket): void
   /** Policy section for kinds whose senders have their own identity. */
   policy?: SourcePolicyPart<Record<string, unknown> & { allowed: { id: string; name?: string }[] }>
   /** Rereads display names for row keys (such as chat names), stores the resolved names in `KV.sources.labels(kind)`, and returns them. */
   refreshLabels?(host: SourceHost, signal?: AbortSignal): Promise<Record<string, string>>
+  /**
+   * The packaged skill (`skills/dsh-superagent-<name>`) every Session gets while the kind is installed, and, with `active`, only
+   * while `active` holds for the deployment, which is undefined while setup waits.
+   */
+  skill?: { name: string; active?(deployment: Deployment | undefined): boolean }
   /** Variables the kind registers with the execution environment and how their values are computed. */
   environment?: { variables: readonly VariableSpec[]; values(input: EnvironmentInput<C>): Record<string, string> }
 }

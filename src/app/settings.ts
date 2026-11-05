@@ -2,7 +2,8 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { z } from 'zod'
 import { UserError, type EngineForSettings, type Ticket } from '../core/index.ts'
-import { EvalConfigSchema, ExecutorConfigSchema, ExecutorNameSchema, PolicyConfigSchema, SettingsSchema, policyEffects, policyVersion } from '../policy.ts'
+import { EvalConfigSchema, ExecutorConfigSchema, ExecutorNameSchema, PolicyConfigSchema, RetentionConfigSchema, SettingsSchema, policyEffects,
+  policyVersion } from '../policy.ts'
 import type { Settings as SettingsValue, SettingsBlock, SettingsOrigin, SettingsSave } from '../policy.ts'
 import type { SourceHost } from '../sources/host.ts'
 import type { HealthBoard, HealthEntry } from '../infra/health.ts'
@@ -54,9 +55,9 @@ interface Block {
   /** `kind` is the Source kind of a `source` block's instance, which a new instance names. */
   parse(value: unknown, sources: SourceRegistry, id: string, kind?: string): unknown
   merge(settings: SettingsValue, value: unknown, id: string): SettingsValue
-  guard?(current: SettingsValue, candidate: SettingsValue, origin: SettingsOrigin, id: string): void
+  guard?(current: SettingsValue, candidate: SettingsValue, origin: SettingsOrigin, id: string, sources: SourceRegistry): void
 }
-const BLOCKS: Record<'policy' | 'eval' | 'executor' | 'source', Block> = {
+const BLOCKS: Record<'policy' | 'eval' | 'executor' | 'retention' | 'source', Block> = {
   policy: {
     parse: (value, sources) => {
       const policy = PolicyConfigSchema.parse(value)
@@ -75,13 +76,16 @@ const BLOCKS: Record<'policy' | 'eval' | 'executor' | 'source', Block> = {
     // Only the management panel may modify shell execution paths or commands, the merge account and its conditions, or the budget.
     guard: (current, candidate, origin) => { if (origin !== 'panel' && environment(current) !== environment(candidate)) throw new UserError('panelOnlyEnvironment') },
   },
+  // What pruning deletes is the panel's alone: the main Session neither reads nor saves the block.
+  retention: { parse: value => RetentionConfigSchema.parse(value), merge: (settings, value) => ({ ...settings, retention: value as SettingsValue['retention'] }),
+    guard: (_current, _candidate, origin) => { if (origin !== 'panel') throw new UserError('unknownBlock', { block: 'retention' }) } },
   source: {
     parse: (value, sources, id, kind) => sources.validate(id, z.object({ enabled: z.boolean(), config: z.unknown(), executor: ExecutorNameSchema.optional() })
       .parse(value), undefined, kind),
     merge: (settings, value, id) => ({ ...settings, sources: { ...settings.sources, [id]: value as SettingsValue['sources'][string] } }),
     // Only the management panel may switch source accounts, or the Executor that runs a Source's tickets.
-    guard: (current, candidate, origin, id) => {
-      if (origin !== 'panel' && setupChanged(current, candidate)) throw new UserError('panelOnlyAccounts')
+    guard: (current, candidate, origin, id, sources) => {
+      if (origin !== 'panel' && setupChanged(current, candidate, sources.installed())) throw new UserError('panelOnlyAccounts')
       if (origin !== 'panel' && current.sources[id]?.executor !== candidate.sources[id]?.executor) throw new UserError('panelOnlyExecutor')
     },
   },
@@ -173,7 +177,7 @@ export class Settings {
   }
   /**
    * Validates and saves one settings block against its `revision`; a no-op save records no new revision, a changed policy
-   * version notifies affected open tickets, and changing a setup-read field (`SETUP_FIELDS`, such as an account CLI), the Executor's
+   * version notifies affected open tickets, and changing a setup-read field (`SourceKind.setup`, such as an account CLI), the Executor's
    * `sandbox` or `writableRoots` (checked first, as setup checks them), or any
    * change saved while waiting for setup (`!this.host.setup.configured()`) restarts `dsh-superagent` so setup runs again.
    * @param origin - Caller origin; refuses Policy and accept-mode changes from `'tool'`, and restricts execution-environment and account-CLI changes to `'panel'` (a guardrail against prompt-injected tool calls, not an OS security boundary, since agents run shell commands; `origin` has no default so no caller receives panel privileges implicitly).
@@ -203,8 +207,8 @@ export class Settings {
       try { await resolveRoleModel(this.host.context, model) }
       catch (error) { throw new UserError('modelUnavailable', { block, error: error instanceof Error ? error.message : String(error) }) }
     }
-    rules.guard?.(current, candidate, origin, id)
-    if (setupChanged(current, candidate)) await this.host.setup.checkAccounts(block, candidate)
+    rules.guard?.(current, candidate, origin, id, this.host.sources)
+    if (setupChanged(current, candidate, this.host.sources.installed())) await this.host.setup.checkAccounts(block, candidate)
     if (confinement(current) !== confinement(candidate)) this.host.setup.checkConfinement(candidate)
     // A changed merge CLI is checked before it is saved; it takes effect at the next merge request, without a restart.
     if (candidate.executor.merge.cli !== current.executor.merge.cli) await this.host.setup.checkMergeCli(candidate.executor.merge)
@@ -217,7 +221,7 @@ export class Settings {
       return { saved: true, revision: store.blockRevision(block), policy_changed: false, restarting: false, context_delivery: delivery }
     }
     // A changed sandbox or writable root restarts too, so setup checks it and every managed Session takes its new preset.
-    const restarting = setupChanged(old, settings) || confinement(old) !== confinement(settings) || !this.host.setup.configured()
+    const restarting = setupChanged(old, settings, this.host.sources.installed()) || confinement(old) !== confinement(settings) || !this.host.setup.configured()
     const before = policyVersion(old), after = policyVersion(settings)
     const scope = (version: SettingsValue) => ({
       scope: (input: { source: string; meta: Record<string, unknown> }) => this.host.sources.scope(input, version) })
@@ -225,7 +229,7 @@ export class Settings {
     const notified = [...effects.keys()]
     store.atomic(() => {
       store.saveSettings(SettingsSchema.parse(settings), { source: origin, block, policyVersion: after, policyChanged: before !== after, notified })
-      if (origin !== 'tool') sessions.notify(...settingsNotice(block, changedPaths(old, settings)))
+      if (origin !== 'tool' && block !== 'retention') sessions.notify(...settingsNotice(block, changedPaths(old, settings)))
       if (before !== after) engine.policyChanged(before, after, effects)
     })
     // Rewrite worker command shims immediately when `blockedCommands` changes.
@@ -284,7 +288,7 @@ export class Settings {
       if (before !== after) engine.policyChanged(before, after, effects)
     })
     // Removing an instance that is on changes what setup resolves; the watch loops of the GitHub plugin start at a restart too.
-    const restarting = setupChanged(old, settings) || !this.host.setup.configured()
+    const restarting = setupChanged(old, settings, this.host.sources.installed()) || !this.host.setup.configured()
     if (restarting) this.host.setup.restart()
     return { removed: true, revision: store.blockRevision(block), restarting }
   }

@@ -5,7 +5,7 @@ import { Button, Icon } from './controls.tsx'
 import { useAction, usePanel, usePanelData } from './provider.tsx'
 import { setupPage, settingsRoute, type Route } from './route.ts'
 import { TicketLine } from './rows.tsx'
-import { healthText, localized, reasonLabel, setupWarningText, valueLabel, readableMarkers } from './text.ts'
+import { healthText, localized, reasonLabel, setupWarningText, span, valueLabel, readableMarkers } from './text.ts'
 import { CheckSetupButton, ConfirmButton, Hint, LoadState, Section, SetupMessage } from './widgets.tsx'
 
 function ProblemLine({ problem, onChanged }: { problem: Problem; onChanged: () => Promise<void> }) {
@@ -116,6 +116,12 @@ export function OverviewPage() {
         {stat(t('executingLabel'), `${data.executor.running} / ${data.executor.maxWorkers}`)}
         {stat(t('queuedLabel'), data.executor.queued)}
         {stat(t('idleLabel'), data.executor.idle)}
+        {/* The main Session's load: the last day's median times of an Eval, and the relays waiting for it, shown once there are any. */}
+        {data.executor.evals.total.count > 0 && <>
+          {stat(t('evalToDeliveryLabel'), span(t, data.executor.evals.delivered.median))}
+          {stat(t('evalToDecisionLabel'), span(t, data.executor.evals.decided.median))}
+        </>}
+        {data.executor.relays > 0 && stat(t('relaysWaitingLabel'), data.executor.relays)}
       </div>}
     </Section>
   </>

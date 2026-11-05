@@ -42,6 +42,15 @@ export function readableMarkers(t: T, text: string): string {
     .replace(/\[Media: [^\]]*\]/g, t('mediaMarker')).replace(/\[Merged forward\]/g, t('forwardMarker'))
     .replace(/@_user_\d+/g, t('unknownMention'))
 }
+/** A duration in milliseconds in its largest whole unit, seconds to days; a dash when there is none. */
+export function span(t: T, ms: number | null): string {
+  if (ms === null) return t('empty')
+  const seconds = Math.round(ms / 1000)
+  if (seconds < 60) return t('spanSeconds', { count: seconds })
+  if (seconds < 3600) return t('spanMinutes', { count: Math.round(seconds / 60) })
+  if (seconds < 48 * 3600) return t('spanHours', { count: Math.round(seconds / 3600) })
+  return t('spanDays', { count: Math.round(seconds / 86_400) })
+}
 const timeLocale = (lang: string) => lang === 'en' ? 'en' : 'zh-CN'
 export function when(value: string | undefined, lang: string): string {
   if (!value) return ''

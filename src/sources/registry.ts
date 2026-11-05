@@ -1,10 +1,11 @@
 /** Registry of installed Source kinds, their configured instances, and the Engine's SourceScope implementation. */
-import type { ChannelRef, OutboundMessage, ScopeResult, SourceScope, Trigger } from '../core/index.ts'
+import type { ChannelRef, OutboundMessage, ScopeResult, SourceScope, Ticket, Trigger } from '../core/index.ts'
 import type { Commands } from '../infra/commands.ts'
+import type { Deployment } from '../deployment.ts'
 import { HealthBoard, type HealthEntry } from '../infra/health.ts'
 import { AdmissionTableSchema, type Settings } from '../policy.ts'
-import { instanceHealth, type ChannelLink, type ChannelLinks, type SourceInstance, type SourceKind, type TriggerContext, type VariableSpec }
-  from './kind.ts'
+import { instanceHealth, type ChannelLink, type ChannelLinks, type SourceInstance, type SourceKind, type SourceResources, type TriggerContext,
+  type VariableSpec } from './kind.ts'
 
 type Stored = Settings['sources'][string]
 
@@ -63,6 +64,8 @@ export class SourceRegistry implements SourceScope {
     return (this.kinds.get(instance.kind)?.health ?? []).map(name => ({ name, entry: instanceHealth(instance.kind, instance.id, name) }))
   }
   kind(id: string): SourceKind | undefined { return this.kinds.get(id) }
+  /** Every registered kind, in ID order. */
+  installed(): SourceKind[] { return [...this.kinds.values()].sort((a, b) => a.kind.localeCompare(b.kind)) }
   /** The installed kind of instance `id`: its stored `kind`, or the kind with that ID for a kind's first instance. */
   kindOf(id: string, settings = this.settings()): SourceKind | undefined { return this.kinds.get(settings.sources[id]?.kind ?? id) }
   /**
@@ -153,6 +156,58 @@ export class SourceRegistry implements SourceScope {
     const link = this.kindOf(channel.source)?.channel?.link(channel.address, links)
     return link ?? { url: '', label: { zh: channel.source, en: channel.source } }
   }
+  /**
+   * The lookup of `trigger`'s message URL through its instance's Channel, with that instance's configuration and commands, or
+   * undefined when its kind has none or the Trigger names no message.
+   */
+  messageLink(trigger: Trigger, settings = this.settings()): { key: string; fallback: string; read(commands: Commands, signal: AbortSignal): Promise<string> } | undefined {
+    const kind = this.kindOf(trigger.source, settings)
+    const link = kind?.channel?.messageLink
+    const key = link?.key(trigger)
+    if (!kind || !link || key === undefined) return undefined
+    const { config } = this.resolve(kind, trigger.source, settings.sources[trigger.source])
+    return { key, fallback: link.fallback(trigger), read: (commands, signal) => link.read(commands.forSource(trigger.source), trigger, config, signal) }
+  }
+  /** The resources every installed kind serves, kinds in ID order, as `orchestrator_read` lists them. */
+  resourceNames(): { name: string; holds: string }[] {
+    return [...this.kinds.values()].sort((a, b) => a.kind.localeCompare(b.kind)).flatMap(kind => kind.resources?.names ?? [])
+  }
+  /**
+   * The instance whose resources a name starting with `prefix` reads, with its kind's title, resources and the instance's
+   * configuration: for a kind's ID, the instance `origin` has of that kind (see `home`); for another instance's ID, that
+   * instance. Undefined when no installed kind with resources has it.
+   */
+  resources(prefix: string, origin?: string | Pick<Trigger, 'source' | 'threads'>, settings = this.settings()):
+    { id: string; title: string; resources: SourceResources<Record<string, unknown>>; config: Record<string, unknown> } | undefined {
+    const kind = this.kindOf(prefix, settings)
+    if (!kind?.resources) return undefined
+    const id = prefix === kind.kind ? this.home(kind.kind, origin, settings) : prefix
+    return { id, title: kind.title.en, resources: kind.resources, config: this.resolve(kind, id, settings.sources[id]).config }
+  }
+  /**
+   * The installed kind that binds the changes Executors report (the first with `claim`, in ID order) and its instance that
+   * `origin` has (see `home`), or undefined when no installed kind has `claim`.
+   */
+  claimant(origin?: string | Pick<Trigger, 'source' | 'threads'>, settings = this.settings()): { kind: SourceKind; id: string } | undefined {
+    const kind = [...this.kinds.values()].sort((a, b) => a.kind.localeCompare(b.kind)).find(item => item.claim)
+    return kind && { kind, id: this.home(kind.kind, origin, settings) }
+  }
+  /** The packaged skills of the installed kinds that apply to `deployment` (`SourceKind.skill`), kinds in ID order. */
+  skills(deployment: Deployment | undefined): string[] {
+    return this.installed().flatMap(kind => kind.skill && (kind.skill.active?.(deployment) ?? true) ? [kind.skill.name] : [])
+  }
+  /**
+   * Reads `path` of the repository an assessment of `trigger` reads, through the first installed kind with `read`, in ID order,
+   * with the commands of its instance that `trigger` has (see `home`).
+   * @throws when no installed kind has `read`.
+   */
+  async readRepository(commands: Commands, trigger: Pick<Trigger, 'source' | 'threads'>, path: string, kind: 'file' | 'directory'): Promise<string> {
+    const reader = this.installed().find(item => item.read)
+    if (!reader?.read) throw new Error('No installed Source reads repository files')
+    return reader.read(commands.forSource(this.home(reader.kind, trigger)), path, kind)
+  }
+  /** The number of the change a ticket card shows, as the claiming kind's `claim.pull` gives it. */
+  pull(ticket: Pick<Ticket, 'follows'>): number | undefined { return this.claimant()?.kind.claim!.pull(ticket) }
   find(query: string): { threads: string[]; terms: string[] } {
     const found = this.instances().flatMap(instance => {
       const kind = instance.installed ? this.kinds.get(instance.kind) : undefined

@@ -1,11 +1,9 @@
 /** Executor Session tools for reading ticket context, acknowledging requests, managing threads, handing back out-of-scope triggers, requesting a merge, and reporting status. */
 import { z } from 'zod'
-import { actionAllowed, latestAssignment, liveTicket, type EngineForExecutor, type PullChanges, type Ticket } from '../../core/index.ts'
+import { actionAllowed, latestAssignment, liveTicket, type EngineForExecutor, type Ticket } from '../../core/index.ts'
 import { IM_WORDS } from '../../infra/text.ts'
-import { requestMerge } from '../../sources/github-merge.ts'
-import { agentPull, claimPull, pullsOf, readPull, ticketBranch, type Pull } from '../../sources/github-pull.ts'
-import { pullFiles } from '../../sources/github-read.ts'
 import type { SourceContext } from '../../sources/host.ts'
+import type { SourceClaim } from '../../sources/kind.ts'
 import { readResource, type ResourceHost } from '../resources.ts'
 import type { Store } from '../store.ts'
 import { reportRelay, threadFollowedNotice } from '../notices.ts'
@@ -18,31 +16,26 @@ export interface ExecutorToolsHost {
   readonly sessions: Pick<Sessions, 'relay' | 'notify'>
   readonly resources: ResourceHost
   /**
-   * The context of the GitHub Source instance a ticket came from (else the first instance), whose repository and pull-request
-   * rules govern claiming a reported PR and requesting its merge.
+   * The kind that binds reported changes (`SourceRegistry.claimant`) with the context of its instance the ticket came from, else
+   * the first instance, whose repository and pull-request rules govern claiming a reported PR and requesting its merge; undefined
+   * when no installed kind binds changes.
    */
-  github(ticket: Ticket): SourceContext
+  claims(ticket: Ticket): { context: SourceContext; claim: SourceClaim } | undefined
   sendReplies(): Promise<void>
-}
-
-/**
- * The files of each open PR the ticket opened, counting `pull` when the report binds one it opened, for a `ready` report under a
- * Mandate that limits paths; none otherwise.
- */
-async function readyChanges(github: SourceContext, ticket: Ticket, state: string, pull: Pull | undefined, signal: AbortSignal): Promise<PullChanges[]> {
-  if (state !== 'ready' || !ticket.mandate.limits?.paths) return []
-  const own = new Set((ticket.follows ?? []).filter(item => item.own && !item.closed).flatMap(item => pullsOf({ follows: [item] }, false, github.source)))
-  if (pull && pull.state === 'open' && agentPull(pull, github.deployment.github, github.commands.repository) && ticketBranch(ticket, pull.head.ref)) own.add(pull.number)
-  const commands = github.commands.withSignal(signal)
-  return Promise.all([...own].map(number => pullFiles(commands, number)))
 }
 
 export function executorTools(host: ExecutorToolsHost, ticket: Ticket): Tool[] {
   const ticketId = ticket.id
-  const github = host.github(ticket)
+  const claims = host.claims(ticket)
+  // A kind that registers after the tools were built still binds the reports that follow.
+  const claiming = () => {
+    const found = claims ?? host.claims(ticket)
+    if (!found) throw new Error('No Source binds pull requests here: report without pr_number, and ask a person to merge')
+    return found
+  }
   return [
     readTool('Read one page of a resource of this ticket that the resource parameter lists. Follow next_offset, and next_resource where a page names one.',
-      true, (resource, offset, limit, signal) => readResource(host.resources, resource, offset, limit, ticketId, signal)),
+      true, host.resources.sourceResourceNames(), (resource, offset, limit, signal) => readResource(host.resources, resource, offset, limit, ticketId, signal)),
     tool({
       name: 'orchestrator_ack',
       description: 'Acknowledge one original human request before substantial work, as the replies section says; it posts as a reply to that message.',
@@ -99,7 +92,8 @@ export function executorTools(host: ExecutorToolsHost, ticket: Ticket): Tool[] {
       execute: async (args, signal) => {
         const current = host.store.tickets.get(ticketId)
         if (!current || !liveTicket(current)) throw new Error('Ticket ended (PR was closed or work finished); do not resume it')
-        return requestMerge(github, current, args.pull, host.store.settings().executor.merge, signal)
+        const { context, claim } = claiming()
+        return claim.merge(context, current, args.pull, host.store.settings().executor.merge, signal)
       },
     }),
     tool({
@@ -110,18 +104,22 @@ export function executorTools(host: ExecutorToolsHost, ticket: Ticket): Tool[] {
         summary: z.string().min(1),
         human_action: z.string().trim().min(1).max(1000).nullish().describe('One concrete question for a person, also with state=progress; omit to keep the pending one, null to clear it.'),
         question_for_trigger_id: z.string().optional().describe('With human_action: the human message that raised the question, which is asked where that person wrote.'),
-        pr_number: z.number().int().positive().nullish().describe(`The ticket's PR: its source PR, or one by ${github.deployment.github.login} from a branch named after this ticket (DSH_SUPERAGENT_NAME).`),
+        pr_number: z.number().int().positive().nullish().describe(`The ticket's PR: its source PR, or one by ${claims ? claims.claim.account(claims.context) : 'the agent account'} from a branch named after this ticket (DSH_SUPERAGENT_NAME).`),
         reply_to_trigger_id: z.string().optional().describe('The explicit human question this report answers; never for ordinary progress.'),
       }).strict(),
       execute: async (args, signal) => {
         const current = host.store.tickets.get(ticketId)
         if (!current || !liveTicket(current)) throw new Error('Ticket ended (PR was closed or work finished); do not resume it')
-        const pull = args.pr_number != null ? await readPull(github, args.pr_number, signal) : undefined
-        // The host reads what each PR the ticket opened changes, so a ready report beyond the Mandate's paths waits for a person.
-        const changes = await readyChanges(github, current, args.state, pull, signal)
+        // The claiming kind reads the reported PR, and what each PR the ticket opened changes for a ready report under paths.
+        let prepared: Awaited<ReturnType<SourceClaim['report']>> = { changes: [], bind: () => undefined }
+        if (args.pr_number != null || (args.state === 'ready' && current.mandate.limits?.paths)) {
+          const { context, claim } = claiming()
+          prepared = await claim.report(context, current, { state: args.state, ...args.pr_number != null ? { pull: args.pr_number } : {} }, signal)
+        }
+        const { changes } = prepared
         // Claim the PR, record the report, and queue the relay atomically so a rejected PR claim or invalid report leaves no partial state, and a recorded report always reaches the main Session.
         return host.store.atomic(() => {
-          const refused = pull && claimPull(github, ticketId, pull)
+          const refused = prepared.bind()
           if (refused) throw new Error(refused)
           const report = { state: args.state, summary: args.summary, ...(args.human_action !== undefined ? { question: args.human_action } : {}),
             ...(args.question_for_trigger_id ? { askedBy: args.question_for_trigger_id } : {}),
@@ -131,7 +129,7 @@ export function executorTools(host: ExecutorToolsHost, ticket: Ticket): Tool[] {
           const recorded = latestAssignment(updated)?.report
           const relayed = recorded && recorded.state !== report.state ? { ...report, state: recorded.state, summary: recorded.summary,
             question: updated.attention?.question } : report
-          const relay = reportRelay(updated, relayed)
+          const relay = reportRelay(updated, relayed, ticket => host.resources.pull(ticket))
           if (relay) host.sessions.relay(relay.id, relay.text)
           const notification = relay ? 'orchestrator' : 'internal_only'
           return { reported: true, notification, ...(relayed !== report ? { state: recorded!.state } : {}),

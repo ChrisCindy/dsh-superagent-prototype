@@ -133,6 +133,15 @@ it('shows the overview in English', async () => {
     en.flowAcceptedLabel, en.executingLabel, en.queuedLabel, en.idleLabel])
 })
 
+it('shows the main Session\'s load beside the Executor\'s once there is any: the last day\'s median Eval times and the relays waiting', async () => {
+  const spread = (median: number) => ({ count: 3, median, p90: median * 2 })
+  server.metrics = { ...server.metrics, latency: { delivered: spread(4000), decided: spread(150_000), total: spread(154_000) },
+    relay: { waiting: 2, since: '2026-09-23T00:00:00Z' } }
+  await mount(en)
+  expect(all('.dt-stat').slice(-3).map(item => item.textContent)).toEqual([`${en.evalToDeliveryLabel}4 s`,
+    `${en.evalToDecisionLabel}3 min`, `${en.relaysWaitingLabel}2`])
+})
+
 it('lists the unavailable Evals one by one, without the health entry that counts them as a failure of dsh-superagent', async () => {
   server.health.evals = { state: 'error', detail: '1 Eval(s) unavailable in the last hour without a later judgement' }
   await mount()

@@ -1,10 +1,11 @@
-/** Overview view: active system problems, a pending Policy proposal, tickets awaiting human action, executor load, and 24-hour trigger flow. */
+/** Overview view: active system problems, a pending Policy proposal, tickets awaiting human action, executor and main-Session load, and 24-hour trigger flow. */
 import { reasonText, ticketStage, type Decision, type Thread } from '../../core/index.ts'
 import type { Health } from '../../sources/host.ts'
 import type { SetupProblem, SetupWarning } from '../../setup.ts'
 import { anyoneAllowed } from '../../policy.ts'
 import { KV } from '../../kv.ts'
 import type { Store } from '../store.ts'
+import { evalLatency, relayQueue } from './metrics.ts'
 import { awaitingEval, dayAgo, newestFirst, ownersOf, snapshot, threadSummary, type ViewHost } from './records.ts'
 import { sourceHealth, type HealthMap } from './sources.ts'
 import { ticketRow, type ExecutorLoad } from './tickets.ts'
@@ -79,7 +80,9 @@ export function overview(host: ViewHost, health: HealthMap, policyVersionValue: 
   return {
     problems,
     person: open.filter(ticket => ticketStage(ticket).stage === 'person').map(ticket => ticketRow(view, ticket)),
-    executor: { ...load, maxWorkers: settings.executor.maxWorkers, idle: open.filter(ticket => ticketStage(ticket).stage === 'idle').length },
+    // The load on the main Session: how long the last day's Evals took to reach it and to be decided, and the relays waiting for it.
+    executor: { ...load, maxWorkers: settings.executor.maxWorkers, idle: open.filter(ticket => ticketStage(ticket).stage === 'idle').length,
+      evals: evalLatency(store, since), relays: relayQueue(store).waiting },
     flow: { received, filtered, triggers: received - filtered, judged: judgement.judged, accepted: judgement.accepted,
       evaluating: evaluating.length, dropped: store.read.droppedSince(since) },
     policyVersion: policyVersionValue,

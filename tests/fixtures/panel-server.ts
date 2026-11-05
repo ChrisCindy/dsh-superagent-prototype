@@ -12,8 +12,7 @@ import type { DroppedReply, HistoryView, Problem, PromptsView, SetupView, Source
   ThreadRow, TicketPageView,
   TicketRow, TicketStage,
   TriggerRow } from '../../src/client/api.ts'
-import { SETUP_FIELDS } from '../../src/deployment.ts'
-import { EvalConfigSchema, ExecutorConfigSchema, PolicyConfigSchema, SettingsSchema } from '../../src/policy.ts'
+import { EvalConfigSchema, ExecutorConfigSchema, PolicyConfigSchema, RetentionConfigSchema, SettingsSchema } from '../../src/policy.ts'
 import { SetupError, type SetupCode } from '../../src/setup.ts'
 import { feishuChannel } from '../../src/sources/feishu-trigger.ts'
 import { githubChannel } from '../../src/sources/github-trigger.ts'
@@ -110,6 +109,10 @@ export interface PanelServer {
   failing: Extract<Problem, { kind: 'outgoing' }>['outgoing'][]
   /** The main Session's pending Policy proposal, if any. */
   proposal?: Extract<Problem, { kind: 'policy-proposal' }>['proposal'] | undefined
+  /** What `GET metrics` answers; the overview shows its latency and relay queue as the last day's. */
+  metrics: ApiResponse<'GET metrics'>
+  /** The Decisions an Eval in observe mode would have accepted, which `GET decisions` lists by their reason `observed`. */
+  observed: ApiResponse<'GET decisions'>['items']
   /** Further installed kinds whose settings the panel shows, such as the schedule Source's. */
   kinds?: SourceKind[]
 }
@@ -145,7 +148,7 @@ function sourceSettings(): SourceView[] {
     return { id, kind: kind.kind, title, description: kind.description, installed: true,
       value: { enabled: server.settings.sources[id]?.enabled ?? true, config },
         revision: server.revisions[`source:${id}`] ?? 0, removable: id !== kind.kind, multiple: !!kind.multiple,
-      restarts: SETUP_FIELDS[kind.kind] ?? [], fields: kind.fields, facts: kind.facts?.(resolved()) ?? {},
+      restarts: kind.setup ?? [], fields: kind.fields, facts: kind.facts?.(resolved()) ?? {},
       labels: kind.kind === 'feishu' ? { oc_team: '团队群', oc_other: '另一个群', ...server.joined } : {}, ...problem ? { problem } : {},
       ...policy ? { policy } : {} }
   })
@@ -177,7 +180,8 @@ const settingsView = (): ApiResponse<'GET settings'> => ({
   policyVersion: 'abcdef1234567890',
   blocks: { policy: { value: server.settings.policy, revision: server.revisions.policy ?? 0 },
     eval: { value: server.settings.eval, revision: server.revisions.eval ?? 0 },
-    executor: { value: server.settings.executor, revision: server.revisions.executor ?? 0 } },
+    executor: { value: server.settings.executor, revision: server.revisions.executor ?? 0 },
+    retention: { value: server.settings.retention, revision: server.revisions.retention ?? 0 } },
   sources: sourceSettings(),
   environment: { root: '/srv/dsh-superagent/work', variables: [
     { owner: 'executor', enabled: true, variables: [{ key: 'DSH_SUPERAGENT_DIR', description: { zh: '工单的执行目录',
@@ -207,7 +211,8 @@ const overviewView = (): ApiResponse<'GET overview'> => {
         .map(([name, item]) => ({ kind: 'runtime-error' as const, name, detail: item.detail })),
       ...Object.values(server.settings.policy.sources).some(part => part.allowed.length) ? [] : [{ kind: 'no-allowed' as const }],
       ...server.failing.map(outgoing => ({ kind: 'outgoing' as const, outgoing }))],
-    person: server.person, executor: { running: 2, queued: 0, maxWorkers: server.settings.executor.maxWorkers, idle: 1 },
+    person: server.person, executor: { running: 2, queued: 0, maxWorkers: server.settings.executor.maxWorkers, idle: 1,
+      evals: server.metrics.latency, relays: server.metrics.relay.waiting },
     flow: { received: 12, filtered: 2, triggers: 10, judged: 5, accepted: 1, evaluating: 0,
       dropped: server.dropped.filter(item => item.dropped.at >= dayAgo()).length },
     policyVersion: 'abcdef1234567890',
@@ -260,7 +265,7 @@ function initial(): PanelServer {
     en: 'Feishu message' } }
   const defaults = { revision: 0, previousRevision: null, savedAt: '', source: 'defaults' }
   return {
-    health: {}, down: false, pending: 0, opened: [], requests: [], misuse: [], queued: new Set(), dropped: [], failing: [],
+    health: {}, down: false, pending: 0, opened: [], requests: [], misuse: [], queued: new Set(), dropped: [], failing: [], metrics: METRICS, observed: [],
     setup: { machine: MACHINE, problem: null, feishuProblem: null, warnings: [],
       accounts: { repository: 'acme/widgets', repositories: { github: 'acme/widgets' }, agent: 'agent-bot', feishu: { appId: 'cli_bot', brand: 'feishu', botId: 'ou_bot',
         name: 'Widgets Bot' } } },
@@ -302,6 +307,15 @@ const page = <T>(items: T[]) => ({ items, total: items.length, next_offset: null
 const ticketOf = (id: string) =>
   [...server.tickets.open, ...server.person, ...server.tickets.ended].find(ticket => ticket.id === id) ?? server.ticketDetails[id]
 const SourceSave = z.object({ enabled: z.boolean(), config: z.unknown() })
+
+const none = { count: 0, median: null, p90: null }
+/** Metrics of a week with no Evals and no ended Tickets. */
+export const METRICS: ApiResponse<'GET metrics'> = { days: 7, since: '2026-09-16T00:00:00.000Z',
+  evals: { decided: 0, explicit: { judged: 0, accepted: 0, wouldAccept: 0 }, inferred: { judged: 0, accepted: 0, wouldAccept: 0 } },
+  latency: { delivered: none, decided: none, total: none },
+  tickets: { created: 0, ended: 0, outcomes: { completed: 0, merged: 0, closed: 0, dropped: 0, stopped: 0 }, duration: none, toResult: none,
+    held: 0, stopped: 0, budgetSpent: 0, assignments: 0 },
+  relay: { waiting: 0, since: null } }
 
 const ROUTES: { [K in keyof Api]: Route<K> } = {
   'GET state': { answer: stateView },
@@ -353,10 +367,11 @@ const ROUTES: { [K in keyof Api]: Route<K> } = {
   } },
   'POST triggers/:id/requeue': { answer: ({ params }) => { server.queued.add(params.id); return { queued: true } } },
   'GET decisions': { query: ['kind', 'reason', 'window', 'offset', 'limit'], answer: ({ query }) =>
-    ({ items: query.kind === 'ignore' ? [] : [acceptDecision()], next_offset: null }) },
+    ({ items: query.reason === 'observed' ? server.observed : query.kind === 'ignore' ? [] : [acceptDecision()], next_offset: null }) },
   'POST decisions/:id/dismiss': { answer: ({ params }) => params.id === 'u1' ? { dismissed: true } : refuse(404,
     'Unavailable Eval not found') },
   'GET events': { query: ['type', 'since', 'before', 'limit'], answer: () => ({ items: [], next_before: null }) },
+  'GET metrics': { query: ['days'], answer: () => server.metrics },
   'GET tickets': { query: ['state', 'offset', 'limit'], answer: ({ query }) => page(server.tickets[query.state === 'ended' ? 'ended'
     : 'open']) },
   'GET tickets/:id': { answer: ({ params }) => server.ticketDetails[params.id] ?? refuse(404, 'Ticket not found') },
@@ -392,13 +407,14 @@ const ROUTES: { [K in keyof Api]: Route<K> } = {
   'PUT settings/:block': { body: true, answer: ({ params: { block }, body }) => {
     const instance = block.startsWith('source:') ? instancesOf().find(item => `source:${item.id}` === block) : undefined
     const source = instance?.kind
-    if (!['policy', 'eval', 'executor'].includes(block) && !source) return block.startsWith('source:') ? refuse(404, 'Source not found')
+    if (!['policy', 'eval', 'executor', 'retention'].includes(block) && !source) return block.startsWith('source:') ? refuse(404, 'Source not found')
       : refuse(400, 'Invalid settings: block')
     if (body.revision !== (server.revisions[block] ?? 0)) return refuse(409, 'Settings changed. Reload before saving.')
     let restarting = false
     if (block === 'policy') server.settings = { ...server.settings, policy: PolicyConfigSchema.parse(body.value) }
     else if (block === 'executor') server.settings = { ...server.settings, executor: ExecutorConfigSchema.parse(body.value) }
     else if (block === 'eval') server.settings = { ...server.settings, eval: EvalConfigSchema.parse(body.value) }
+    else if (block === 'retention') server.settings = { ...server.settings, retention: RetentionConfigSchema.parse(body.value) }
     else if (source) {
       const { enabled, config: value } = SourceSave.parse(body.value)
       const config = source.schema.parse(value)

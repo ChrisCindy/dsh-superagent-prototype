@@ -210,15 +210,25 @@ export const SourcesSchema = z.preprocess(value => value && typeof value === 'ob
     if (id !== kind && !id.startsWith(`${kind}-`)) ctx.addIssue({ code: 'custom', path: [id], message: `The ID of a ${kind} Source instance starts with ${kind}-` })
   }
 }))
+/**
+ * How long the daily prune keeps records (see `src/app/retention.ts`): `days` after a Thread's last Trigger and a Ticket's end,
+ * and how many of the newest settings and prompt versions. Only the panel saves it.
+ */
+export const RetentionConfigSchema = z.object({
+  days: z.number().int().min(LIMITS.retentionDays.min).max(LIMITS.retentionDays.max).default(90),
+  settingsVersions: z.number().int().min(LIMITS.retentionVersions.min).max(LIMITS.retentionVersions.max).default(200),
+  promptVersions: z.number().int().min(LIMITS.retentionVersions.min).max(LIMITS.retentionVersions.max).default(200),
+}).strict()
 export const SettingsSchema = z.object({
   paused: z.boolean().default(false),
   sources: SourcesSchema.default({}),
   policy: PolicyConfigSchema.default(() => PolicyConfigSchema.parse({})),
   eval: EvalConfigSchema.default(() => EvalConfigSchema.parse({})),
   executor: ExecutorConfigSchema.default(() => ExecutorConfigSchema.parse({})),
+  retention: RetentionConfigSchema.default(() => RetentionConfigSchema.parse({})),
 }).strict()
 export type Settings = z.infer<typeof SettingsSchema>
-export type SettingsBlock = 'policy' | 'eval' | 'executor' | `source:${string}`
+export type SettingsBlock = 'policy' | 'eval' | 'executor' | 'retention' | `source:${string}`
 export type SettingsSave = SettingsBlock | 'pause'
 export type SettingsOrigin = 'panel' | 'tool' | 'sync'
 

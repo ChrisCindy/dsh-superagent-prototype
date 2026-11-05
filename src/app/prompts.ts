@@ -23,8 +23,8 @@ const SkillNameSchema = z.string().regex(SKILL_NAME).refine(name => !(Object.key
 /** The built-in parts a team may override, by key: both roles' parts, the Source skills, and the generated parts' templates. */
 const PART_KEYS = ['runtime/shared', 'runtime/orchestrator', 'runtime/worker', 'runtime/subscriptions', 'runtime/replies',
   'runtime/dispatch', 'runtime/work', 'runtime/admission', 'runtime/handoff/orchestrator', 'runtime/handoff/worker', 'runtime/environment',
-  'runtime/policy', 'runtime/policy/none', 'skill/feishu', 'skill/github'] as const
-export type PartKey = typeof PART_KEYS[number]
+  'runtime/policy', 'runtime/policy/none'] as const
+export type PartKey = typeof PART_KEYS[number] | `skill/${string}`
 /** A team's text for a built-in part, and `base`, the key of the built-in text it was edited from. */
 const OverrideSchema = z.object({ text: z.string(),
   base: z.string().optional().describe('Key of the built-in text it was edited from; copy as read, or omit.') }).strict()
@@ -65,8 +65,7 @@ export const builtInParts = (): Readonly<Record<PartKey, BuiltInPart>> => parts 
   'runtime/policy': { roles: MAIN, text: `${POLICY_HEAD} The enabled rules, by name and id:\n{rules}`, placeholders: ['{version}', '{mode}', '{rules}'] },
   'runtime/policy/none': { roles: MAIN, text: `${POLICY_HEAD} No rule is enabled: a proactive candidate can only be ignored.`,
     placeholders: ['{version}', '{mode}'] },
-  'skill/feishu': { roles: BOTH, text: `${sourceSkills.feishu}\n\n## CLI usage\n${cliNotes}` },
-  'skill/github': { roles: BOTH, text: `${sourceSkills.github}\n\n## CLI usage\n${cliNotes}` },
+  ...Object.fromEntries(Object.entries(sourceSkills).map(([name, text]) => [`skill/${name}`, { roles: BOTH, text: `${text}\n\n## CLI usage\n${cliNotes}` }])),
 }
 /** The key of a built-in text, which an override's `base` records. */
 export const builtInBase = (text: string): string => key('prompt-built-in', text)
@@ -75,7 +74,7 @@ export const builtInPart = (part: string): BuiltInPart | undefined =>
   Object.hasOwn(builtInParts(), part) ? builtInParts()[part as PartKey] : undefined
 /** The text of a built-in part: the team's override, else the built-in one. */
 const builtIn = (config: PromptConfig, part: PartKey): string =>
-  (config.overrides && Object.hasOwn(config.overrides, part) ? config.overrides[part]!.text : undefined) ?? builtInParts()[part].text
+  (config.overrides && Object.hasOwn(config.overrides, part) ? config.overrides[part]!.text : undefined) ?? builtInParts()[part]!.text
 /** Fill a template's placeholders in one pass, so text filled in is not read for placeholders again. */
 const fill = (template: string, values: Record<string, string>): string =>
   template.replace(/\{(\w+)\}/g, (match, name: string) => Object.hasOwn(values, name) ? values[name]! : match)
@@ -118,7 +117,7 @@ export function composePrompt(config: PromptConfig, role: Role, environment?: st
   return promptParts(config, role, environment, policy).map(part => part.text).join('\n\n')
 }
 export function composeSkill(config: PromptConfig, name: string): string {
-  return name === 'feishu' || name === 'github' ? builtIn(config, `skill/${name}`) : config.skills[name] ?? ''
+  return Object.hasOwn(sourceSkills, name) ? builtIn(config, `skill/${name}`) : config.skills[name] ?? ''
 }
 
 /** An override whose built-in text changed since its `base`, with that text when kept, or whose part this version no longer has. */
@@ -135,16 +134,17 @@ export class PromptConflict extends Error {}
 export class Prompts {
   private readonly versions: Versions<PromptVersion>
   constructor(private readonly store: Store, private readonly maxChars: () => number, private readonly environment: () => Variable[] | undefined,
-    private readonly feishu: () => boolean) {
+    private readonly builtInSkills: () => readonly string[]) {
     this.versions = new Versions(store, KV.prompts.revision, KV.prompts.version)
   }
   /** A role's prompt; the main Session's Policy section follows the settings as they are now, at each model request. */
   compose(config: PromptConfig, role: Role, variables = this.environment()): string {
     return composePrompt(config, role, environmentSection(config, variables), role === 'orchestrator' ? policySection(this.store.settings(), config) : undefined)
   }
-  /** Returns skills to register in every Session: built-in Source skills (`feishu` only when a Feishu bot is configured) followed by team skills. */
+  /** Returns skills to register in every Session: the built-in skills of the installed Sources that apply (`SourceKind.skill`), followed by team skills. */
   skills(config: PromptConfig): [string, string][] {
-    return [...this.feishu() ? ['feishu'] : [], 'github', ...Object.keys(config.skills)].map(name => [name, composeSkill(config, name)])
+    const builtIn = this.builtInSkills().filter(name => Object.hasOwn(sourceSkills, name))
+    return [...builtIn, ...Object.keys(config.skills)].map(name => [name, composeSkill(config, name)])
   }
   current(): PromptVersion {
     const revision = this.versions.revision()
@@ -208,16 +208,20 @@ export class Prompts {
       if (previous.revision === 0 && !this.versions.get(0)) this.versions.keep(previous)
       // The built-in text each override was edited from, kept to show what an upgrade changed in it.
       for (const [part, { base }] of Object.entries(config.overrides ?? {})) {
-        const text = builtInParts()[part as PartKey].text
+        const text = builtInParts()[part as PartKey]!.text
         if (base === builtInBase(text) && this.store.get(KV.prompts.builtIn(base)) === undefined) this.store.set(KV.prompts.builtIn(base), text)
       }
       return this.versions.save(revision => ({ revision, previousRevision: previous.revision, savedAt: new Date().toISOString(), source, config }))
     })
   }
+  /** The versions newest first from `offset`, which end at the oldest the daily prune kept. */
   history(offset = 0, limit = 20) {
     const current = this.current()
-    const revisions = Array.from({ length: Math.min(limit, Math.max(0, current.revision + 1 - offset)) }, (_, i) => {
-      const version = current.revision - offset - i === 0 && current.revision === 0 ? current : this.version(current.revision - offset - i)
+    const kept = (revision: number) => revision === 0 && current.revision === 0 ? current : this.versions.get(revision)
+    const shown = Array.from({ length: Math.min(limit, Math.max(0, current.revision + 1 - offset)) }, (_, i) => current.revision - offset - i)
+    const gap = shown.findIndex(revision => !kept(revision))
+    const revisions = (gap < 0 ? shown : shown.slice(0, gap)).map(revision => {
+      const version = kept(revision)!
       const { config, ...summary } = version
       const previous = version.previousRevision === null ? undefined : this.versions.get(version.previousRevision)?.config
       // Pre-team-section revisions are not comparable field-by-field.
@@ -232,7 +236,8 @@ export class Prompts {
       const changed = previous ? [...new Set([...Object.keys(before), ...Object.keys(after)])].filter(name => (before as Record<string, string>)[name] !== (after as Record<string, string>)[name]) : []
       return { ...summary, changed }
     })
-    return { revisions, next_offset: offset + revisions.length <= current.revision ? offset + revisions.length : null }
+    const next = offset + revisions.length
+    return { revisions, next_offset: gap < 0 && next <= current.revision && kept(current.revision - next) ? next : null }
   }
 }
 /** Save a new prompt revision and notify the main Session when the change originated outside its own tool call. */

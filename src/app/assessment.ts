@@ -2,13 +2,12 @@
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { z } from 'zod'
 import { reasonText, threadKey, type Assessor, type AssessmentOutcome, type Candidate, type EngineForMainSession,
-  type Thread, type Trigger } from '../core/index.ts'
+  type Thread, type Ticket, type Trigger } from '../core/index.ts'
 import { AdmissionDirectionSchema, GlobSchema, RuleAssessmentSchema, assessmentOutcome, directionAllowed, type Settings } from '../policy.ts'
 import { checkedImText } from '../infra/text.ts'
 import type { Commands } from '../infra/commands.ts'
 import type { Deployment } from '../deployment.ts'
 import { admissionContext } from '../sources/admission-context.ts'
-import { readRepositoryPath } from '../sources/github-read.ts'
 import type { TriggerContext } from '../sources/kind.ts'
 import { relatedTickets } from './cards.ts'
 import { textPage } from './context.ts'
@@ -59,11 +58,13 @@ export interface AssessorHost {
   paused(): boolean
   /** Thread context reader for `trigger`'s Source, or `undefined` when the Source has none. */
   threadContext(trigger: Trigger): TriggerContext | undefined
-  /** The GitHub Source instance whose repository file reads for `trigger` go to: its own, or the first for a Trigger of another kind. */
-  githubSource(trigger: Trigger): string
+  /** Reads a file, or lists a directory, of the repository an assessment of `trigger` reads (`SourceRegistry.readRepository`). */
+  readRepository(commands: Commands, trigger: Trigger, path: string, kind: 'file' | 'directory'): Promise<string>
   /** Delivers a candidate card to the main Session once per request ID, resolving after the Session receives it. */
   deliver(requestId: string, text: string): Promise<void>
   candidateCard(candidate: Candidate): Promise<Record<string, unknown>>
+  /** The number of the change a ticket card shows (`SourceRegistry.pull`). */
+  pull(ticket: Pick<Ticket, 'follows'>): number | undefined
   /** The Threads correlated with `thread` as `correlated_threads`, for reference only, or nothing when it has none. */
   correlatedThreads(thread: Thread): { correlated_threads?: unknown[] }
 }
@@ -220,7 +221,7 @@ export class MasterAssessor implements Assessor {
         return { trigger_id: item.id, actor: item.actor.id, at: item.at, ...text, ...'chars' in text ? { read: `trigger/${item.id}` } : {} }
       }) } : {},
       // The rules are in the main Session's Policy section, which names the version the candidate's Eval was built from.
-      ...relatedTickets(candidate.tickets), ...this.host.correlatedThreads(candidate.thread), policy_version: candidate.policyVersion,
+      ...relatedTickets(candidate.tickets, ticket => this.host.pull(ticket)), ...this.host.correlatedThreads(candidate.thread), policy_version: candidate.policyVersion,
       thread }
   }
   /**
@@ -268,7 +269,7 @@ export class MasterAssessor implements Assessor {
         body = JSON.stringify({ images: references, next_read: next, ...result.body })
       }
       else {
-        body = await readRepositoryPath(commands.forSource(this.host.githubSource(trigger)), read.path!, read.resource === 'directory' ? 'directory' : 'file')
+        body = await this.host.readRepository(commands, trigger, read.path!, read.resource === 'directory' ? 'directory' : 'file')
       }
       snapshots.set(cacheKey, body)
       return textPage(read.resource, body, read.offset, 4000)
