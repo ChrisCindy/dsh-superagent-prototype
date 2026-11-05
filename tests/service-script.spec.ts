@@ -1,4 +1,4 @@
-/** Tests for scripts/dsh-superagent using a temporary checkout path with spaces and stubbed ps, tmux, and dsh binaries. */
+/** `scripts/dsh-superagent` against fake `ps`, `tmux` and `dsh`, and its `login` against a fake DeepSeek Harness token exchange */
 import { execFile, spawn, type ChildProcess } from 'node:child_process'
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, utimesSync, writeFileSync }
   from 'node:fs'

@@ -1,3 +1,4 @@
+/** Source scope, the gate, the admission table, Mandate revalidation, the Policy version, settings migrations and assessment outcomes */
 import { describe, expect, it } from 'vitest'
 import { SettingsSchema, assessmentOutcome, mandateLimits, ticketBudget, policyEffects, settingsPolicy, policyVersion, allowedSender, anyoneAllowed, type Settings } from '../src/policy.ts'
 import { globPattern, outsidePaths, pathAllowed, type MandateBasis } from '../src/core/index.ts'

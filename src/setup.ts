@@ -1,4 +1,7 @@
-/** Structured startup and configuration errors with the settings location where the operator can fix them. */
+/**
+ * Setup problems: `SetupError`, with a code, the place that fixes it and the English text the log, the main Session and the panel share;
+ * and setup warnings (`SETUP_WARNINGS`, `setupWarning`), which leave dsh-superagent running
+ */
 import { fill } from './infra/text.ts'
 
 export type SetupPlace = 'deployment' | 'execution' | 'github' | 'feishu'

@@ -1,4 +1,7 @@
-/** GitHub source kind definition, notification and repository polling loops, and Cordis plugin entry. */
+/**
+ * The GitHub kind and plugin entry, exported as `./github-watch`: a poll round of notifications, the pull requests of open Tickets with
+ * their CI, and subscribed Threads
+ */
 import type { Context } from '@deepseek-ai/cordis'
 import { key, type Thread } from '../core/index.ts'
 import { sameName } from '../infra/text.ts'

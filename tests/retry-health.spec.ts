@@ -1,3 +1,4 @@
+/** Model budget retries */
 import { createAssistantMessage } from '@deepseek-ai/dsh-llm'
 import { SessionSeq, type SessionEvent } from '@deepseek-ai/dsh-session'
 import { expect, it } from 'vitest'

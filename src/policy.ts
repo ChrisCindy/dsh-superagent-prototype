@@ -1,5 +1,6 @@
 /**
- * Runtime settings schemas, assessment validation, and policy gate evaluation.
+ * The Policy: the settings schemas by block, the Policy version, the gate and Mandate revalidation
+ *
  * Who may originate work is configured per Source in that Source's own identities; the Policy never maps a person across Sources.
  */
 import { LIMITS } from './limits.ts'

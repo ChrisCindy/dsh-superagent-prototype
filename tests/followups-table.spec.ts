@@ -1,7 +1,8 @@
 /**
- * Who decides a person's follow-up, as a state-transition table: each row starts a message in one state on one ticket, applies
- * one event, and checks what the state it ends in means. The rows are the rules of docs 002 and 003; they read only what the
- * Engine shows, so the table holds whatever the Engine stores.
+ * Who decides a person's follow-up, one row per state and event, on in-memory repositories
+ *
+ * Each row starts a message in one state on one ticket, applies one event, and checks what the state it ends in means. The rows are the
+ * rules of docs 002 and 003; they read only what the Engine shows, so the table holds whatever the Engine stores.
  */
 import { describe, expect, it, vi } from 'vitest'
 import { Engine, MemoryRepositories, UserError, followupOwners, runningAssignment } from '../src/core/index.ts'

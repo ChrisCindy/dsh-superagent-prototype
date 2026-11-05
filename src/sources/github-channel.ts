@@ -1,4 +1,4 @@
-/** GitHub outbound channel: posts issue/PR comments and review thread replies under the agent account. */
+/** The GitHub Channel: comments and review thread replies, `sent` or `gone` */
 import { z } from 'zod'
 import type { OutboundMessage } from '../core/index.ts'
 import { CliError } from '../infra/commands.ts'

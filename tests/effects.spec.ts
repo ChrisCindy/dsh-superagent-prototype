@@ -1,4 +1,4 @@
-/** The durable effect queue: coalescing, per-kind limits, retries with backoff, health and shutdown. */
+/** The effect queue: coalescing, limits, retries with backoff, health and shutdown */
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'

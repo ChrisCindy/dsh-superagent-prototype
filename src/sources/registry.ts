@@ -1,4 +1,4 @@
-/** Registry of installed Source kinds, their configured instances, and the Engine's SourceScope implementation. */
+/** `SourceRegistry`: the Source kinds and their instances, behind the Engine's `SourceScope` */
 import type { ChannelRef, OutboundMessage, ScopeResult, SourceScope, Ticket, Trigger } from '../core/index.ts'
 import type { Commands } from '../infra/commands.ts'
 import type { Deployment } from '../deployment.ts'

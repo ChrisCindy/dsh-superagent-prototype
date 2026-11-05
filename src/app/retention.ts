@@ -1,6 +1,6 @@
 /**
- * Retention: the daily prune that deletes what the `retention` settings no longer keep, after writing it to an archive in the
- * state directory, and then gives the freed pages back to the file system.
+ * The daily prune: deletes the records the `retention` settings no longer keep, after writing them to an archive, then frees the file's
+ * pages
  */
 import { closeSync, mkdirSync, openSync, writeSync } from 'node:fs'
 import { join } from 'node:path'

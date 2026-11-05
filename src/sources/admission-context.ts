@@ -1,4 +1,7 @@
-/** Bounded thread message window loaded for admission assessments. */
+/**
+ * The bounded window an assessment starts from: the first pages of a Trigger's Thread, read through its kind, and the messages around the
+ * Trigger
+ */
 import type { Commands } from '../infra/commands.ts'
 import type { ContextMessage, TriggerContext } from './kind.ts'
 

@@ -1,3 +1,4 @@
+/** The prompt configuration by section and the line diff */
 import { expect, it } from 'vitest'
 import { SKILL_NAME, defaultPrompts } from '../src/app/prompts.ts'
 import { changedSections, lineDiff, partText, partWith, sectionText, skillNameFree, withOverride, withOverrides, withSection, withoutSkill }

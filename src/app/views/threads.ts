@@ -1,4 +1,4 @@
-/** Thread list, timeline detail, cross-entity search, and decision list views. */
+/** The Thread lists, a Thread's timeline, the search and the Decision list */
 import { threadKey, type Thread, type Ticket, type Trigger } from '../../core/index.ts'
 import type { ThreadFilter } from '../api.ts'
 import type { TextCache } from '../cache.ts'

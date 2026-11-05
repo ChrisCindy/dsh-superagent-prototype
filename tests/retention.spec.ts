@@ -1,4 +1,7 @@
-/** The daily prune: what it deletes and keeps, its archive, the freed pages, and how a pruned Thread's next message is handled. */
+/**
+ * The daily prune on a large generated database: what it deletes and keeps, its archive, the freed pages, and a pruned Thread's next
+ * message, handled as a new one
+ */
 import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'

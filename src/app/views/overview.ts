@@ -1,4 +1,7 @@
-/** Overview view: active system problems, a pending Policy proposal, tickets awaiting human action, executor and main-Session load, and 24-hour trigger flow. */
+/**
+ * The overview: Tickets that need a person, problems with the pending Policy proposal, the last day's flow, and the Executor's and the main
+ * Session's load
+ */
 import { reasonText, ticketStage, type Decision, type Thread } from '../../core/index.ts'
 import type { Health } from '../../sources/host.ts'
 import type { SetupProblem, SetupWarning } from '../../setup.ts'

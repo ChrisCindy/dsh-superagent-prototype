@@ -1,4 +1,4 @@
-/** In-memory repository implementation for testing and ephemeral engine instances. */
+/** `MemoryRepositories`: the Store's repositories in memory, in the Store's order and with its nested rollback, for domain tests */
 import { latestAssignment, type Decision, type Thread, type Ticket, type Trigger, type TriggerDisposition } from './model.ts'
 import type { Repositories } from './ports.ts'
 

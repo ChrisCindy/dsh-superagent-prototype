@@ -1,4 +1,4 @@
-/** Source status view (health, filtered Triggers, dropped replies) and Source settings cards. */
+/** The Source stage: its status, and its settings */
 import { Fragment, useEffect, useState } from 'react'
 import { INSTANCE_ID_MAX, type FieldSpec } from '../sources/kind.ts'
 import { usePoll, type DroppedReply, type SourceStatusRow, type SourceView } from './api.ts'

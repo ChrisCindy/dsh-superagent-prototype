@@ -1,3 +1,4 @@
+/** Feishu image reads */
 import { mkdtempSync, rmSync } from 'node:fs'
 import { writeFile, readdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'

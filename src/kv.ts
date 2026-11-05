@@ -1,6 +1,8 @@
 /**
- * Typed key-value store keys and key families grouped by the single component that owns and writes each family.
- * Readers and writers refer to a record by its entry here so each key is spelled once with its value type.
+ * `KV`: every family of `kv` records with its key, its value's type and its owner, and the `Key` and `Family` types the Store and
+ * `SourceContext.state` take
+ *
+ * Readers and writers refer to a record by its entry here, so each key is spelled once with its value type.
  */
 import type { PromptVersion } from './app/prompts.ts'
 import type { PolicyProposal } from './app/settings.ts'

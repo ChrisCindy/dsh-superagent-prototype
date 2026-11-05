@@ -1,4 +1,7 @@
-/** Concurrency, retry, and validation tests for settings saves, pause toggling, and policy synchronization. */
+/**
+ * Settings saves that race a model or account check, a Policy sync that a save outran, the refusals of the pause, a sync and a block, the
+ * refusal of a tool's Policy or accept-mode change, and the pending Policy proposal
+ */
 import { afterEach, expect, it, vi } from 'vitest'
 import { UserError } from '../src/core/index.ts'
 import { Commands } from '../src/infra/commands.ts'

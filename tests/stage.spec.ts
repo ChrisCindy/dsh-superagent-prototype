@@ -1,3 +1,4 @@
+/** The Ticket stages, row by row */
 import { describe, expect, it } from 'vitest'
 import { canRetry, ticketStage, type Assignment, type ReportState, type Ticket } from '../src/core/index.ts'
 

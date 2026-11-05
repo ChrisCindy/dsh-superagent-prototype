@@ -1,4 +1,4 @@
-/** Pass scheduling, coalescing, and runtime health reporting. */
+/** Passes: one at a time, the ones asked for during a pass run as one after it, and the runtime health a failed pass reports */
 import { expect, it, vi } from 'vitest'
 import { Passes } from '../src/app/passes.ts'
 import type { Trigger } from '../src/core/index.ts'

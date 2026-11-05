@@ -1,6 +1,7 @@
 /**
- * Deployment settings view shared between the panel Settings tab and the DSH Plugin Manager config page.
- * Edits host-level plugin configuration limits through DSH `ConfigForm` when writable.
+ * The Deployment settings, also shown in DeepSeek Harness's Plugin Manager, and the retention block below them
+ *
+ * It edits the host-level plugin configuration through DSH `ConfigForm` when it is writable.
  */
 import { useCallback, useMemo, useSyncExternalStore } from 'react'
 import type { ConfigForm } from '@deepseek-ai/dsh-client-ui-settings/client'

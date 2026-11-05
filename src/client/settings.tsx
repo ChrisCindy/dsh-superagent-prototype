@@ -1,4 +1,4 @@
-/** Settings tab shell routing between stage settings (Sources, Eval, Execution), Prompts, and Deployment. */
+/** The Settings tab: the group navigation and the group on screen */
 import type { StateView } from './api.ts'
 import { DeploymentPage, RetentionBlock, type DeploymentForm } from './deployment.tsx'
 import { EvalSettings } from './eval.tsx'

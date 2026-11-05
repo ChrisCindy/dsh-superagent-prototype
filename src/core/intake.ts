@@ -1,4 +1,4 @@
-/** Trigger ingestion, thread correlation, subscription fan-out, and evaluation queuing. */
+/** `Intake`: Triggers from Sources, to their Tickets and, unless a person's message reached one, to Eval */
 import { key } from './ids.ts'
 import { isoTime, liveTicket, threadKey, transition } from './model.ts'
 import type { Ticket, Trigger, TriggerDisposition } from './model.ts'

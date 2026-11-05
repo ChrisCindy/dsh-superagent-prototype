@@ -1,4 +1,4 @@
-/** Execution status view (active Tickets and pause control) and Execution settings group (Executor capacity and workspace environment). */
+/** The Execution stage: its status, and its settings */
 import { useRef, useState } from 'react'
 import { TICKET_FILTERS, type TicketFilter } from '../app/api.ts'
 import type { Sandbox } from '../policy.ts'

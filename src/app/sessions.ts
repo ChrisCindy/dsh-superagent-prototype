@@ -1,4 +1,7 @@
-/** Lifecycle, prompt/tool/skill decoration, message delivery, and budget retry tracking for orchestrator and worker DSH sessions. */
+/**
+ * Sessions: the DeepSeek Harness Sessions of both roles, with their prompts, tools, skills and permission presets, and the messages
+ * they receive
+ */
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { MessageId } from '@deepseek-ai/dsh-llm'

@@ -1,4 +1,7 @@
-/** Shared panel React contexts, state polling, restart detection, and action runner hook. */
+/**
+ * What every page reads from its host: copy, calls, navigation, notices, the state poll, and `restart`, which reads the state quickly while
+ * dsh-superagent restarts
+ */
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { caller, usePoll, type ApiMessages, type Call, type SetupView, type StateView } from './api.ts'

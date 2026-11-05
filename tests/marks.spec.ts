@@ -1,3 +1,4 @@
+/** The mark of every state the views classify */
 import { expect, it } from 'vitest'
 import { zh } from '../src/client/locales.ts'
 import { decisionMark, reportDot, sourceMark, threadMark, ticketMark } from '../src/client/marks.ts'

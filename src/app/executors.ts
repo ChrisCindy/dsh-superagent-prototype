@@ -1,4 +1,4 @@
-/** The Executors that run Assignments, by name, and which one a new ticket's first Assignment names. */
+/** `Executors`, the registry the Engine's Executor port goes through, and `chosenExecutor`, which Executor a new Ticket runs on */
 import { DEFAULT_EXECUTOR, executorOf, type Assignment, type Executor, type Ticket } from '../core/index.ts'
 import type { Settings } from '../policy.ts'
 

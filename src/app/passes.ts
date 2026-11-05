@@ -1,4 +1,4 @@
-/** Coordinates periodic and on-demand orchestration passes that drive due effects and Engine evaluations. */
+/** Passes, the pass scheduler */
 import type { Engine, ReceiveResult, Trigger } from '../core/index.ts'
 import type { HealthEntry } from '../infra/health.ts'
 import type { Effects } from './effects.ts'

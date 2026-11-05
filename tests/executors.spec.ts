@@ -1,3 +1,4 @@
+/** The Executor registry's dispatch by Assignment, and the choice of a new Ticket's Executor by rule, Source instance and default */
 import { expect, it, vi } from 'vitest'
 import { Executors, chosenExecutor } from '../src/app/executors.ts'
 import type { Assignment, Executor, Ticket } from '../src/core/index.ts'

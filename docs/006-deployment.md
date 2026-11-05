@@ -60,7 +60,7 @@ If a toolchain cannot run in the sandbox, set **Sandbox** to **Full access** in 
 
 ### Agent GitHub account
 
-1. Create a GitHub user account for the agent and give it write access to the repository. A GitHub App cannot be the agent, because dsh-superagent reads the account's notifications.
+1. Create a GitHub user account for the agent and give it write access to the repository. A GitHub App cannot be the agent, because dsh-superagent reads the account's notifications; `docs/adr/0002-agent-account-not-github-app.md` gives the reasons.
 2. Give it a GitHub CLI that uses only its own credentials:
 
    ```sh

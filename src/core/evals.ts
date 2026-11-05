@@ -1,4 +1,4 @@
-/** Evals: the Thread-level assessments of queued Triggers, and the Decisions they end with. */
+/** `Evals`: the Evals of Threads and their Decisions */
 import { key } from './ids.ts'
 import { UserError } from './errors.ts'
 import { liveTicket, ownerState, threadKey } from './model.ts'

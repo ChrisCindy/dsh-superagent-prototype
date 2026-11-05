@@ -1,3 +1,4 @@
+/** The whole application on a simulated DeepSeek Harness host, through tools and HTTP */
 import { Context } from '@deepseek-ai/cordis'
 import { SettingsConflict } from '../src/app/settings.ts'
 import { bindScopeParent } from '@deepseek-ai/dsh-scope'

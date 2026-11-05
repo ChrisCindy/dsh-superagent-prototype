@@ -1,4 +1,7 @@
-/** The schedule Source: its entries, searches, Triggers on GitHub Threads, periods kept across restarts, and its part of the Policy. */
+/**
+ * The schedule Source: entries, searches limited to a repository, Triggers on GitHub Threads, one firing per period across restarts, its
+ * Policy part with the accept mode and the proactive limit, and its plugin
+ */
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'

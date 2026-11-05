@@ -1,3 +1,4 @@
+/** The Thread window of assessments */
 import { expect, it, vi } from 'vitest'
 import { admissionContext, threadWindow } from '../src/sources/admission-context.ts'
 import { Commands } from '../src/infra/commands.ts'

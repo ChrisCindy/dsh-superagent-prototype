@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+/** Session navigation and route memory */
 import { expect, it, vi } from 'vitest'
 import type { ISessions } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'

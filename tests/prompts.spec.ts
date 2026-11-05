@@ -1,3 +1,4 @@
+/** Prompt validation, assembly and versions */
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'

@@ -1,4 +1,7 @@
-/** Domain model of a proactive agent: the concepts and their invariants, independent of any source, policy, or executor. */
+/**
+ * The domain types, among them the typed Ticket and `MandateBasis`, with `threadKey`, `ticketOutcome`, `reached`, `followupOwners`,
+ * `settled`, `waitsForPerson`, `liveTicket`, `runningAssignment`, `latestAssignment` and `latestReport`
+ */
 import type { Reason } from './reasons.ts'
 
 /** Actor identity in the source's own vocabulary; Policy decides which actors may originate work on that Source. */

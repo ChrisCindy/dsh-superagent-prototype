@@ -1,4 +1,4 @@
-/** Runtime health reporting: per-component error states and recovery on subsequent success. */
+/** One health entry per part, each cleared by its own next success */
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { Commands } from '../src/infra/commands.ts'
 import { feishu, startRuntime, type Host } from './fixtures/host.ts'

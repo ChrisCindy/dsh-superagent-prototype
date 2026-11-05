@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-// The Eval status and settings.
+/** The Eval status and settings, against a fake management API answered by route */
 import { act } from 'react'
 import { expect, it } from 'vitest'
 import { en, zh } from '../src/client/locales.ts'

@@ -1,8 +1,4 @@
-/**
- * The permissions of managed Sessions: the permission preset each role runs under by the Executor's `sandbox` setting, and the
- * setup checks that the profile defines those presets and that no extra writable root opens the state DeepSeek Harness and
- * dsh-superagent keep.
- */
+/** The permission preset of each role by the `sandbox` setting, and the setup checks of the presets and the extra writable roots */
 import { realpathSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path'

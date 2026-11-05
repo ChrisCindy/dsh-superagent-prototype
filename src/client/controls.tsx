@@ -1,6 +1,6 @@
 /**
- * Context-free UI primitives styled with `--dsw-alias-*` tokens.
- * Mirrors DSH ui-primitives markup and keyboard behavior without coupling to its internal package API.
+ * Local copies of DeepSeek Harness's controls, which follow its markup, keyboard behaviour and design tokens, since the bundle does not
+ * import `@deepseek-ai/dsh-client-ui-primitives`; they read no context
  */
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ButtonHTMLAttributes, type InputHTMLAttributes, type KeyboardEvent,
   type ReactNode } from 'react'

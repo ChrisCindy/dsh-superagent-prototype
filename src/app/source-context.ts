@@ -1,4 +1,4 @@
-/** Scoped runtime context exposed to each Source kind, isolating Sources from direct Store or Engine access. */
+/** `sourceContextOf`: each Source kind's `SourceContext` */
 import type { EngineForSources, ReceiveResult, Trigger } from '../core/index.ts'
 import type { Deployment } from '../deployment.ts'
 import type { Commands } from '../infra/commands.ts'

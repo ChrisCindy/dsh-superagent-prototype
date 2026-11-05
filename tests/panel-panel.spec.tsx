@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-// Panel search, glossary, route persistence, and host-down fallback.
+/** The panel's search, glossary and route memory, and what it shows while the host is down */
 import { act } from 'react'
 import { expect, it } from 'vitest'
 import { en, zh } from '../src/client/locales.ts'

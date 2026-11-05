@@ -1,4 +1,4 @@
-/** Source message link resolution and candidate card assembly for the main Session. */
+/** `sourceLink`, the page of a Trigger's message, and `candidateCard` */
 import { handbacksOf, reachedTickets, type Candidate, type Thread, type Ticket, type Trigger } from '../core/index.ts'
 import type { Commands } from '../infra/commands.ts'
 import type { SourceRegistry } from '../sources/registry.ts'

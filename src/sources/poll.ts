@@ -1,4 +1,7 @@
-/** Shared polling helpers for subscribed threads, overlap-safe cursors, and timer-friendly delays. */
+/**
+ * What the Sources' loops share: `POLL_HORIZON_MS`, `polled`, `cursorAt`, `pollThreads`, which keeps a failure on its Thread as
+ * `pollError`, and `pause`, a wait that fake timers drive
+ */
 import { liveTicket, type Thread } from '../core/index.ts'
 import type { SourceContext } from './host.ts'
 

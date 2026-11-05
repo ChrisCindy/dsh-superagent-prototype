@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-// The Trigger status and a Thread.
+/** The Trigger status and a Thread, against a fake management API answered by route */
 import { act } from 'react'
 import { expect, it, onTestFinished, vi } from 'vitest'
 import { en, zh } from '../src/client/locales.ts'

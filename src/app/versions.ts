@@ -1,4 +1,4 @@
-/** Versioned record storage backed by numbered snapshots and a current-revision pointer in the Store KV table. */
+/** `Versions`: a record kept as numbered snapshots with a pointer to the current one, for the settings and the prompts */
 import type { Family, Key } from '../kv.ts'
 import type { Store } from './store.ts'
 

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-// The Execution status, a Ticket, and the Execution settings.
+/** The Execution status, a Ticket, and the Execution settings, against a fake management API answered by route */
 import { act } from 'react'
 import { expect, it } from 'vitest'
 import { en, zh } from '../src/client/locales.ts'

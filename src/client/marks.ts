@@ -1,4 +1,7 @@
-/** Pure mappers from domain states (Tickets, Threads, Sources, Decisions) to UI status indicators. */
+/**
+ * The marks of the states the views classify: a Ticket's or a Thread's stage, a Source's state and a Decision's outcome, each as a dot, an
+ * icon, a tone and a label
+ */
 import type { DecisionRow, SourceStatusRow, ThreadRow, TicketStage, TicketSummary } from './api.ts'
 import type { DshSuperagentKey } from './locales.ts'
 import { valueLabel, type T } from './text.ts'

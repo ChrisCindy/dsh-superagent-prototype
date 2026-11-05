@@ -1,4 +1,4 @@
-/** Localization, reason formatting, message marker cleanup, and relative timestamp helpers. */
+/** Copy by key and the wording of domain values, reasons, senders and times */
 import type { Translate } from '@deepseek-ai/dsh-client-ui-slots'
 import type { DshSuperagentKey } from './locales.ts'
 import type { Localized } from '../sources/kind.ts'

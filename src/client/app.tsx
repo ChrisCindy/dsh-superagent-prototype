@@ -1,4 +1,4 @@
-/** Root panel shell: header with global search and glossary, top-level navigation tabs, and active route view. */
+/** The panel: header, search, glossary, tabs and the page of the current route */
 import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import type { SearchView } from './api.ts'
 import { Button, Dot, Icon, Input, Modal, SegmentedTabs } from './controls.tsx'

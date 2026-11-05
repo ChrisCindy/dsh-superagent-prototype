@@ -1,7 +1,9 @@
 /**
- * Process environment and CLI shims that bind git, gh, and lark-cli to the deployment's accounts and block disallowed commands.
- * Variables read by workers avoid `KEY|PASSWORD|SECRET|TOKEN` in their names because DSH strips credential-shaped variables from child environments.
- * Provides default-path guardrails rather than an OS-level security boundary, as workers run under the operator's OS user.
+ * The agent's process environment: command shims, the git configuration and credential helper, `runAsWorker`, and the checks of the
+ * environment and of a Ticket's directory
+ *
+ * Variables read by workers avoid `KEY|PASSWORD|SECRET|TOKEN` in their names because DSH strips credential-shaped variables from child
+ * environments. The shims are default-path guardrails, not an OS-level security boundary: workers run under the operator's OS user.
  */
 import { lstat, mkdir, readdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
 import { realpathSync } from 'node:fs'

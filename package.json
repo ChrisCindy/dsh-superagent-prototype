@@ -50,7 +50,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:e2e": "vitest run --config tests/e2e/vitest.config.ts",
-    "check": "pnpm typecheck && pnpm test && pnpm build"
+    "check": "pnpm typecheck && pnpm test && pnpm build",
+    "docs:tables": "node scripts/doc-tables.ts"
   },
   "engines": {
     "node": "^22.19.0 || >=24.0.0",

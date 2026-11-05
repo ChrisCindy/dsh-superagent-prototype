@@ -1,4 +1,4 @@
-/** Computes structured settings diffs across saved revisions for display in the management panel. */
+/** `policyHistory`: each saved settings revision with what it changed from the one before */
 import type { FieldSpec } from '../sources/kind.ts'
 import type { SourceRegistry } from '../sources/registry.ts'
 import { BudgetSchema, EvalConfigSchema, MergeConfigSchema, RetentionConfigSchema } from '../policy.ts'

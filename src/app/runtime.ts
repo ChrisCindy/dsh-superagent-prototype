@@ -1,4 +1,4 @@
-/** Application composition root and lifecycle manager for dsh-superagent. */
+/** The Runtime, the composition root, with its start and stop */
 import { Service, type Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { SessionId } from '@deepseek-ai/dsh-session'

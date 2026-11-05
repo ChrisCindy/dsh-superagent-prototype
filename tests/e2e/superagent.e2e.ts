@@ -1,6 +1,11 @@
 /**
- * dsh-superagent end to end, on a real DeepSeek Harness installation (tests/e2e/README.md). The scenarios share one
- * installation and run in order, each starting where the previous one left the service.
+ * Only with `pnpm test:e2e` (tests/e2e/README.md): the bundle in a real DeepSeek Harness installation, through `scripts/dsh-superagent` and
+ * the management API, with fake `gh` and `lark-cli` and a scripted model: setup, the API's shapes, a mention through acceptance, the worker
+ * and the result reply, the Feishu bot setup, a second GitHub Source for another repository, a schedule entry's Trigger on an Issue's
+ * Thread that a restart does not repeat, and the escalations of 009 a worker or local process can try (writing the state directory,
+ * merging, the API without the sign-in)
+ *
+ * The scenarios share one installation and run in order, each starting where the previous one left the service.
  */
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'

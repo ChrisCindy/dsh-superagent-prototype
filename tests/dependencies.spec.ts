@@ -1,3 +1,4 @@
+/** That `src/app` imports no module of a specific Source */
 import { readdirSync, readFileSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'

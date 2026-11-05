@@ -1,4 +1,4 @@
-/** Verifies that every class in src has a preceding JSDoc block. */
+/** Every class in `src` has a JSDoc block before it */
 import { readdirSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'

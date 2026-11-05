@@ -1,4 +1,7 @@
-/** Pure helpers for editing prompt sections/skills and computing folded line diffs. */
+/**
+ * The prompt configuration by section, by the team sections, skill names, built-in parts (`part/<key>`, with `withOverride`) and part
+ * headings the prompt views give, and the line diff of the full prompt, as pure functions
+ */
 import type { PromptConfig, PromptsView } from './api.ts'
 import { valueLabel, type T } from './text.ts'
 

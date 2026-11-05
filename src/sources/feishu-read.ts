@@ -1,4 +1,7 @@
-/** Trigger-scoped Feishu context reader; retrieved messages are returned for model inspection without entering intake. */
+/**
+ * The `feishu/` reads of a Trigger's message, its root, parent and topic, and `feishuThreadContext`, which gives them to assessments with
+ * their images
+ */
 import { z } from 'zod'
 import type { Trigger } from '../core/index.ts'
 import { validItems, type Commands } from '../infra/commands.ts'

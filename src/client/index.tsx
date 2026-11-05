@@ -1,4 +1,4 @@
-/** Browser plugin entry point registering the sidebar icon, main management panel, and Plugin Manager config view. */
+/** The client plugin entry: the sidebar entry, the main panel and the page in DeepSeek Harness's Plugin Manager */
 import { useCallback, useEffect, useRef } from 'react'
 import type { Context } from '@deepseek-ai/cordis'
 import type { MainPanelId } from '@deepseek-ai/dsh-client-ui-layout/client'

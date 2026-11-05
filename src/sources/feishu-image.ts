@@ -1,4 +1,4 @@
-/** Downloads Feishu message images and commits them as model-visible attachments during assessment. */
+/** Reads a Feishu message's image as an attachment for the assessing Session */
 import { mkdtemp, readFile, realpath, rm, stat } from 'node:fs/promises'
 import { dirname, extname, join } from 'node:path'
 import type { Agent } from '@deepseek-ai/dsh-agent'

@@ -1,6 +1,7 @@
 /**
- * Structured reason codes and templates for decisions, filtered triggers, and ended assignments.
- * Policy gates and source scopes may also emit their own literal reason codes.
+ * `Reason`, `REASONS` and `reasonText`: why the core recorded a Decision or set a Trigger aside, by code
+ *
+ * Policy gates and Source scopes may also give their own reason codes.
  */
 export const REASONS = {
   said: '{text}',

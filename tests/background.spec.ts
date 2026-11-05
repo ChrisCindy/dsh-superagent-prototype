@@ -1,4 +1,4 @@
-/** A worker's background work in DSH: waiting for its shell jobs and subagents, and stopping them. */
+/** Waiting for a worker's shell jobs and subagents: an end that woke it, and a host that stops */
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { expect, it, vi } from 'vitest'

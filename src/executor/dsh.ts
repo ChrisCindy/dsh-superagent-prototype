@@ -1,4 +1,4 @@
-/** DSH executor: manages one persistent worker session and workspace directory per ticket. */
+/** The DshExecutor, `WorkerSlots`, `ticketExecution`, `inputMessage` and `mandateInstructions` */
 import type { Context } from '@deepseek-ai/cordis'
 import type { SessionEvent, SessionId, SessionLogOffset } from '@deepseek-ai/dsh-session'
 import type { Agent } from '@deepseek-ai/dsh-agent'

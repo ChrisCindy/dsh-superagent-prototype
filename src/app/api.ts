@@ -1,4 +1,7 @@
-/** Type-only management API contract between the web panel and host routes, imported by the panel without bundling host code. */
+/**
+ * `Api`, every route with its parameters, query, body and response, and the filters of the lists; it imports only types, so the panel
+ * bundles it
+ */
 import type { ModelCatalog } from '@deepseek-ai/dsh-api-session-controller/types'
 import type { PromptConfig, Prompts } from './prompts.ts'
 import type { PromptsView, StateView, TicketPageView } from './http.ts'

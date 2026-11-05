@@ -1,4 +1,4 @@
-/** Normalizes GitHub issues, pull requests, comments, reviews, and CI transitions into domain Triggers. */
+/** GitHub comments, reviews, Issue bodies and CI changes as Triggers, and GitHub addresses */
 import { z } from 'zod'
 import { key, type ChannelRef, type Trigger } from '../core/index.ts'
 import { escapeRegExp, sameName } from '../infra/text.ts'

@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+/** The local controls, and the panel's imports, which have no cycle */
 import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { act, useState } from 'react'

@@ -1,4 +1,4 @@
-/** Manages versioned role prompts, behavioral policies, and operational skills independently of access settings. */
+/** Prompts, `builtInParts`, the built-in parts a team may override, and `promptParts`, the order of a role's prompt sections */
 import { z } from 'zod'
 import { UserError, key } from '../core/index.ts'
 import { policyVersion, type Settings, type SettingsOrigin } from '../policy.ts'

@@ -1,4 +1,4 @@
-/** Same-origin client and polling hook for the orchestrator management API. */
+/** Calls and polls of the management API, typed by `src/app/api.ts`, and the Decision filters of the Eval status */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Api, ApiRequest, ApiResponse } from '../app/api.ts'
 import { USER_ERRORS, type UserErrorCode } from '../core/errors.ts'

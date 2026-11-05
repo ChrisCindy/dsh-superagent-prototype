@@ -1,4 +1,4 @@
-/** Source status view: health, 24-hour trigger counts, and recently filtered or dropped messages per Source instance. */
+/** The Source status: each Source instance's state, its last day's counts, and what it filtered and dropped in that day */
 import { threadKey } from '../../core/index.ts'
 import type { Deployment } from '../../deployment.ts'
 import type { Health } from '../../sources/host.ts'

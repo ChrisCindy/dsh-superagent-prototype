@@ -1,4 +1,4 @@
-/** Eval status view (Decision log) and Eval settings group (Policy rules, per-Source admission, and assessor settings). */
+/** The Eval stage: its status, and its settings */
 import { useState } from 'react'
 import { ADMISSION_DEFAULTS, ADMISSION_OPTIONS, type Admission, type AdmissionCell } from '../admission.ts'
 import type { AdmissionRowView } from '../sources/kind.ts'

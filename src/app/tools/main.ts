@@ -1,4 +1,4 @@
-/** Main Session tools for routing triggers, assessing candidates, sending replies, updating settings and prompts, and proposing Policy changes. */
+/** The main Session's tools */
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { z } from 'zod'

@@ -1,4 +1,4 @@
-/** Shared base class and configuration for Engine domain parts. */
+/** `EnginePart`, the base of the Engine's parts, and `EngineOptions` */
 import { UserError } from './errors.ts'
 import { followupOwners, reached, threadKey, transition } from './model.ts'
 import type { OwnerEvent, Thread, ThreadRef, Ticket, Trigger } from './model.ts'

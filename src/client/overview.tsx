@@ -1,4 +1,4 @@
-/** Overview page: pending Tickets requiring human action, active system problems (including a pending Policy proposal), 24-hour flow counts, and Executor load. */
+/** The overview */
 import type { ReactNode } from 'react'
 import { usePoll, type Problem } from './api.ts'
 import { Button, Icon } from './controls.tsx'

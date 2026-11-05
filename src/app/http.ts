@@ -1,4 +1,7 @@
-/** Loopback-only management HTTP routes: a same-origin check for every request and a DeepSeek Harness sign-in for all but `GET state`. */
+/**
+ * The `/orchestrator/api` routes: the same-origin check, the DeepSeek Harness sign-in every route but `GET state` requires, request limits
+ * and one status per kind of failure
+ */
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-client-connection'
 import type {} from '@deepseek-ai/dsh-host-webserver'

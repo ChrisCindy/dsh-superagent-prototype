@@ -1,7 +1,13 @@
+/**
+ * Numbered documents link only to earlier ones, every local link and image resolves, also in the decision records, no document has
+ * merge conflict markers or a Mermaid block, and the module and test tables of 007 Architecture list every module and every test, as
+ * `scripts/doc-tables.ts` writes them
+ */
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
+import { render } from '../scripts/doc-tables.ts'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const NUMBERED = /^(\d{3})-[a-z0-9-]+\.md$/
@@ -48,12 +54,16 @@ describe('documentation', () => {
     expect(violations).toEqual([])
   })
   it('resolves every local link', () => {
-    const files = [...entries.map(name => join(ROOT, name)), ...numbered.map(name => join(ROOT, 'docs', name))]
+    const files = [...entries.map(name => join(ROOT, name)), ...numbered.map(name => join(ROOT, 'docs', name)),
+      ...readdirSync(join(ROOT, 'docs/adr')).filter(name => name.endsWith('.md')).map(name => join(ROOT, 'docs/adr', name))]
     const missing = files.flatMap(file => links(file).filter(target => !existsSync(resolve(dirname(file), target))).map(target => `${file.slice(ROOT.length + 1)} → ${target}`))
     expect(missing).toEqual([])
   })
   it('leaves no merge conflict markers in any document', () => {
     expect(documents.filter(path => /^(<{7}|>{7}) /m.test(read(path)))).toEqual([])
+  })
+  it('draws diagrams as SVG files under docs/images, not as Mermaid blocks', () => {
+    expect(documents.filter(path => /^```mermaid/m.test(read(path)))).toEqual([])
   })
   it('lists every module of src in the module table of 007 Architecture, and only files that exist', () => {
     const modules = listed('Modules')
@@ -64,5 +74,8 @@ describe('documentation', () => {
     const tests = listed('Tests')
     expect(files('tests').filter(path => /\.spec\.tsx?$/.test(path) && !tests.includes(path))).toEqual([])
     expect(tests.filter(path => !existsSync(join(ROOT, path)))).toEqual([])
+  })
+  it('keeps the module and test tables of 007 Architecture as the files describe themselves: run `node scripts/doc-tables.ts`', () => {
+    expect(read('docs/007-architecture.md')).toBe(render(ROOT))
   })
 })

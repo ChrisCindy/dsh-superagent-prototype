@@ -1,4 +1,4 @@
-/** Validation bounds shared between host schemas and management panel forms. */
+/** The limits of the values a person sets, which the settings schemas check and the panel's fields offer */
 export const LIMITS = {
   ruleName: 100,
   ruleInstruction: 2000,

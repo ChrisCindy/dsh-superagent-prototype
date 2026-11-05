@@ -1,4 +1,4 @@
-/** Main-session assessor per-eval state and context loading. */
+/** What the MasterAssessor keeps per Eval, and when it lets go */
 import { expect, it, vi } from 'vitest'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { AssessmentSchema, EvalReadSchema, MasterAssessor, type AssessorHost } from '../src/app/assessment.ts'

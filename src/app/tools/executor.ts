@@ -1,4 +1,4 @@
-/** Executor Session tools for reading ticket context, acknowledging requests, managing threads, handing back out-of-scope triggers, requesting a merge, and reporting status. */
+/** An Executor Session's tools */
 import { z } from 'zod'
 import { actionAllowed, latestAssignment, liveTicket, type EngineForExecutor, type Ticket } from '../../core/index.ts'
 import { IM_WORDS } from '../../infra/text.ts'
