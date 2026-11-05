@@ -84,7 +84,7 @@ These wrappers establish defaults, not a security boundary: a worker can still e
 
 ## Merging
 
-The host checks a merge, and GitHub enforces it; the prompt only says when to ask.
+The host checks a merge, and GitHub enforces it; the prompt only says when to ask. `docs/adr/0006-host-checked-merges.md` records why.
 
 An Executor never merges or enables auto-merge with its `gh`: GitHub attributes the merge to whoever enabled auto-merge, and that must not be the agent account. It calls `orchestrator_merge_request` with the pull request's number. The host refuses unless every check passes:
 

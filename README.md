@@ -30,7 +30,7 @@ Read the numbered documents in order; each builds only on the ones before it.
 - [007 Architecture](docs/007-architecture.md)
 - [008 Cookbook](docs/008-cookbook.md): adding a Source
 - [009 Security](docs/009-security.md): trust, escalation paths and remaining risks
-- [ADR 0001 Worker OS isolation](docs/adr/0001-worker-os-isolation.md): a dedicated OS user now, workers as a second user next
+- [Architecture decision records](docs/adr/README.md): why the design is as it is, from worker OS isolation to host-checked merges
 
 ## Development
 

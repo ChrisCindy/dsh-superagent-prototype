@@ -1,7 +1,7 @@
 /**
- * Numbered documents link only to earlier ones, every local link and image resolves, no document has merge conflict markers or a
- * Mermaid block, and the module and test tables of 007 Architecture list every module and every test, as `scripts/doc-tables.ts` writes
- * them
+ * Numbered documents link only to earlier ones, every local link and image resolves, also in the decision records, no document has
+ * merge conflict markers or a Mermaid block, and the module and test tables of 007 Architecture list every module and every test, as
+ * `scripts/doc-tables.ts` writes them
  */
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
@@ -54,7 +54,8 @@ describe('documentation', () => {
     expect(violations).toEqual([])
   })
   it('resolves every local link', () => {
-    const files = [...entries.map(name => join(ROOT, name)), ...numbered.map(name => join(ROOT, 'docs', name))]
+    const files = [...entries.map(name => join(ROOT, name)), ...numbered.map(name => join(ROOT, 'docs', name)),
+      ...readdirSync(join(ROOT, 'docs/adr')).filter(name => name.endsWith('.md')).map(name => join(ROOT, 'docs/adr', name))]
     const missing = files.flatMap(file => links(file).filter(target => !existsSync(resolve(dirname(file), target))).map(target => `${file.slice(ROOT.length + 1)} → ${target}`))
     expect(missing).toEqual([])
   })

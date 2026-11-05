@@ -493,7 +493,7 @@ Each row is the first paragraph of the comment its file opens with; `node script
 | `tests/styles.spec.ts` | The stylesheet: only classes a component uses, and one rule per line |
 | `tests/class-docs.spec.ts` | Every class in `src` has a JSDoc block before it |
 | `tests/e2e/superagent.e2e.ts` | Only with `pnpm test:e2e` (tests/e2e/README.md): the bundle in a real DeepSeek Harness installation, through `scripts/dsh-superagent` and the management API, with fake `gh` and `lark-cli` and a scripted model: setup, the API's shapes, a mention through acceptance, the worker and the result reply, the Feishu bot setup, a second GitHub Source for another repository, a schedule entry's Trigger on an Issue's Thread that a restart does not repeat, and the escalations of 009 a worker or local process can try (writing the state directory, merging, the API without the sign-in) |
-| `tests/docs.spec.ts` | Numbered documents link only to earlier ones, every local link and image resolves, no document has merge conflict markers or a Mermaid block, and the module and test tables of 007 Architecture list every module and every test, as `scripts/doc-tables.ts` writes them |
+| `tests/docs.spec.ts` | Numbered documents link only to earlier ones, every local link and image resolves, also in the decision records, no document has merge conflict markers or a Mermaid block, and the module and test tables of 007 Architecture list every module and every test, as `scripts/doc-tables.ts` writes them |
 
 <!-- tests:end -->
 
