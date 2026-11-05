@@ -65,7 +65,7 @@ it('prunes a large database past the window into an archive, keeps live and rece
   // Settings and prompt versions beyond the newest ten, but not the one a Session works under.
   for (let n = 0; n < 15; n++) store.saveSettings({ ...store.settings(), paused: n % 2 === 1 }, { source: 'panel', block: 'pause', policyVersion: '', policyChanged: false, notified: [] })
   store.saveSettings({ ...store.settings(), retention: { days: 30, settingsVersions: 10, promptVersions: 10 } })
-  const prompts = new Prompts(store, () => 100_000, () => undefined, () => true)
+  const prompts = new Prompts(store, () => 100_000, () => undefined, () => ['feishu', 'github'])
   for (let n = 0; n < 15; n++) prompts.save({ ...defaultPrompts(), scope: `Scope ${n}` }, n, 'panel')
   store.set(KV.sessions.prompts('main'), [2])
   const before = statSync(path).size
