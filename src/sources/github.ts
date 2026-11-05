@@ -4,7 +4,7 @@ import { key, type Thread } from '../core/index.ts'
 import { sameName } from '../infra/text.ts'
 import { GithubAccountsSchema } from '../deployment.ts'
 import { CliError, validItems, type Tally } from '../infra/commands.ts'
-import { ciCounts, ciFact, ciFailures, ciSummary, githubThreadContext, pullChecks, readGithub } from './github-read.ts'
+import { ciCounts, ciFact, ciFailures, ciSummary, githubThreadContext, pullChecks, readGithub, readRepositoryPath } from './github-read.ts'
 import { branchCiTrigger, ciTrigger, commentTrigger, CommentSchema, githubAddress, issueTrigger, IssueSchema, pullTrigger, SOURCE }
   from './github-trigger.ts'
 import { githubLink, sendGithub } from './github-channel.ts'
@@ -71,6 +71,7 @@ export const githubKind: SourceKind<GithubConfig> = {
     open: ({ resource, prefix, commands }) => () => readGithub(commands, resource, prefix),
   },
   threadContext: githubThreadContext,
+  read: readRepositoryPath,
   // `#12` or `12` names Thread 12 of every instance; the page of an Issue or PR names it on the instance of that repository, or
   // on every instance whose repository is not set.
   find: (query, { id, config }) => {

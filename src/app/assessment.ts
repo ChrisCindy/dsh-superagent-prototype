@@ -8,7 +8,6 @@ import { checkedImText } from '../infra/text.ts'
 import type { Commands } from '../infra/commands.ts'
 import type { Deployment } from '../deployment.ts'
 import { admissionContext } from '../sources/admission-context.ts'
-import { readRepositoryPath } from '../sources/github-read.ts'
 import type { TriggerContext } from '../sources/kind.ts'
 import { relatedTickets } from './cards.ts'
 import { textPage } from './context.ts'
@@ -59,8 +58,8 @@ export interface AssessorHost {
   paused(): boolean
   /** Thread context reader for `trigger`'s Source, or `undefined` when the Source has none. */
   threadContext(trigger: Trigger): TriggerContext | undefined
-  /** The GitHub Source instance whose repository file reads for `trigger` go to: its own, or the first for a Trigger of another kind. */
-  githubSource(trigger: Trigger): string
+  /** Reads a file, or lists a directory, of the repository an assessment of `trigger` reads (`SourceRegistry.readRepository`). */
+  readRepository(commands: Commands, trigger: Trigger, path: string, kind: 'file' | 'directory'): Promise<string>
   /** Delivers a candidate card to the main Session once per request ID, resolving after the Session receives it. */
   deliver(requestId: string, text: string): Promise<void>
   candidateCard(candidate: Candidate): Promise<Record<string, unknown>>
@@ -270,7 +269,7 @@ export class MasterAssessor implements Assessor {
         body = JSON.stringify({ images: references, next_read: next, ...result.body })
       }
       else {
-        body = await readRepositoryPath(commands.forSource(this.host.githubSource(trigger)), read.path!, read.resource === 'directory' ? 'directory' : 'file')
+        body = await this.host.readRepository(commands, trigger, read.path!, read.resource === 'directory' ? 'directory' : 'file')
       }
       snapshots.set(cacheKey, body)
       return textPage(read.resource, body, read.offset, 4000)

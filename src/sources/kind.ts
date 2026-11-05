@@ -172,6 +172,11 @@ export interface SourceKind<C extends Record<string, unknown> = Record<string, u
   resources?: SourceResources<C>
   /** Bounded context reader for assessments; assessments of a kind without `threadContext` read none. */
   threadContext?: ThreadContext<C>
+  /**
+   * Reads a file, or lists a directory, of the repository an assessment reads, with the commands of the instance the Trigger came
+   * from (`SourceRegistry.home`); the first installed kind with `read`, in ID order, serves these reads.
+   */
+  read?(commands: Commands, path: string, kind: 'file' | 'directory'): Promise<string>
   /** Maps a search query to an instance's candidate Thread keys (such as `github:12`) and Trigger search terms (such as a Feishu `om_` ID). */
   find?(query: string, instance: SourceInstance<C>): { threads: string[]; terms: string[] }
   /** Returns the ID of the Trigger whose message this Trigger replies to, when derivable without a network read. */

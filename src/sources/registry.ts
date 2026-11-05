@@ -191,6 +191,16 @@ export class SourceRegistry implements SourceScope {
     const kind = [...this.kinds.values()].sort((a, b) => a.kind.localeCompare(b.kind)).find(item => item.claim)
     return kind && { kind, id: this.home(kind.kind, origin, settings) }
   }
+  /**
+   * Reads `path` of the repository an assessment of `trigger` reads, through the first installed kind with `read`, in ID order,
+   * with the commands of its instance that `trigger` has (see `home`).
+   * @throws when no installed kind has `read`.
+   */
+  async readRepository(commands: Commands, trigger: Pick<Trigger, 'source' | 'threads'>, path: string, kind: 'file' | 'directory'): Promise<string> {
+    const reader = this.installed().find(item => item.read)
+    if (!reader?.read) throw new Error('No installed Source reads repository files')
+    return reader.read(commands.forSource(this.home(reader.kind, trigger)), path, kind)
+  }
   /** The number of the change a ticket card shows, as the claiming kind's `claim.pull` gives it. */
   pull(ticket: Pick<Ticket, 'follows'>): number | undefined { return this.claimant()?.kind.claim!.pull(ticket) }
   find(query: string): { threads: string[]; terms: string[] } {
