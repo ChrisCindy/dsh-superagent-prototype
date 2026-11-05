@@ -9,7 +9,7 @@ import { branchCiTrigger, ciTrigger, commentTrigger, CommentSchema, githubAddres
   from './github-trigger.ts'
 import { githubLink, sendGithub } from './github-channel.ts'
 import type { GithubComment, PullRef } from './github-trigger.ts'
-import { claimPull, observePull, pullOf, pullsOf, readPull, readyChanges, type Pull } from './github-pull.ts'
+import { claimPull, observePull, pullEndNotices, pullOf, pullsOf, readPull, readyChanges, type Pull } from './github-pull.ts'
 import { requestMerge } from './github-merge.ts'
 import { health, sourceContext, type Health, type SourceContext } from './host.ts'
 import { KV } from '../kv.ts'
@@ -89,6 +89,12 @@ export const githubKind: SourceKind<GithubConfig> = {
       return { changes, bind: () => pull ? claimPull(ctx, ticket.id, pull) : undefined }
     },
     merge: (ctx, ticket, pull, merge, signal) => requestMerge(ctx, ticket, pull, merge, signal),
+  },
+  // A ticket that ends with its PR tells its other conversations, such as a Feishu chat, that the PR merged or closed.
+  ticketEnded(ctx, ticket) {
+    if (!ctx.configured()) return
+    const request = ctx.triggers.get(ticket.origin.triggerId)?.text ?? ''
+    for (const message of pullEndNotices(ticket, request, ctx.deployment.repositories)) ctx.notify(message)
   },
   policy: {
     schema: z.object({ allowed: z.array(z.object({ id: z.string().regex(/^[A-Za-z0-9-]+$/) }).strict()).default([]),

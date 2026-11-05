@@ -35,7 +35,6 @@ import { registerHttp, type HttpHost } from './http.ts'
 import type { LinkTarget } from './views/records.ts'
 import { candidateCard, correlatedThreads, repliedTo, sourceLink, type LinkHost } from './links.ts'
 import { eventNotice, followupNotice } from './notices.ts'
-import { pullEndNotices } from '../sources/github-pull.ts'
 import { HealthBoard } from '../infra/health.ts'
 import { Outbox } from './outbox.ts'
 import { Passes } from './passes.ts'
@@ -164,12 +163,9 @@ export class Runtime extends Service implements SourceHost {
           const followed = !this.quiet && (event.type === 'trigger.received' || event.type === 'ticket.resumed' || event.type === 'trigger.followup')
           const followup = followed ? followupNotice(store, sources, event.data.triggerId) : undefined
           if (followup) sessions.relay(followup.id, followup.text)
-          // Notify the ticket's conversations whenever it ends via a pull request.
+          // Each kind may tell the ticket's conversations of its end, such as GitHub of the pull request it ended with.
           const ended = event.type === 'ticket.ended' ? store.tickets.get(event.data.ticketId) : undefined
-          if (ended && setup.configured()) {
-            const request = store.triggers.get(ended.origin.triggerId)?.text ?? ''
-            for (const message of pullEndNotices(ended, request, setup.deployment.repositories)) outbox.send(message)
-          }
+          if (ended) for (const kind of sources.installed()) kind.ticketEnded?.(this.context(kind), ended)
         } })
       // Update the `evals` health entry on every pass if an evaluation failed as unavailable within the last hour.
       const evals = board.claim('evals', { state: 'ready', detail: 'No unavailable Eval in the last hour' })

@@ -63,6 +63,8 @@ export class SourceRegistry implements SourceScope {
     return (this.kinds.get(instance.kind)?.health ?? []).map(name => ({ name, entry: instanceHealth(instance.kind, instance.id, name) }))
   }
   kind(id: string): SourceKind | undefined { return this.kinds.get(id) }
+  /** Every registered kind, in ID order. */
+  installed(): SourceKind[] { return [...this.kinds.values()].sort((a, b) => a.kind.localeCompare(b.kind)) }
   /** The installed kind of instance `id`: its stored `kind`, or the kind with that ID for a kind's first instance. */
   kindOf(id: string, settings = this.settings()): SourceKind | undefined { return this.kinds.get(settings.sources[id]?.kind ?? id) }
   /**

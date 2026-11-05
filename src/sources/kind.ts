@@ -178,6 +178,11 @@ export interface SourceKind<C extends Record<string, unknown> = Record<string, u
   repliesTo?(trigger: Trigger): string | undefined
   /** Binding and merging of the changes an Executor reports; the first installed kind with `claim`, in ID order, provides it. */
   claim?: SourceClaim
+  /**
+   * Runs in the transaction that ends a ticket, with the context of the kind's first instance, so the kind can tell the ticket's
+   * conversations through `ctx.notify`, such as that its pull request merged.
+   */
+  ticketEnded?(ctx: SourceContext, ticket: Ticket): void
   /** Policy section for kinds whose senders have their own identity. */
   policy?: SourcePolicyPart<Record<string, unknown> & { allowed: { id: string; name?: string }[] }>
   /** Rereads display names for row keys (such as chat names), stores the resolved names in `KV.sources.labels(kind)`, and returns them. */
