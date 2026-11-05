@@ -12,7 +12,6 @@ import type { DroppedReply, HistoryView, Problem, PromptsView, SetupView, Source
   ThreadRow, TicketPageView,
   TicketRow, TicketStage,
   TriggerRow } from '../../src/client/api.ts'
-import { SETUP_FIELDS } from '../../src/deployment.ts'
 import { EvalConfigSchema, ExecutorConfigSchema, PolicyConfigSchema, RetentionConfigSchema, SettingsSchema } from '../../src/policy.ts'
 import { SetupError, type SetupCode } from '../../src/setup.ts'
 import { feishuChannel } from '../../src/sources/feishu-trigger.ts'
@@ -149,7 +148,7 @@ function sourceSettings(): SourceView[] {
     return { id, kind: kind.kind, title, description: kind.description, installed: true,
       value: { enabled: server.settings.sources[id]?.enabled ?? true, config },
         revision: server.revisions[`source:${id}`] ?? 0, removable: id !== kind.kind, multiple: !!kind.multiple,
-      restarts: SETUP_FIELDS[kind.kind] ?? [], fields: kind.fields, facts: kind.facts?.(resolved()) ?? {},
+      restarts: kind.setup ?? [], fields: kind.fields, facts: kind.facts?.(resolved()) ?? {},
       labels: kind.kind === 'feishu' ? { oc_team: '团队群', oc_other: '另一个群', ...server.joined } : {}, ...problem ? { problem } : {},
       ...policy ? { policy } : {} }
   })

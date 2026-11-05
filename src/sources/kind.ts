@@ -156,6 +156,11 @@ export interface SourceKind<C extends Record<string, unknown> = Record<string, u
   description: Localized
   /** Read-only status facts derived from `deployment` (undefined while waiting for setup), keyed by field key. */
   facts?(deployment: Deployment | undefined): Record<string, Localized | string>
+  /**
+   * Configuration keys that setup reads, such as an account CLI: of the kind's first instance, and of each other instance while it
+   * is on. Only the panel may change one; a change is checked before it is saved and restarts dsh-superagent.
+   */
+  setup?: readonly string[]
   /** Validates stored and submitted configuration and fills defaults. */
   schema: z.ZodType<C>
   fields: FieldSpec[]

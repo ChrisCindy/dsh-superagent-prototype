@@ -1,12 +1,13 @@
 /** Probes repository and account CLIs, configures the worker execution environment and command shims, and tracks setup readiness. */
 import type { Context } from '@deepseek-ai/cordis'
 import { UserError } from '../core/index.ts'
-import { SETUP_FIELDS, checkMerging, executable, githubInstances, resolveDeployment, resolveFeishuBot, resolveGithub, sameAccount, workerProbe,
+import { checkMerging, executable, githubInstances, resolveDeployment, resolveFeishuBot, resolveGithub, sameAccount, workerProbe,
   type Deployment, type Machine } from '../deployment.ts'
 import { agentVariables, applyEnvironment, verifyEnvironment, withoutDirectory, workerBin, writeEnvironment } from '../infra/environment.ts'
 import { sameName } from '../infra/text.ts'
 import type { MergeConfig, Settings, SettingsBlock } from '../policy.ts'
 import { SetupError, problemSource, setupWarning, type SetupProblem, type SetupWarning } from '../setup.ts'
+import type { SourceKind } from '../sources/kind.ts'
 import { checkPresets, checkTemporaryAreas, checkWritableRoots, protectedDirectories } from './permissions.ts'
 
 export interface SetupHost {
@@ -16,16 +17,20 @@ export interface SetupHost {
   restart(): void
 }
 
+type SetupKinds = readonly Pick<SourceKind, 'kind' | 'setup'>[]
 /**
- * What setup reads from the Source settings: the setup fields of each kind's first instance, and of each other instance while it
- * is on. Switching another instance on or off, or removing one that is on, changes what setup resolves; adding or removing one
- * that is off does not.
+ * What setup reads from the Source settings: the setup fields (`SourceKind.setup`) of each kind's first instance, and of each
+ * other instance while it is on. Switching another instance on or off, or removing one that is on, changes what setup resolves;
+ * adding or removing one that is off does not.
  */
-const setupFields = ({ sources }: Settings) => JSON.stringify(Object.entries(SETUP_FIELDS).flatMap(([kind, keys]) => {
+const setupFields = ({ sources }: Settings, kinds: SetupKinds) => JSON.stringify(kinds.flatMap(({ kind, setup: keys = [] }) => {
+  if (!keys.length) return []
   const others = Object.keys(sources).filter(id => id !== kind && sources[id]!.kind === kind && sources[id]!.enabled).sort()
   return [kind, ...others].map(id => [id, ...keys.map(key => sources[id]?.config[key] ?? '')])
 }))
-export const setupChanged = (before: Settings, after: Settings): boolean => setupFields(before) !== setupFields(after)
+/** Whether a save changes a field setup reads, of the installed `kinds` (`SourceRegistry.installed`). */
+export const setupChanged = (before: Settings, after: Settings, kinds: SetupKinds): boolean =>
+  setupFields(before, kinds) !== setupFields(after, kinds)
 
 /**
  * Resolves each GitHub Source instance's repository, the GitHub account they share, and the optional Feishu bot by probing CLIs, then writes and applies the isolated git and shim environment used by worker processes.
