@@ -1,4 +1,4 @@
-/** The permission presets managed Sessions run under, and the setup checks of the presets and the extra writable roots. */
+/** The permission preset of each role, the preset check, and the writable roots: their form, the protected directories and the grant */
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'

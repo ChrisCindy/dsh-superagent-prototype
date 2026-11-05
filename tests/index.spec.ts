@@ -1,3 +1,4 @@
+/** The plugin entry */
 import { expect, it, vi } from 'vitest'
 import { Config, type Machine } from '../src/deployment.ts'
 import { apply } from '../src/index.ts'

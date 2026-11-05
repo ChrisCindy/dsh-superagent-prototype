@@ -1,4 +1,4 @@
-/** Shared tool primitives and schemas for the main and executor Sessions. */
+/** The `Tool` type, `readTool`, the `orchestrator_read` of both roles, and `AcknowledgementSchema` */
 import { z } from 'zod'
 import { IM_WORDS, wordCount } from '../../infra/text.ts'
 import { resourceGrammar } from '../resources.ts'

@@ -1,4 +1,4 @@
-/** Shared list rows for Tickets, Threads, and Decisions, plus Source fact chips and automated-message run folding. */
+/** The rows the pages share: a Ticket, a Thread and a Decision, a Thread's chip, and the folding of runs of automated messages */
 import { useState } from 'react'
 import type { DecisionRow, ThreadFacts, ThreadRow, TicketRow } from './api.ts'
 import { Icon, Tag } from './controls.tsx'

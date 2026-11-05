@@ -1,3 +1,4 @@
+/** `TextCache` */
 import { expect, it } from 'vitest'
 import { TextCache } from '../src/app/cache.ts'
 

@@ -1,4 +1,4 @@
-/** Open a DSH Session in the workspace after ensuring the session catalog is loaded. */
+/** Opens a DeepSeek Harness Session from the panel once the host's catalog lists it */
 import type { ISessions } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 

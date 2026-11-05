@@ -1,4 +1,4 @@
-/** Reliable outbound message delivery backed by persistent receipts and retried reply effects. */
+/** The Outbox: the Engine's `Outbox` port, the receipts and the `reply` effects that send them */
 import type { OutboundMessage, Outbox as OutboxPort, ReplyStatus } from '../core/index.ts'
 import type { Commands } from '../infra/commands.ts'
 import { checkedImText } from '../infra/text.ts'

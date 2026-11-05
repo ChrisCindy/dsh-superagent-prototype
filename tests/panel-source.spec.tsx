@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-// The Source status and settings.
+/** The Source status and settings, against a fake management API answered by route */
 import { act } from 'react'
 import { expect, it, onTestFinished, vi } from 'vitest'
 import { zh } from '../src/client/locales.ts'

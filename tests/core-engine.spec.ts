@@ -1,3 +1,7 @@
+/**
+ * Domain rules on in-memory repositories: receiving, Eval, fan-out, resume and stop, interrupted Assignments, the pause, Policy changes,
+ * reports and outcomes, attaching, replies, failed deliveries and dismissed problems
+ */
 import { describe, expect, it, vi } from 'vitest'
 import { Engine, MemoryRepositories, UserError, followupOwners, handbacksOf, key, reachedTickets, runningAssignment, ticketOutcome, ticketStage,
   waitsForPerson } from '../src/core/index.ts'

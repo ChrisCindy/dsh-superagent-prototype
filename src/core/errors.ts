@@ -1,4 +1,4 @@
-/** User-facing error codes mapped to their category ('missing' or 'refused') and English message template. */
+/** `UserError` and `USER_ERRORS` */
 export const USER_ERRORS = {
   unknownTicket: ['missing', 'Unknown ticket'],
   unknownProblem: ['missing', 'Unavailable Eval not found'],

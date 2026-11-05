@@ -1,4 +1,7 @@
-/** The domain Engine: the single entry point of the core, and the role interfaces its callers receive. */
+/**
+ * The Engine, the core's entry point, and the role interfaces `EngineForSources`, `EngineForMainSession`, `EngineForPeople`,
+ * `EngineForSettings` and `EngineForExecutor`
+ */
 import { UserError } from './errors.ts'
 import { isoTime, liveTicket, ownerState } from './model.ts'
 import type { ChannelRef, Decision, PolicyEffect, ThreadRef, Ticket, Trigger } from './model.ts'

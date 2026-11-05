@@ -1,3 +1,4 @@
+/** Effects, the durable queue of side effects that run after their transaction commits */
 /**
  * Signals that an effect cannot run right now, such as when processing is paused or all worker slots are full.
  * Effects reschedules the row after the initial retry delay without incrementing its failure count, and DshExecutor throws it from launch and delivery handlers.

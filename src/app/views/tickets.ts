@@ -1,4 +1,4 @@
-/** Ticket list, ticket detail, mandate basis formatting, and executor load views. */
+/** The Ticket lists by stage, a Ticket's page, the Mandate basis facts and the Executor's load */
 import { handbacksOf, liveTicket, threadKey, ticketStage, type AcceptMode, type AdmissionCell, type MandateBasis, type Ticket,
   type TicketStage } from '../../core/index.ts'
 import { workerSessionId } from '../../executor/dsh.ts'

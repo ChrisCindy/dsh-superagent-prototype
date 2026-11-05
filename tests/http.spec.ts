@@ -1,3 +1,7 @@
+/**
+ * The same-origin and loopback checks, the sign-in every route but `GET state` requires, the status of each kind of failure, the body
+ * limit, path parameters and queries
+ */
 import { expect, it } from 'vitest'
 import { z } from 'zod'
 import { registerHttp } from '../src/app/http.ts'

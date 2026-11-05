@@ -1,4 +1,7 @@
-/** Shared settings context, block draft hook, form controls, Source schema field renderer, and configuration history. */
+/**
+ * The building blocks of settings blocks: the settings the stage groups share, `useBlockDraft`, the fields, among them a Source kind's, and
+ * the history of saves
+ */
 import { cloneElement, createContext, useContext, useEffect, useId, useLayoutEffect, useRef, useState, type ReactElement,
   type ReactNode } from 'react'
 import type { ApiResponse } from '../app/api.ts'

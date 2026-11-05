@@ -1,3 +1,4 @@
+/** CLI calls as the deployment's accounts, the Channels' answers, and repository-scoped GitHub calls */
 import { describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import { CliError, Commands, commandError } from '../src/infra/commands.ts'

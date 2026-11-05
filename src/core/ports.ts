@@ -1,4 +1,8 @@
-/** Ports the core depends on. Sources, policies, assessors, executors, and channels are project-specific. */
+/**
+ * The ports: `Repositories`, `Policy`, `SourceScope`, `Assessor`, `Executor`, `Outbox`, and the domain events
+ *
+ * The core depends only on these; the Sources, Policies, Assessors, Executors and Channels behind them belong to a deployment.
+ */
 import type { Assignment, ChannelRef, Decision, DecisionKind, Mandate, MandateBasis, MandateLimits, Strength, Thread, Ticket, TicketEndBy, TicketOutcome, Trigger }
   from './model.ts'
 import type { Reason } from './reasons.ts'

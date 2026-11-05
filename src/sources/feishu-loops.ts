@@ -1,4 +1,4 @@
-/** Feishu background loops: live event stream consumer, chat/topic history backfill, chat name refresh, and subscribed thread polling. */
+/** The Feishu loops: the event consumer, history recovery, chat names and polling of subscribed topics */
 import { spawn } from 'node:child_process'
 import { createInterface } from 'node:readline'
 import { setTimeout as delay } from 'node:timers/promises'

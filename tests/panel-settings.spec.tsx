@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-// The Settings groups, drafts, save bars and history.
+/** The settings groups, drafts, save bars and history */
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { Fields } from '../src/client/settings-kit.tsx'

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-// The overview.
+/** The overview page, against a fake management API answered by route */
 import { expect, it } from 'vitest'
 import { en, zh } from '../src/client/locales.ts'
 import { usePanel, mount, remount, all, find, tab, click, text } from './fixtures/panel.tsx'

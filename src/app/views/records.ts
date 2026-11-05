@@ -1,4 +1,7 @@
-/** Shared view projections for triggers, tickets, threads, decisions, and channel links. */
+/**
+ * The rows the views share: Triggers, Tickets, Threads, Decisions and Channel links, and `ownersOf`, the owners of follow-ups as one
+ * request reads them
+ */
 import { z } from 'zod'
 import { canRetry, followupOwners, handbacksOf, latestReport, liveTicket, reachedTickets, settled, threadKey, ticketStage, type ActorRef,
   type ChannelRef, type Decision, type DecisionKind, type Thread, type ThreadFacts, type Ticket, type TicketStage, type Trigger } from '../../core/index.ts'

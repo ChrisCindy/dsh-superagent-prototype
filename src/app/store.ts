@@ -1,4 +1,4 @@
-/** SQLite persistence for domain aggregates, key-value state, settings history, and the channel outbox. */
+/** The Store, and `Receipt`, a message of the outbox */
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite'
 import { chmodSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'

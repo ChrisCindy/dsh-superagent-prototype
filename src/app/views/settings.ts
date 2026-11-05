@@ -1,4 +1,4 @@
-/** Settings view combining versioned configuration blocks, per-source forms and policy metadata, and execution environment details. */
+/** The settings page's view: each block with its revision, each Source's settings with its kind's form, and the execution environment */
 import { KV } from '../../kv.ts'
 import { policyVersion } from '../../policy.ts'
 import type { SourceRegistry } from '../../sources/registry.ts'

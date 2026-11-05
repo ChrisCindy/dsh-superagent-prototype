@@ -1,4 +1,4 @@
-/** Resolves packaged asset paths from either the source tree or the compiled lib/ output. */
+/** The package's root, where packaged files are */
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'

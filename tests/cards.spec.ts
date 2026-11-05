@@ -1,3 +1,4 @@
+/** The rules the built-in text must state, file by file */
 import { expect, it } from 'vitest'
 import { masterPrompt, workerPrompt } from '../src/app/context.ts'
 import { composePrompt, defaultPrompts } from '../src/app/prompts.ts'

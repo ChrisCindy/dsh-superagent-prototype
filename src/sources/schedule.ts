@@ -1,6 +1,8 @@
 /**
- * Schedule Source kind and plugin entry: GitHub searches run on an interval, each hit a Trigger on its Issue's or pull request's
- * Thread. It holds the waiting conditions that belong to Sources, such as Issues nobody took up within two days.
+ * The schedule kind and plugin entry, exported as `./schedule-watch`: each entry's GitHub search once per period, its hits as Triggers on
+ * GitHub Threads, and the period each entry last fired in, kept in KV
+ *
+ * It holds the waiting conditions that belong to Sources, such as Issues nobody took up within two days.
  */
 import type { Context } from '@deepseek-ai/cordis'
 import { z } from 'zod'

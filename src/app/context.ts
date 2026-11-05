@@ -1,4 +1,4 @@
-/** Built-in prompt sections, role policies, and transcript projections for orchestrator and worker Sessions. */
+/** The built-in prompt text, read from `prompts/`, and the transcript entries Sessions read */
 import { bundledSkills, promptFile } from './skill-files.ts'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 export { textPage } from './cards.ts'

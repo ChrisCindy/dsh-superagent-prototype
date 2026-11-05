@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-// The Deployment settings and the Plugin Manager page.
+/** The Deployment settings and the Plugin Manager page */
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { PluginConfig } from '../src/client/deployment.tsx'

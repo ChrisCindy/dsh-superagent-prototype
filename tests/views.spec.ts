@@ -1,3 +1,6 @@
+/**
+ * What the management views derive from the Store, such as the Thread a dropped message belongs to, and the metrics a window's events give
+ */
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'

@@ -1,4 +1,4 @@
-/** Typed panel routes, route parser, and sessionStorage location history. */
+/** The tabs, the settings groups, the typed routes that `parseRoute` reads, and the route memory with the settings group opened last */
 import { THREAD_FILTERS, TICKET_FILTERS, type ThreadFilter, type TicketFilter } from '../app/api.ts'
 import type { SetupPlace } from '../setup.ts'
 import { DECISION_FILTERS, type DecisionFilter } from './api.ts'

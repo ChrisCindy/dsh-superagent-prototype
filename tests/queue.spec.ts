@@ -1,4 +1,4 @@
-/** Effect queue migration and notice deduplication on the Runtime. */
+/** The Runtime's work through the effect queue, and what earlier versions stored */
 import { afterEach, expect, it, vi } from 'vitest'
 import { startRuntime, type Host } from './fixtures/host.ts'
 

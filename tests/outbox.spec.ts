@@ -1,4 +1,4 @@
-/** Outbox delivery when processing is paused or a Source kind registers late. */
+/** The Outbox on a running Runtime: messages wait while processing is paused or their Source is not installed */
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import type { OutboundMessage } from '../src/core/index.ts'

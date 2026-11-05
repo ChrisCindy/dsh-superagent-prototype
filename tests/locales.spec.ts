@@ -1,3 +1,4 @@
+/** The copy in both languages */
 import { expect, it } from 'vitest'
 import type { EffectKind } from '../src/app/effects.ts'
 import { en, zh, type DshSuperagentKey } from '../src/client/locales.ts'

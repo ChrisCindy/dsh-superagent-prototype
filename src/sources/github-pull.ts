@@ -1,4 +1,7 @@
-/** Pull request binding, lifecycle observation, and terminal IM notification helpers. */
+/**
+ * The pull request rules: which pull requests a Ticket follows (`claimPull`, `observePull`), the closes it reports to the Engine, and
+ * `pullEndNotices`, the chat notice of a Ticket that ended merged or closed
+ */
 import { z } from 'zod'
 import { actionAllowed, key, liveTicket, type Follow, type OutboundMessage, type PullChanges, type ThreadFact, type Ticket } from '../core/index.ts'
 import type { Deployment } from '../deployment.ts'

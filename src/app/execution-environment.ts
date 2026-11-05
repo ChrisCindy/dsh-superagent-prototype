@@ -1,4 +1,7 @@
-/** Execution environment variables exposed to prepare commands and documented in worker Session instructions; never contains credentials. */
+/**
+ * The execution environment: its variables, a Ticket's values, the directory root and the lines of the prompt section, which
+ * `src/app/prompts.ts` fills into its template
+ */
 import { join } from 'node:path'
 import type { Ticket, Trigger } from '../core/index.ts'
 import type { Deployment } from '../deployment.ts'

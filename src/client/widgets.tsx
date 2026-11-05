@@ -1,4 +1,7 @@
-/** Context-aware shared UI widgets: page/section headers, timestamps, Markdown rendering, and confirmation actions. */
+/**
+ * The small components the pages share, which read the panel's context: sections, page heads, load states, times, links, confirmed actions,
+ * the setup check and Markdown
+ */
 import { Fragment, useState, type ReactNode } from 'react'
 import type { SetupProblem } from '../setup.ts'
 import { Button, Icon, InfoTip, Modal, StateDot, type DotState, type IconName } from './controls.tsx'

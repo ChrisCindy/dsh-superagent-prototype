@@ -1,4 +1,6 @@
-/** Loads packaged built-in skill definitions and prompt templates from disk. */
+/**
+ * Packaged text: `promptFile`, which joins a file's one-sentence lines into paragraphs, and the bundled skills, read from `skills/` by name
+ */
 import { readdirSync, readFileSync } from 'node:fs'
 import { packagePath } from '../infra/paths.ts'
 /**

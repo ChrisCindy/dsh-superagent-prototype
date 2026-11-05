@@ -1,4 +1,4 @@
-/** Feishu outbound channel: posts threaded bot replies and constructs chat deep links. */
+/** The Feishu Channel: topic replies, `sent` or `gone` */
 import type { OutboundMessage } from '../core/index.ts'
 import { CliError } from '../infra/commands.ts'
 import { checkedImText } from '../infra/text.ts'

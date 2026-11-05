@@ -34,7 +34,7 @@ Read the numbered documents in order; each builds only on the ones before it.
 
 ## Development
 
-`pnpm check` runs the typecheck, the tests and the build.
+`pnpm check` runs the typecheck, the tests and the build. The module and test tables of 007 Architecture come from the comment each file opens with: after adding, removing or redescribing a file, run `pnpm docs:tables`, or the tests fail.
 
 ## License
 

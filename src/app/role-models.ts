@@ -1,4 +1,4 @@
-/** Resolves and seeds per-role default models on newly created sessions without mutating the global DSH default. */
+/** Resolves the Eval and Executor models, and seeds a new Session with its role's model */
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent, ModelSelection } from '@deepseek-ai/dsh-agent'
 import { ReasoningEffortId } from '@deepseek-ai/dsh-llm'

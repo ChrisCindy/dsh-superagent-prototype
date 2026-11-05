@@ -1,6 +1,10 @@
 /**
- * Migrates a schema 10, 11, 12, 13 or 14 database to schema 15 in a single transaction so runtime readers never convert legacy shapes.
- * Databases older than schema 10 are rejected: this version cannot migrate them.
+ * The schema 11 migration, one step from schema 10 that writes every stored record in its current shape, the schema 12 migration, which
+ * names each stored Source's kind, the schema 13 migration, which writes the Decisions and Inputs of a follow-up that reopened a Ticket as
+ * routing and resuming do now, the schema 14 migration, which gives the DshExecutor's queued effects its prefix, and the schema 15
+ * migration, which writes each disposition's lists of Tickets as one owner state for each Ticket
+ *
+ * It migrates in one transaction, so runtime readers never convert older shapes. It refuses a database older than schema 10.
  */
 import { basename } from 'node:path'
 import { z } from 'zod'

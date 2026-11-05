@@ -1,4 +1,4 @@
-/** Concurrent runtime behavior across overlapping triggers, deliveries, and worker launches. */
+/** Work that overlaps: Triggers during a pass, Tickets that change during deliveries and launches */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { latestAssignment, waitsForPerson, type Ticket, type Trigger } from '../src/core/index.ts'
 import { Later } from '../src/app/effects.ts'

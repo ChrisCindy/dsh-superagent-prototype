@@ -1,4 +1,4 @@
-/** Formats background notices and steering relays delivered to the main Session via the effect queue. */
+/** The main Session's notices and relays: `eventNotice`, `reportRelay`, `resultRelay` and `followupRelay` */
 import { randomUUID } from 'node:crypto'
 import { followupOwners, key, liveTicket, ownerState, reachedTickets, type DomainEvent, type Ticket, type WorkerReport } from '../core/index.ts'
 import { triggerMessage } from '../executor/dsh.ts'

@@ -1,4 +1,8 @@
-/** Subprocess wrapper for running gh, lark-cli, and git commands under the deployment's configured accounts. */
+/**
+ * `Commands`, the CLI transport: `run`; `api` and `pages`, limited to the configured repository and validated; `lark` as the bot; `git`.
+ * `CliError` carries the code a command's output reports, such as a GitHub HTTP status, and a command that prints nothing fails with how it
+ * ended, never with its arguments; `validItems` skips and counts the malformed items of a list
+ */
 import { execFile } from 'node:child_process'
 import { basename } from 'node:path'
 import { promisify } from 'node:util'

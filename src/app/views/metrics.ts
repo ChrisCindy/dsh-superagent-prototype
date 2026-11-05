@@ -1,6 +1,8 @@
 /**
- * Metrics read from the event table and the records it names: how Evals judged and how long they took, how Tickets ended,
- * and what waits for the main Session. They are the evidence for moving the accept mode from `observe` to `auto`.
+ * The metrics from the events: Evals by strength with what they accepted and would accept, their latency, how Tickets ended and how long
+ * they took, and the relay queue
+ *
+ * They are the evidence for moving the accept mode from `observe` to `auto`.
  */
 import { settled, type Decision, type Strength, type Ticket, type TicketOutcome } from '../../core/index.ts'
 import type { Store } from '../store.ts'

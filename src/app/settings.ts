@@ -1,4 +1,4 @@
-/** Block-scoped settings validation, optimistic concurrency saves, processing pause control, and source policy synchronization. */
+/** Settings: the revisioned settings blocks, the pause, Policy syncs and the pending Policy proposal */
 import type { Context } from '@deepseek-ai/cordis'
 import { z } from 'zod'
 import { UserError, type EngineForSettings, type Ticket } from '../core/index.ts'

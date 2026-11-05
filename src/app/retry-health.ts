@@ -1,4 +1,8 @@
-/** Projects active model budget retry waits from session event streams without modifying retry policy or logs. */
+/**
+ * `RetryHealth`: which Sessions wait on a model budget retry, for the `models` health entry
+ *
+ * It reads the Sessions' event streams and changes neither the retry policy nor the logs.
+ */
 export interface RetryHealthEvent { readonly type: string; readonly seq: number; readonly time: number; readonly data: unknown }
 export interface BudgetRetryStatus { sessionId: string; provider: string; attempts: number; since: string; lastAt: string }
 type Chain = { id: string; provider: string; status: BudgetRetryStatus }

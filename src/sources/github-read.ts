@@ -1,4 +1,7 @@
-/** Read-only GitHub repository, conversation, and CI check inspection for assessments and workers. */
+/**
+ * CI snapshots, repository reads, the files a pull request changes (`pullFiles`), the `github/` resources, and `githubThreadContext`: an
+ * Issue's or pull request's conversation by page
+ */
 import { z } from 'zod'
 import type { PullChanges, ThreadFact } from '../core/index.ts'
 import { validItems, type Commands, type Tally } from '../infra/commands.ts'

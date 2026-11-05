@@ -1,4 +1,4 @@
-/** The Engine's messages to Channels, each by the rule that allows it. */
+/** `Replies`: the Engine's Channel writes */
 import { key } from './ids.ts'
 import { UserError } from './errors.ts'
 import { latestAssignment, liveTicket, ticketOutcome } from './model.ts'

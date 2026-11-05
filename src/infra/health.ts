@@ -1,4 +1,4 @@
-/** Component health registry displayed in the overview and source status panels. */
+/** The `HealthBoard`, every part's health entry, each claimed by its one writer */
 import type { Health } from '../sources/host.ts'
 
 export interface HealthEntry {

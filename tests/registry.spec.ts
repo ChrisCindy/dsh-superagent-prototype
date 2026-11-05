@@ -1,3 +1,7 @@
+/**
+ * `SourceRegistry`: instances and their dispatch by kind, validation, Policy parts, Channels, Thread context, and each instance's health,
+ * KV records and variables
+ */
 import { describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import { SettingsSchema } from '../src/policy.ts'

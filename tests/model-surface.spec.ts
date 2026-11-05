@@ -1,6 +1,6 @@
 /**
- * Model surface contract tests: verify registered tools, system prompts, skills, and session inputs for the
- * orchestrator and worker roles against tool schemas, environment variables, glossary rules (`docs/001`), and size budgets.
+ * Everything models read: tools, prompts, skills and inputs, checked against the tool schemas, the execution environment and the glossary,
+ * within a size budget per role
  */
 import { Context } from '@deepseek-ai/cordis'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'

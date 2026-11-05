@@ -1,4 +1,4 @@
-/** Probes repository and account CLIs, configures the worker execution environment and command shims, and tracks setup readiness. */
+/** Setup, and `setupChanged`, whether a save changes a field setup reads */
 import type { Context } from '@deepseek-ai/cordis'
 import { UserError } from '../core/index.ts'
 import { checkMerging, executable, githubInstances, resolveDeployment, resolveFeishuBot, resolveGithub, sameAccount, workerProbe,

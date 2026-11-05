@@ -1,4 +1,4 @@
-/** Normalizes Feishu live events, chat history items, and topic replies into domain Triggers. */
+/** Feishu messages as Triggers, by one rule for live events, history pages and topic pages */
 import { z } from 'zod'
 import { key, type ChannelRef, type Trigger } from '../core/index.ts'
 import type { FeishuMessage, FeishuRef } from './feishu-read.ts'

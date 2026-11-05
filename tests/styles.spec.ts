@@ -1,3 +1,4 @@
+/** The stylesheet: only classes a component uses, and one rule per line */
 import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { expect, it } from 'vitest'

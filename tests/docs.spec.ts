@@ -1,7 +1,12 @@
+/**
+ * Numbered documents link only to earlier ones, every local link and image resolves, no document has merge conflict markers, and the
+ * module and test tables of 007 Architecture list every module and every test, as `scripts/doc-tables.ts` writes them
+ */
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
+import { render } from '../scripts/doc-tables.ts'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const NUMBERED = /^(\d{3})-[a-z0-9-]+\.md$/
@@ -64,5 +69,8 @@ describe('documentation', () => {
     const tests = listed('Tests')
     expect(files('tests').filter(path => /\.spec\.tsx?$/.test(path) && !tests.includes(path))).toEqual([])
     expect(tests.filter(path => !existsSync(join(ROOT, path)))).toEqual([])
+  })
+  it('keeps the module and test tables of 007 Architecture as the files describe themselves: run `node scripts/doc-tables.ts`', () => {
+    expect(read('docs/007-architecture.md')).toBe(render(ROOT))
   })
 })

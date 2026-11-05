@@ -1,4 +1,7 @@
-/** Host checks of a PR an Executor asks to merge, and enabling auto-merge for it with the merge account's CLI. */
+/**
+ * `orchestrator_merge_request`'s host checks of a pull request (`mergeChecks`), including the Mandate's limits, and enabling auto-merge as
+ * the merge account for the checked head commit (`requestMerge`)
+ */
 import { z } from 'zod'
 import { actionAllowed, outsidePaths, type Ticket } from '../core/index.ts'
 import type { MergeConfig } from '../policy.ts'

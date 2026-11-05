@@ -1,4 +1,7 @@
-/** Prompts settings group: section/skill editor, full composed prompt preview with diffing, and revision history. */
+/**
+ * The Prompts settings: the page owns the view it read and its editor the draft, and the Edit, Full prompt and History tabs render from
+ * them; a built-in part's editor shows a changed default and keeps or drops the override
+ */
 import { Fragment, useCallback, useEffect, useState, type FormEvent, type ReactNode } from 'react'
 import type { ApiResponse } from '../app/api.ts'
 import type { PromptConfig, PromptsView } from './api.ts'

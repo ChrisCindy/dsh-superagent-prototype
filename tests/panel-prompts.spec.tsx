@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-// The Prompts settings.
+/** The Prompts settings */
 import { act } from 'react'
 import { builtInBase, builtInParts, defaultPrompts } from '../src/app/prompts.ts'
 import { expect, it } from 'vitest'

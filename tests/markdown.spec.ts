@@ -1,3 +1,4 @@
+/** The Markdown subset and its links */
 import { expect, it } from 'vitest'
 import { inlines, linkify, markdownBlocks } from '../src/client/markdown.ts'
 

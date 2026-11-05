@@ -1,4 +1,4 @@
-/** Ticket stage classification and retry eligibility (docs/003). */
+/** `ticketStage` and `canRetry`: the Ticket stages of docs/003-execution.md */
 import { latestAssignment, waitsForPerson, type Ticket } from './model.ts'
 
 /** High-level execution stage of a ticket: waiting on a person, actively working or queued, idle between turns, or ended. */

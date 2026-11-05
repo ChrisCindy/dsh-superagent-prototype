@@ -1,4 +1,4 @@
-/** What the Executor and its workers report about the Assignments that run tickets. */
+/** `Assignments`: the Executor's facts and its workers' Reports */
 import { key } from './ids.ts'
 import { UserError } from './errors.ts'
 import { latestAssignment, liveTicket, outsidePaths, readEvery, runningAssignment, waitsForPerson } from './model.ts'

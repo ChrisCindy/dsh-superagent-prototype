@@ -1,4 +1,4 @@
-/** Tickets: their lifecycle from an accept to their end, their Subscriptions and their Inputs. */
+/** `Tickets`: the Ticket lifecycle, the Threads a Ticket follows, Subscriptions and Inputs */
 import { key } from './ids.ts'
 import { UserError } from './errors.ts'
 import { DEFAULT_EXECUTOR, executorOf, latestAssignment, latestReport, liveTicket, ownerState, readUntil, runningAssignment, settled, threadKey,

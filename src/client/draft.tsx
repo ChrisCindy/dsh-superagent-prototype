@@ -1,5 +1,6 @@
 /**
- * Optimistic settings draft state with sessionStorage persistence and three-way rebase against concurrent saves.
+ * Settings drafts: `draftReducer`, their states and their merge with a newer saved revision, `saveBarText`, the save bar's line, and the
+ * save bar
  */
 import { useEffect, useLayoutEffect, useReducer, useRef, type FormEvent } from 'react'
 import { ApiError } from './api.ts'

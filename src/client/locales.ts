@@ -1,6 +1,4 @@
-/**
- * Bilingual UI dictionaries (`[zh, en]`) and glossary groupings, following the domain terms in `docs/001-domain.md`.
- */
+/** All copy in both languages, and the glossary of docs/001-domain.md */
 import { USER_ERRORS } from '../core/errors.ts'
 import { SETUP_PROBLEMS, SETUP_WARNINGS } from '../setup.ts'
 import { HEALTH_TEXT } from '../sources/host.ts'

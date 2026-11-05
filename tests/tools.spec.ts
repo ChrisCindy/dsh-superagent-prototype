@@ -1,4 +1,4 @@
-/** Session tool registration, role-scoped resource reads, and routing/settings tool contracts. */
+/** The Sessions' tools: what `orchestrator_read` reads for each role, and the shapes and checks of the other main Session tools */
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'

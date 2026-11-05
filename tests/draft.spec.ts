@@ -1,3 +1,4 @@
+/** Draft states, merges and the save bar's line */
 import { expect, it } from 'vitest'
 import { draftReducer, merge3, saveBarText, type DraftAction, type DraftState } from '../src/client/draft.tsx'
 import type { T } from '../src/client/text.ts'

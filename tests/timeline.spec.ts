@@ -1,4 +1,4 @@
-/** Thread timeline pagination, neighbour lookup, and timestamp normalization. */
+/** A Thread's pages and a Trigger's neighbours by time and then id, with every received Trigger's time in one form */
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'

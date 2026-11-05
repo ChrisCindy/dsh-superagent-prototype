@@ -1,4 +1,6 @@
-/** Main plugin entry: mounts the Runtime and provides its restart callback for deployment account changes. */
+/**
+ * The main plugin entry: reads the machine settings, starts the Runtime, and gives it the restart that a save of a Source's account uses
+ */
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-settings'
 import { Runtime } from './app/runtime.ts'

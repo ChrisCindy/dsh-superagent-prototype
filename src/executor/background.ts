@@ -1,6 +1,9 @@
 /**
- * A worker's background work in DSH: the shell jobs its Session owns (`ctx.jobs`) and its subagents (`ctx.subagents`). They
- * keep the worker busy after its turn ended, and they stop with its Assignment. A profile without either service has none.
+ * A worker's background work in DeepSeek Harness, the shell jobs its Session owns (`ctx.jobs`) and its subagents (`ctx.subagents`):
+ * `runningJobs`, `untilQuiet`, `killJobs`, `collectJobs`, `stopSubagents`, `stopBackground`, `until`, and `cancelled`, the workers whose
+ * turn a stop of their subagents cancelled
+ *
+ * They keep the worker busy after its turn ended, and they stop with its Assignment. A profile without either service has none.
  */
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'

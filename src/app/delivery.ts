@@ -1,4 +1,4 @@
-/** Idempotent message delivery to DSH agents across Session restarts. */
+/** `AgentDelivery`: delivers a message to a DeepSeek Harness agent once per request id, also across a restored Session */
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { freezeMessage, MessageId, type ContextFormed, type UserMessage } from '@deepseek-ai/dsh-llm'

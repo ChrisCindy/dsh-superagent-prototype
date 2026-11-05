@@ -1,4 +1,4 @@
-/** Trigger status view listing Threads filtered by subscription and evaluation activity. */
+/** The Trigger stage: its status */
 import { useState } from 'react'
 import { THREAD_FILTERS, type ThreadFilter } from '../app/api.ts'
 import { usePoll } from './api.ts'

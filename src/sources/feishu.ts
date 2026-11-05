@@ -1,4 +1,4 @@
-/** Feishu source kind definition, policy synchronization, and Cordis plugin entry. */
+/** The Feishu kind and plugin entry, exported as `./feishu-watch` */
 import type { Context } from '@deepseek-ai/cordis'
 import { z } from 'zod'
 import { FeishuBotSchema } from '../deployment.ts'

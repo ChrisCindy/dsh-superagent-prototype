@@ -1,4 +1,4 @@
-/** Proactive candidate assessment for the main Session: relays candidate cards, serves bounded context reads, and records outcomes. */
+/** The MasterAssessor, the assessment schema and the window `orchestrator_eval` answers */
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { z } from 'zod'
 import { reasonText, threadKey, type Assessor, type AssessmentOutcome, type Candidate, type EngineForMainSession,

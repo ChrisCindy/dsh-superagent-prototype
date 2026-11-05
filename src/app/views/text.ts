@@ -1,4 +1,4 @@
-/** Text sanitization and formatting helpers for plain-text previews and HTML-free Markdown in views. */
+/** The two forms of a view's text: `preview`, plain text on one line, and `markdown` without HTML; `plain` and `readable` */
 const ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', '#39': "'", nbsp: ' ' }
 /** Strips HTML comments and tags, decodes basic entities, and strips again to catch entity-encoded tags. */
 const withoutHtml = (text: string) => text.replace(/<!--[\s\S]*?-->/g, '').replace(/<\/?[a-zA-Z][^>]*>/g, '')

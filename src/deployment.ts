@@ -1,4 +1,8 @@
-/** Plugin configuration and startup verification for repository access and agent CLI identities. */
+/**
+ * The plugin `Config` and `Machine`; `resolveDeployment` and `resolveFeishuBot` read the repository and the accounts from the Source
+ * settings, each CLI run as Executor shells run it; `checkMerging` reads, as the agent account, whether GitHub requires a review before a
+ * merge to the default branch. The code names no person, account or organization
+ */
 import { LIMITS } from './limits.ts'
 import { accessSync, constants, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'

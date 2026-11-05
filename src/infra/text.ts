@@ -1,4 +1,4 @@
-/** Word counting and string formatting utilities for IM message limits and templates. */
+/** Word counts and the chat message limit, `fill` and `sameName` */
 const words = new Intl.Segmenter('zh', { granularity: 'word' })
 export const IM_WORDS = 100
 export const NOTE_WORDS = 30

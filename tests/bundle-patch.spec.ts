@@ -1,4 +1,7 @@
-/** The bundle's patch, read with the entry-list dialect DSH reads bundle patches with, and the agent and permission presets it defines. */
+/**
+ * The bundle's patch, read as DeepSeek Harness reads it over its base layer, the agent presets it defines and the permission presets it
+ * adds
+ */
 import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { join } from 'node:path'

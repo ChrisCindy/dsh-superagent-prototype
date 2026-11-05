@@ -1,4 +1,4 @@
-/** Read-only Store queries for views, tools, and Source polling. */
+/** `storeReads`: the Store's read queries for the views, the tools and the Sources' polls, which never write */
 import type { DatabaseSync, SQLInputValue } from 'node:sqlite'
 import type { Decision, DomainEvent, Thread, Trigger } from '../core/index.ts'
 import type { Dropped, Receipt, TimelinePlace } from './store.ts'

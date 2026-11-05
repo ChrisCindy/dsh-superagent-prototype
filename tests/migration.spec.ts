@@ -1,3 +1,7 @@
+/**
+ * The schema 11 to 15 migrations: every stored record in its current shape, each stored Source's kind, the Decisions and Inputs of a
+ * reopened Ticket, the DshExecutor's effect kinds, the owner states of each disposition, and the refusal of older schemas
+ */
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'

@@ -310,11 +310,26 @@ Some knowledge of GitHub and Feishu stays outside `src/sources`. Setup (`src/app
 
 ## Modules
 
+Each row is the first paragraph of the comment its file opens with; `node scripts/doc-tables.ts` writes this table and the test table from the files.
+
+<!-- modules:start (scripts/doc-tables.ts) -->
+
 | Path | Responsibility |
 | --- | --- |
-| `src/index.ts` | The main plugin entry: reads the machine settings, starts the Runtime, and gives it the restart that a save of a Source's account uses |
+| `src/app/runtime.ts` | The Runtime, the composition root, with its start and stop |
+| `src/app/notices.ts` | The main Session's notices and relays: `eventNotice`, `reportRelay`, `resultRelay` and `followupRelay` |
+| `src/app/tools/main.ts` | The main Session's tools |
+| `src/app/tools/executor.ts` | An Executor Session's tools |
+| `src/app/http.ts` | The `/orchestrator/api` routes: the same-origin check, the DeepSeek Harness sign-in every route but `GET state` requires, request limits and one status per kind of failure |
+| `src/app/api.ts` | `Api`, every route with its parameters, query, body and response, and the filters of the lists; it imports only types, so the panel bundles it |
+| `src/app/resources.ts` | `RESOURCES` and `readResource`: what `orchestrator_read` reads, for each role |
+| `src/app/links.ts` | `sourceLink`, the page of a Trigger's message, and `candidateCard` |
+| `src/app/cards.ts` | Compact cards of Triggers, Tickets, Threads and Decisions for models, the closed set of ticket card states `TICKET_STATES`, and `textPage` |
+| `src/sources/schedule.ts` | The schedule kind and plugin entry, exported as `./schedule-watch`: each entry's GitHub search once per period, its hits as Triggers on GitHub Threads, and the period each entry last fired in, kept in KV |
+| `src/sources/poll.ts` | What the Sources' loops share: `POLL_HORIZON_MS`, `polled`, `cursorAt`, `pollThreads`, which keeps a failure on its Thread as `pollError`, and `pause`, a wait that fake timers drive |
 | `src/deployment.ts` | The plugin `Config` and `Machine`; `resolveDeployment` and `resolveFeishuBot` read the repository and the accounts from the Source settings, each CLI run as Executor shells run it; `checkMerging` reads, as the agent account, whether GitHub requires a review before a merge to the default branch. The code names no person, account or organization |
 | `src/setup.ts` | Setup problems: `SetupError`, with a code, the place that fixes it and the English text the log, the main Session and the panel share; and setup warnings (`SETUP_WARNINGS`, `setupWarning`), which leave dsh-superagent running |
+| `src/index.ts` | The main plugin entry: reads the machine settings, starts the Runtime, and gives it the restart that a save of a Source's account uses |
 | `src/policy.ts` | The Policy: the settings schemas by block, the Policy version, the gate and Mandate revalidation |
 | `src/admission.ts` | The admission table's values, each cell's options and defaults, shared with the panel |
 | `src/limits.ts` | The limits of the values a person sets, which the settings schemas check and the panel's fields offer |
@@ -335,25 +350,23 @@ Some knowledge of GitHub and Feishu stays outside `src/sources`. Setup (`src/app
 | `src/core/ids.ts` | `key`: ids derived from their inputs, equal for equal inputs |
 | `src/core/memory.ts` | `MemoryRepositories`: the Store's repositories in memory, in the Store's order and with its nested rollback, for domain tests |
 | `src/core/index.ts` | The core's exports |
-| `src/app/runtime.ts` | The Runtime, the composition root, with its start and stop |
 | `src/app/setup.ts` | Setup, and `setupChanged`, whether a save changes a field setup reads |
 | `src/app/passes.ts` | Passes, the pass scheduler |
 | `src/app/outbox.ts` | The Outbox: the Engine's `Outbox` port, the receipts and the `reply` effects that send them |
-| `src/app/notices.ts` | The main Session's notices and relays: `eventNotice`, `reportRelay`, `resultRelay` and `followupRelay` |
 | `src/app/store.ts` | The Store, and `Receipt`, a message of the outbox |
 | `src/app/store-read.ts` | `storeReads`: the Store's read queries for the views, the tools and the Sources' polls, which never write |
 | `src/app/migration.ts` | The schema 11 migration, one step from schema 10 that writes every stored record in its current shape, the schema 12 migration, which names each stored Source's kind, the schema 13 migration, which writes the Decisions and Inputs of a follow-up that reopened a Ticket as routing and resuming do now, the schema 14 migration, which gives the DshExecutor's queued effects its prefix, and the schema 15 migration, which writes each disposition's lists of Tickets as one owner state for each Ticket |
-| `src/app/effects.ts` | Effects |
+| `src/app/effects.ts` | Effects, the durable queue of side effects that run after their transaction commits |
 | `src/app/executors.ts` | `Executors`, the registry the Engine's Executor port goes through, and `chosenExecutor`, which Executor a new Ticket runs on |
 | `src/app/versions.ts` | `Versions`: a record kept as numbered snapshots with a pointer to the current one, for the settings and the prompts |
 | `src/app/cache.ts` | `TextCache`: texts kept in memory within a size, the least recently used dropped first |
-| `src/app/settings.ts` | Settings |
+| `src/app/settings.ts` | Settings: the revisioned settings blocks, the pause, Policy syncs and the pending Policy proposal |
 | `src/app/settings-history.ts` | `policyHistory`: each saved settings revision with what it changed from the one before |
 | `src/app/retention.ts` | The daily prune: deletes the records the `retention` settings no longer keep, after writing them to an archive, then frees the file's pages |
 | `src/app/prompts.ts` | Prompts, `builtInParts`, the built-in parts a team may override, and `promptParts`, the order of a role's prompt sections |
 | `src/app/context.ts` | The built-in prompt text, read from `prompts/`, and the transcript entries Sessions read |
 | `src/app/skill-files.ts` | Packaged text: `promptFile`, which joins a file's one-sentence lines into paragraphs, and the bundled skills, read from `skills/` by name |
-| `src/app/sessions.ts` | Sessions |
+| `src/app/sessions.ts` | Sessions: the DeepSeek Harness Sessions of both roles, with their prompts, tools, skills and permission presets, and the messages they receive |
 | `src/app/permissions.ts` | The permission preset of each role by the `sandbox` setting, and the setup checks of the presets and the extra writable roots |
 | `src/app/delivery.ts` | `AgentDelivery`: delivers a message to a DeepSeek Harness agent once per request id, also across a restored Session |
 | `src/app/retry-health.ts` | `RetryHealth`: which Sessions wait on a model budget retry, for the `models` health entry |
@@ -361,14 +374,7 @@ Some knowledge of GitHub and Feishu stays outside `src/sources`. Setup (`src/app
 | `src/app/assessment.ts` | The MasterAssessor, the assessment schema and the window `orchestrator_eval` answers |
 | `src/app/execution-environment.ts` | The execution environment: its variables, a Ticket's values, the directory root and the lines of the prompt section, which `src/app/prompts.ts` fills into its template |
 | `src/app/source-context.ts` | `sourceContextOf`: each Source kind's `SourceContext` |
-| `src/app/links.ts` | `sourceLink`, the page of a Trigger's message, and `candidateCard` |
-| `src/app/cards.ts` | Compact cards of Triggers, Tickets, Threads and Decisions for models, the closed set of ticket card states `TICKET_STATES`, and `textPage` |
-| `src/app/resources.ts` | `RESOURCES` and `readResource`: what `orchestrator_read` reads, for each role |
 | `src/app/tools/tool.ts` | The `Tool` type, `readTool`, the `orchestrator_read` of both roles, and `AcknowledgementSchema` |
-| `src/app/tools/main.ts` | The main Session's tools |
-| `src/app/tools/executor.ts` | An Executor Session's tools |
-| `src/app/http.ts` | The `/orchestrator/api` routes: the same-origin check, the DeepSeek Harness sign-in every route but `GET state` requires, request limits and one status per kind of failure |
-| `src/app/api.ts` | `Api`, every route with its parameters, query, body and response, and the filters of the lists; it imports only types, so the panel bundles it |
 | `src/app/views/text.ts` | The two forms of a view's text: `preview`, plain text on one line, and `markdown` without HTML; `plain` and `readable` |
 | `src/app/views/records.ts` | The rows the views share: Triggers, Tickets, Threads, Decisions and Channel links, and `ownersOf`, the owners of follow-ups as one request reads them |
 | `src/app/views/tickets.ts` | The Ticket lists by stage, a Ticket's page, the Mandate basis facts and the Executor's load |
@@ -385,9 +391,8 @@ Some knowledge of GitHub and Feishu stays outside `src/sources`. Setup (`src/app
 | `src/infra/text.ts` | Word counts and the chat message limit, `fill` and `sameName` |
 | `src/infra/health.ts` | The `HealthBoard`, every part's health entry, each claimed by its one writer |
 | `src/sources/kind.ts` | The `SourceKind` protocol |
-| `src/sources/registry.ts` | `SourceRegistry` |
+| `src/sources/registry.ts` | `SourceRegistry`: the Source kinds and their instances, behind the Engine's `SourceScope` |
 | `src/sources/host.ts` | `SourceHost`, `SourceContext`, `Health`, `health` and the fixed health texts |
-| `src/sources/poll.ts` | What the Sources' loops share: `POLL_HORIZON_MS`, `polled`, `cursorAt`, `pollThreads`, which keeps a failure on its Thread as `pollError`, and `pause`, a wait that fake timers drive |
 | `src/sources/github.ts` | The GitHub kind and plugin entry, exported as `./github-watch`: a poll round of notifications, the pull requests of open Tickets with their CI, and subscribed Threads |
 | `src/sources/github-trigger.ts` | GitHub comments, reviews, Issue bodies and CI changes as Triggers, and GitHub addresses |
 | `src/sources/github-pull.ts` | The pull request rules: which pull requests a Ticket follows (`claimPull`, `observePull`), the closes it reports to the Engine, and `pullEndNotices`, the chat notice of a Ticket that ended merged or closed |
@@ -401,15 +406,18 @@ Some knowledge of GitHub and Feishu stays outside `src/sources`. Setup (`src/app
 | `src/sources/feishu-read.ts` | The `feishu/` reads of a Trigger's message, its root, parent and topic, and `feishuThreadContext`, which gives them to assessments with their images |
 | `src/sources/admission-context.ts` | The bounded window an assessment starts from: the first pages of a Trigger's Thread, read through its kind, and the messages around the Trigger |
 | `src/sources/feishu-image.ts` | Reads a Feishu message's image as an attachment for the assessing Session |
-| `src/sources/schedule.ts` | The schedule kind and plugin entry, exported as `./schedule-watch`: each entry's GitHub search once per period, its hits as Triggers on GitHub Threads, and the period each entry last fired in, kept in KV |
 | `src/client/index.tsx` | The client plugin entry: the sidebar entry, the main panel and the page in DeepSeek Harness's Plugin Manager |
 | `src/client/app.tsx` | The panel: header, search, glossary, tabs and the page of the current route |
 | `src/client/provider.tsx` | What every page reads from its host: copy, calls, navigation, notices, the state poll, and `restart`, which reads the state quickly while dsh-superagent restarts |
 | `src/client/api.ts` | Calls and polls of the management API, typed by `src/app/api.ts`, and the Decision filters of the Eval status |
 | `src/client/route.ts` | The tabs, the settings groups, the typed routes that `parseRoute` reads, and the route memory with the settings group opened last |
 | `src/client/overview.tsx` | The overview |
-| `src/client/source.tsx`, `trigger.tsx`, `eval.tsx`, `execution.tsx` | One file per stage: its status, and its settings where it has some |
-| `src/client/thread.tsx`, `ticket.tsx` | The record pages: a Thread with its timeline, and a Ticket with its authorization, Inputs and Assignments |
+| `src/client/source.tsx` | The Source stage: its status, and its settings |
+| `src/client/trigger.tsx` | The Trigger stage: its status |
+| `src/client/eval.tsx` | The Eval stage: its status, and its settings |
+| `src/client/execution.tsx` | The Execution stage: its status, and its settings |
+| `src/client/thread.tsx` | A record page: a Thread with its timeline |
+| `src/client/ticket.tsx` | A record page: a Ticket with its authorization, Inputs and Assignments |
 | `src/client/settings.tsx` | The Settings tab: the group navigation and the group on screen |
 | `src/client/settings-kit.tsx` | The building blocks of settings blocks: the settings the stage groups share, `useBlockDraft`, the fields, among them a Source kind's, and the history of saves |
 | `src/client/prompts.tsx` | The Prompts settings: the page owns the view it read and its editor the draft, and the Edit, Full prompt and History tabs render from them; a built-in part's editor shows a changed default and keeps or drops the override |
@@ -423,11 +431,16 @@ Some knowledge of GitHub and Feishu stays outside `src/sources`. Setup (`src/app
 | `src/client/text.ts` | Copy by key and the wording of domain values, reasons, senders and times |
 | `src/client/marks.ts` | The marks of the states the views classify: a Ticket's or a Thread's stage, a Source's state and a Decision's outcome, each as a dot, an icon, a tone and a label |
 | `src/client/locales.ts` | All copy in both languages, and the glossary of [001 Domain model](001-domain.md) |
-| `src/client/client.css`, `css.d.ts` | The panel's stylesheet, loaded as text |
+| `src/client/client.css` | The panel's stylesheet, loaded as text |
+| `src/client/css.d.ts` | The type of a stylesheet imported as text (`?raw`) |
+
+<!-- modules:end -->
 
 `src/sources/github.ts`, `src/sources/feishu.ts` and `src/sources/schedule.ts` are also the entries of the three Source plugins, built by `tsdown.config.ts` and exported in `package.json` as `./github-watch`, `./feishu-watch` and `./schedule-watch`. The bundle's `cordis.patch.yml` inserts the four plugins, with Feishu and the schedule Source disabled.
 
 ## Tests
+
+<!-- tests:start (scripts/doc-tables.ts) -->
 
 | Test | Covers |
 | --- | --- |
@@ -439,8 +452,10 @@ Some knowledge of GitHub and Feishu stays outside `src/sources`. Setup (`src/app
 | `tests/sources.spec.ts` | The Feishu and GitHub Sources on a `SourceContext`: translation, polls and read positions, the pull request rules, health |
 | `tests/schedule.spec.ts` | The schedule Source: entries, searches limited to a repository, Triggers on GitHub Threads, one firing per period across restarts, its Policy part with the accept mode and the proactive limit, and its plugin |
 | `tests/commands.spec.ts` | CLI calls as the deployment's accounts, the Channels' answers, and repository-scoped GitHub calls |
-| `tests/feishu-read.spec.ts`, `tests/github-read.spec.ts` | Feishu and GitHub reads |
-| `tests/admission-context.spec.ts`, `tests/feishu-image.spec.ts` | The Thread window of assessments, and Feishu image reads |
+| `tests/feishu-read.spec.ts` | Feishu reads |
+| `tests/github-read.spec.ts` | GitHub reads |
+| `tests/admission-context.spec.ts` | The Thread window of assessments |
+| `tests/feishu-image.spec.ts` | Feishu image reads |
 | `tests/assessment.spec.ts` | What the MasterAssessor keeps per Eval, and when it lets go |
 | `tests/background.spec.ts` | Waiting for a worker's shell jobs and subagents: an end that woke it, and a host that stops |
 | `tests/bundle-patch.spec.ts` | The bundle's patch, read as DeepSeek Harness reads it over its base layer, the agent presets it defines and the permission presets it adds |
@@ -455,7 +470,8 @@ Some knowledge of GitHub and Feishu stays outside `src/sources`. Setup (`src/app
 | `tests/followups-table.spec.ts` | Who decides a person's follow-up, one row per state and event, on in-memory repositories |
 | `tests/health.spec.ts` | One health entry per part, each cleared by its own next success |
 | `tests/delivery.spec.ts` | `AgentDelivery` |
-| `tests/retry-health.spec.ts`, `tests/role-models.spec.ts` | Model budget retries, and the models of the two roles |
+| `tests/retry-health.spec.ts` | Model budget retries |
+| `tests/role-models.spec.ts` | The models of the two roles |
 | `tests/runtime.spec.ts` | The whole application on a simulated DeepSeek Harness host, through tools and HTTP |
 | `tests/tools.spec.ts` | The Sessions' tools: what `orchestrator_read` reads for each role, and the shapes and checks of the other main Session tools |
 | `tests/runtime-concurrency.spec.ts` | Work that overlaps: Triggers during a pass, Tickets that change during deliveries and launches |
@@ -469,16 +485,33 @@ Some knowledge of GitHub and Feishu stays outside `src/sources`. Setup (`src/app
 | `tests/prompts.spec.ts` | Prompt validation, assembly and versions |
 | `tests/cards.spec.ts` | The rules the built-in text must state, file by file |
 | `tests/model-surface.spec.ts` | Everything models read: tools, prompts, skills and inputs, checked against the tool schemas, the execution environment and the glossary, within a size budget per role |
-| `tests/deployment.spec.ts`, `tests/environment.spec.ts`, `tests/index.spec.ts` | The plugin configuration and setup, the agent's process environment, the plugin entry |
+| `tests/deployment.spec.ts` | The plugin configuration and setup |
+| `tests/environment.spec.ts` | The agent's process environment |
+| `tests/index.spec.ts` | The plugin entry |
 | `tests/service-script.spec.ts` | `scripts/dsh-superagent` against fake `ps`, `tmux` and `dsh`, and its `login` against a fake DeepSeek Harness token exchange |
-| `tests/client.spec.tsx`, `tests/navigation.spec.ts`, `tests/controls.spec.tsx` | The client plugin's registration and polling, Session navigation and route memory, the local controls, and the panel's imports, which have no cycle |
-| `tests/panel-overview.spec.tsx`, `panel-source.spec.tsx`, `panel-trigger.spec.tsx`, `panel-eval.spec.tsx`, `panel-execution.spec.tsx` | Each page of the panel, against a fake management API answered by route |
-| `tests/panel-settings.spec.tsx`, `panel-prompts.spec.tsx`, `panel-deployment.spec.tsx`, `panel-panel.spec.tsx` | The settings groups, drafts and history, the prompts, the Deployment page, and the panel's search, glossary and route memory |
-| `tests/draft.spec.ts`, `tests/prompt-config.spec.ts`, `tests/markdown.spec.ts`, `tests/marks.spec.ts` | Draft states, merges and the save bar's line; the prompt configuration by section and the line diff; the Markdown subset and its links; the mark of every state the views classify |
-| `tests/locales.spec.ts`, `tests/styles.spec.ts` | The copy in both languages, the stylesheet |
+| `tests/client.spec.tsx` | The client plugin's registration and polling |
+| `tests/navigation.spec.ts` | Session navigation and route memory |
+| `tests/controls.spec.tsx` | The local controls, and the panel's imports, which have no cycle |
+| `tests/panel-overview.spec.tsx` | The overview page, against a fake management API answered by route |
+| `tests/panel-source.spec.tsx` | The Source status and settings, against a fake management API answered by route |
+| `tests/panel-trigger.spec.tsx` | The Trigger status and a Thread, against a fake management API answered by route |
+| `tests/panel-eval.spec.tsx` | The Eval status and settings, against a fake management API answered by route |
+| `tests/panel-execution.spec.tsx` | The Execution status, a Ticket, and the Execution settings, against a fake management API answered by route |
+| `tests/panel-settings.spec.tsx` | The settings groups, drafts, save bars and history |
+| `tests/panel-prompts.spec.tsx` | The Prompts settings |
+| `tests/panel-deployment.spec.tsx` | The Deployment settings and the Plugin Manager page |
+| `tests/panel-panel.spec.tsx` | The panel's search, glossary and route memory, and what it shows while the host is down |
+| `tests/draft.spec.ts` | Draft states, merges and the save bar's line |
+| `tests/prompt-config.spec.ts` | The prompt configuration by section and the line diff |
+| `tests/markdown.spec.ts` | The Markdown subset and its links |
+| `tests/marks.spec.ts` | The mark of every state the views classify |
+| `tests/locales.spec.ts` | The copy in both languages |
+| `tests/styles.spec.ts` | The stylesheet: only classes a component uses, and one rule per line |
 | `tests/class-docs.spec.ts` | Every class in `src` has a JSDoc block before it |
 | `tests/e2e/superagent.e2e.ts` | Only with `pnpm test:e2e` (tests/e2e/README.md): the bundle in a real DeepSeek Harness installation, through `scripts/dsh-superagent` and the management API, with fake `gh` and `lark-cli` and a scripted model: setup, the API's shapes, a mention through acceptance, the worker and the result reply, the Feishu bot setup, a second GitHub Source for another repository, a schedule entry's Trigger on an Issue's Thread that a restart does not repeat, and the escalations of 009 a worker or local process can try (writing the state directory, merging, the API without the sign-in) |
-| `tests/docs.spec.ts` | Numbered documents link only to earlier ones, every local link resolves, no document has merge conflict markers, and this document's tables list every module and every test |
+| `tests/docs.spec.ts` | Numbered documents link only to earlier ones, every local link and image resolves, no document has merge conflict markers, and the module and test tables of 007 Architecture list every module and every test, as `scripts/doc-tables.ts` writes them |
+
+<!-- tests:end -->
 
 `tests/fixtures/` holds what several tests share: `host.ts`, a simulated DeepSeek Harness host; `panel-server.ts` and `panel.tsx`, the fake management API and the panel around a page; `connection.ts`, DeepSeek Harness's Connection, which signs in a request that carries its test cookie; `deployment.ts`, a resolved deployment; `git.ts`, the environment of every git the tests start, which names no repository; and `async.ts`.
 

@@ -1,5 +1,6 @@
 /**
- * Per-scope admission matrix classifying incoming messages as explicit requests, inferred candidates, or ignored.
+ * The admission table's values, each cell's options and defaults, shared with the panel
+ *
  * A listed sender who addresses the agent always makes an explicit request (no table cell); an unaddressed message cannot be explicit.
  */
 import type { AdmissionCell } from './core/model.ts'

@@ -1,4 +1,4 @@
-/** Serves paginated context resources to orchestrator_read so large bodies stay out of model prompts until requested. */
+/** `RESOURCES` and `readResource`: what `orchestrator_read` reads, for each role */
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import { UserError, key, latestReport, reached, runningAssignment, threadKey, type Ticket, type Trigger } from '../core/index.ts'
 import { batchOf, inputMessage, triggerMessage, workerSessionId } from '../executor/dsh.ts'
