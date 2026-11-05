@@ -1,5 +1,5 @@
 /** Source message link resolution and candidate card assembly for the main Session. */
-import type { Candidate, Thread, Ticket, Trigger } from '../core/index.ts'
+import { handbacksOf, reachedTickets, type Candidate, type Thread, type Ticket, type Trigger } from '../core/index.ts'
 import type { Commands } from '../infra/commands.ts'
 import { readFeishuLink } from '../sources/feishu-read.ts'
 import { feishuRef, feishuSettings } from '../sources/feishu.ts'
@@ -73,10 +73,11 @@ export function correlatedThreads(store: LinkHost['store'], thread: Thread): { c
 export async function candidateCard(host: LinkHost, candidate: Candidate) {
   const primary = candidate.triggers.at(-1)!
   const settings = host.store.settings()
-  const delivered = host.store.triggers.disposition(primary.id)?.fanout ?? []
+  const disposition = host.store.triggers.disposition(primary.id)
+  const delivered = disposition ? reachedTickets(disposition) : []
   const referenced = referencedTickets(host, primary, candidate.tickets)
   // Triggers that a worker Session handed back as outside its ticket's scope, with the worker's reason.
-  const handedBack = candidate.triggers.flatMap(trigger => (host.store.triggers.disposition(trigger.id)?.handbacks ?? [])
+  const handedBack = candidate.triggers.flatMap(trigger => handbacksOf(host.store.triggers.disposition(trigger.id))
     .map(item => ({ trigger_id: trigger.id, ticket_id: item.ticketId, reason: item.reason })))
   // Format the primary trigger like a worker input (including the message it replies to) and summarize earlier batch triggers as cards.
   const others = candidate.triggers.filter(trigger => trigger.id !== primary.id)

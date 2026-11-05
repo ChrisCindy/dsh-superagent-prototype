@@ -98,11 +98,12 @@ Callers receive only their role's `Pick` of the Engine: `EngineForSources`, `Eng
 The Engine keeps batching, authorization, fan-out, resume and attention lifecycle rules private. Several shared predicates make these rules consistent:
 
 - `waitsForPerson` (`src/core/model.ts`): the latest Assignment reported `blocked` or `failed`, and no human message has arrived since. Automatic Inputs and failed launches remain held while this is true.
-- `followupOwners`: the Tickets still responsible for a human follow-up received on their own Threads. A Ticket can be live or ended without a human stop and waiting to resume. Handing back the message ends that ownership.
+- `followupOwners`: the Tickets still responsible for a human follow-up: those where its owner state is `delivered`, `read` or `taken`. A Ticket can be live or ended without a human stop and waiting to resume.
+- `transition` and `OWNER_TRANSITIONS`: the one place an owner state changes. See [002 Authorization](002-authorization.md) for the table.
 - `settled`: a Decision resolved the request; stop, unavailable, routed and refused-stop Decisions do not count.
 - `ticketStage` (`src/core/stage.ts`): implements the stage table in [003 Execution](003-execution.md).
 
-When a Ticket ends, unread follow-ups return to Eval unless another Ticket still owns them or another disposition settled them. Acknowledged, answered and handed-back messages are excluded. For older records without acknowledgement dispositions, the outbox receipt supplies that fact. A final Report also covers messages waiting when the Assignment began, including the message that resumed it. The message that stopped a Ticket is not automatically re-evaluated.
+When a Ticket ends, unread follow-ups return to Eval unless another Ticket still owns them or another disposition settled them. Messages in state `taken` or `handedBack` are excluded. A final Report also covers messages waiting when the Assignment began, including the message that resumed it. The message that stopped a Ticket is not automatically re-evaluated.
 
 After a change, the Engine emits an event from `DomainEvents` in `src/core/ports.ts`:
 
@@ -124,7 +125,7 @@ Its fields are typed: `origin`, the admissible Trigger that gave its Eval's batc
 
 An Input that carries a Trigger records whether a person wrote it, which `waitsForPerson` reads. A Thread also lists in `context` the subscribed Tickets that follow it only for context, and counts in `expired` the Evals of its queued Triggers that expired in a row; an Evaluation records its `primary` Trigger and when its candidate was `delivered`.
 
-A Trigger's disposition records the Tickets it reached, by fan-out or attachment, a person's requeue, each Ticket that handed it back, with the reason, and each Ticket whose Executor acknowledged or answered it.
+A Trigger's disposition records a person's requeue and `owners`: one entry for each Ticket it reached, by fan-out or attachment, with its state there (`delivered`, `read`, `taken`, `handedBack`, `released` or `context`), since when, and the reason of a hand-back.
 
 A Mandate's `basis` (`MandateBasis`) records how the gate admitted its Trigger. Revalidation reads the receiving `source`, `scope` and `row`, the listed `sender`, matched `rules`, and `via`:
 
@@ -164,7 +165,7 @@ Its interfaces are grouped by purpose:
 - **Typed key-value records:** `get`, `set`, `delete` and `keys`, using entries from `KV`.
 - **Events:** `events.append` adds a domain event to the `event` table; `read.events` lists them newest first, by type, time and page.
 
-`afterCommit` runs an action only after the transaction commits, never after rollback. Runtime reads records in their stored shape; the migrations to schemas 11 to 14 convert older supported records at startup.
+`afterCommit` runs an action only after the transaction commits, never after rollback. Runtime reads records in their stored shape; the migrations to schemas 11 to 15 convert older supported records at startup.
 
 ### Effects
 
@@ -337,7 +338,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/app/notices.ts` | The main Session's notices and relays: `eventNotice`, `reportRelay`, `resultRelay` and `followupRelay` |
 | `src/app/store.ts` | The Store, and `Receipt`, a message of the outbox |
 | `src/app/store-read.ts` | `storeReads`: the Store's read queries for the views, the tools and the Sources' polls, which never write |
-| `src/app/migration.ts` | The schema 11 migration, one step from schema 10 that writes every stored record in its current shape, the schema 12 migration, which names each stored Source's kind, the schema 13 migration, which writes the Decisions and Inputs of a follow-up that reopened a Ticket as routing and resuming do now, and the schema 14 migration, which gives the DshExecutor's queued effects its prefix |
+| `src/app/migration.ts` | The schema 11 migration, one step from schema 10 that writes every stored record in its current shape, the schema 12 migration, which names each stored Source's kind, the schema 13 migration, which writes the Decisions and Inputs of a follow-up that reopened a Ticket as routing and resuming do now, the schema 14 migration, which gives the DshExecutor's queued effects its prefix, and the schema 15 migration, which writes each disposition's lists of Tickets as one owner state for each Ticket |
 | `src/app/effects.ts` | Effects |
 | `src/app/executors.ts` | `Executors`, the registry the Engine's Executor port goes through, and `chosenExecutor`, which Executor a new Ticket runs on |
 | `src/app/versions.ts` | `Versions`: a record kept as numbered snapshots with a pointer to the current one, for the settings and the prompts |
@@ -444,6 +445,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `tests/cache.spec.ts` | `TextCache` |
 | `tests/queue.spec.ts` | The Runtime's work through the effect queue, and what earlier versions stored |
 | `tests/followups.spec.ts` | A person's follow-up on a Ticket's Thread: its notice to the main Session, the tools that act on it, what a burst costs; a worker's hand-back and context follow, and the main Session's note |
+| `tests/followups-table.spec.ts` | Who decides a person's follow-up, one row per state and event, on in-memory repositories |
 | `tests/health.spec.ts` | One health entry per part, each cleared by its own next success |
 | `tests/delivery.spec.ts` | `AgentDelivery` |
 | `tests/retry-health.spec.ts`, `tests/role-models.spec.ts` | Model budget retries, and the models of the two roles |
@@ -454,7 +456,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `tests/settings.spec.ts` | Settings saves that race a model or account check, a Policy sync that a save outran, the refusals of the pause, a sync and a block, the refusal of a tool's Policy or accept-mode change, and the pending Policy proposal |
 | `tests/views.spec.ts` | What the management views derive from the Store, such as the Thread a dropped message belongs to |
 | `tests/timeline.spec.ts` | A Thread's pages and a Trigger's neighbours by time and then id, with every received Trigger's time in one form |
-| `tests/migration.spec.ts` | The schema 11 to 14 migrations: every stored record in its current shape, each stored Source's kind, the Decisions and Inputs of a reopened Ticket, the DshExecutor's effect kinds, and the refusal of older schemas |
+| `tests/migration.spec.ts` | The schema 11 to 15 migrations: every stored record in its current shape, each stored Source's kind, the Decisions and Inputs of a reopened Ticket, the DshExecutor's effect kinds, the owner states of each disposition, and the refusal of older schemas |
 | `tests/store.spec.ts` | Repositories and their working sets, in SQLite as in memory, the kv area, with every key of `KV` spelled only in `src/kv.ts` and the migration, settings history, the event table and queries |
 | `tests/prompts.spec.ts` | Prompt validation, assembly and versions |
 | `tests/cards.spec.ts` | The rules the built-in text must state, file by file |
@@ -479,7 +481,7 @@ One SQLite file, `<stateDir>/orchestrator.sqlite`, which only the Store opens.
 | Table | Holds | Written by |
 | --- | --- | --- |
 | `trigger` | Each Trigger, its time `at` in the one form `Date#toISOString` gives, set when the Engine receives it, so times compare as text | Engine |
-| `disposition` | Where each Trigger went: `filtered` with the Source's reason code, its Eval and Decision, the Tickets it reached, by fan-out or attachment, whether it was requeued, the Tickets that handed it back with their reasons, and those whose Executor acknowledged or answered it | Engine |
+| `disposition` | Where each Trigger went: `filtered` with the Source's reason code, its Eval and Decision, whether it was requeued, and `owners`: each Ticket it reached, by fan-out or attachment, with its owner state, since when, and a hand-back's reason | Engine |
 | `trigger_thread` | Which Threads each Trigger is on, with its time and whether a person wrote it, so a Thread's Triggers are read without scanning every Trigger, in order of time and then id: a page of a Thread's timeline continues from a `<at>|<id>` cursor, and Triggers that share a time are not skipped | Store, with each Trigger |
 | `thread` | Threads: Subscriptions, the Tickets that follow it for context, queued Triggers, the Eval in progress, the count of its expiries and `meta`; the generated columns `active`, set while Triggers are queued or an Eval runs, and `subscribed`, its Source while a Ticket subscribes to it | Engine; Sources write `meta` |
 | `ticket` | Tickets with their Mandate, origin, execution, Assignments, Channels, Inputs and the Threads they follow; the generated columns `open`, set while it has not ended, and `active`, set while Inputs are undelivered or the latest Assignment is pending or running | Engine |
@@ -510,7 +512,7 @@ Read caches use bounded in-memory `TextCache` instances and are lost on restart.
 
 Nothing deletes old records yet, so these grow without bound: the `trigger`, `disposition`, `decision` and `event` rows; ended Tickets and their Threads; the outbox's receipts; and in `kv`, every saved settings revision and prompt version, the prompt revisions each Session worked under, and the Sources' records per Thread and per Issue or pull request.
 
-`SCHEMA_VERSION` only increases. A database of a newer version refuses to start; `src/app/migration.ts` upgrades a database of the pre-release schema 10, or of schemas 11 to 13, once, at start, and refuses an older one.
+`SCHEMA_VERSION` only increases. A database of a newer version refuses to start; `src/app/migration.ts` upgrades a database of the pre-release schema 10, or of schemas 11 to 14, once, at start, and refuses an older one.
 
 ## Model-facing interfaces
 

@@ -38,25 +38,73 @@ export interface Trigger {
   meta: Record<string, unknown>
 }
 
+/**
+ * Where a message stands with one ticket it reached (see `docs/002`, Follow-up ownership):
+ * - `delivered`: it reached the ticket on a Thread of the ticket's own, or the main Session attached it there;
+ * - `read`: the worker's Session took every copy of it that reached the worker into a step;
+ * - `taken`: the worker acknowledged or answered it, taking it up as within the ticket;
+ * - `handedBack`: the worker handed it back as beyond the ticket, once, with why;
+ * - `released`: the ticket ended, or could not resume, and let it go;
+ * - `context`: it reached the ticket only on a Thread the ticket follows for context.
+ * The first three own it: see `followupOwners`.
+ */
+export type OwnerState = 'delivered' | 'read' | 'taken' | 'handedBack' | 'released' | 'context'
+/** The states in which a ticket's worker decides a person's message (see `followupOwners`). */
+export const OWNING: readonly OwnerState[] = ['delivered', 'read', 'taken']
+/** One ticket a message reached, the state it is in there, and since when; `reason` says why a worker handed it back. */
+export interface Owner { ticketId: string; state: OwnerState; at: string; reason?: string }
+/**
+ * What happens to a message on one ticket: a copy of it reaches the ticket as its own (`reached`) or only on a Thread it
+ * follows for context (`reachedForContext`), its worker reads every copy (`read`), takes it up (`taken`) or hands it back
+ * (`handedBack`), or the ticket lets it go as it ends (`released`).
+ */
+export type OwnerEvent = 'reached' | 'reachedForContext' | 'read' | 'taken' | 'handedBack' | 'released'
+/**
+ * The state each event moves a message to on a ticket, from the state it was in, `none` for a ticket it has not reached.
+ * An event a state does not list leaves it as it is: a take-up stands through a new copy and the end, and a hand-back for good.
+ */
+export const OWNER_TRANSITIONS: Readonly<Record<OwnerEvent, Readonly<Partial<Record<OwnerState | 'none', OwnerState>>>>> = {
+  reached: { none: 'delivered', delivered: 'delivered', read: 'delivered', released: 'delivered', context: 'delivered' },
+  reachedForContext: { none: 'context' },
+  read: { delivered: 'read' },
+  taken: { delivered: 'taken', read: 'taken' },
+  handedBack: { none: 'handedBack', delivered: 'handedBack', read: 'handedBack', taken: 'handedBack', released: 'handedBack', context: 'handedBack' },
+  released: { delivered: 'released', read: 'released', context: 'released' },
+}
+/** The state a message is in on a ticket, or undefined where it has not reached the ticket. */
+export const ownerState = (disposition: Pick<TriggerDisposition, 'owners'> | undefined, ticketId: string): OwnerState | undefined =>
+  disposition?.owners.find(owner => owner.ticketId === ticketId)?.state
+/** The tickets a message reached and that have not let it go, as fan-out, attaching or a hand-back left them. */
+export const reachedTickets = (disposition: Pick<TriggerDisposition, 'owners'>): string[] =>
+  disposition.owners.filter(owner => owner.state !== 'released').map(owner => owner.ticketId)
+/** The tickets whose worker handed a message back, with why and when. */
+export const handbacksOf = (disposition: Pick<TriggerDisposition, 'owners'> | undefined): { ticketId: string; reason: string; at: string }[] =>
+  (disposition?.owners ?? []).flatMap(owner => owner.state === 'handedBack' ? [{ ticketId: owner.ticketId, reason: owner.reason ?? '', at: owner.at }] : [])
+/**
+ * The disposition after `event` happened to its message on a ticket at `at` (see `OWNER_TRANSITIONS`), or the same one when
+ * the event leaves the state as it is. A ticket the message reaches anew comes last, as it reached the message last.
+ */
+export function transition(disposition: TriggerDisposition, ticketId: string, event: OwnerEvent, at: string, reason?: string): TriggerDisposition {
+  const current = disposition.owners.find(owner => owner.ticketId === ticketId)
+  const state = OWNER_TRANSITIONS[event][current?.state ?? 'none']
+  if (!state || state === current?.state) return disposition
+  const owner: Owner = { ticketId, state, at, ...reason ? { reason } : {} }
+  const anew = !current || current.state === 'released'
+  const others = disposition.owners.filter(item => item.ticketId !== ticketId)
+  const owners = anew ? [...others, owner] : disposition.owners.map(item => item.ticketId === ticketId ? owner : item)
+  return { ...disposition, owners }
+}
+
 /** Where a trigger went after intake; it grants nothing, but decides who decides a person's follow-up (see `followupOwners`). */
 export interface TriggerDisposition {
   /** Rejected by the source scope filter before entering the domain, for the Source's reason. */
   filtered?: Reason
   evalId?: string
   decisionId?: string
-  /**
-   * The tickets it reached, by subscription fan-out or attached by the main Session; a ticket that ended or could not resume
-   * without its worker taking it up no longer counts.
-   */
-  fanout: string[]
-  /** The tickets of `fanout` it reached only on a Thread their Executor follows for context, which makes it none of theirs. */
-  context?: string[]
+  /** Each ticket it reached, by subscription fan-out or attached by the main Session, with the state it is in there. */
+  owners: Owner[]
   /** A person, or the main Session for a message no ticket decides, sent it to Eval again; a hand-back does not set it. */
   requeued?: true
-  /** The tickets whose Executor handed it back as beyond the ticket, each once, with why; it goes to Eval once none decides it. */
-  handbacks?: { ticketId: string; reason: string; at: string }[]
-  /** The tickets whose Executor acknowledged it or answered it, taking it up as within the ticket. */
-  acked?: string[]
   at: string
 }
 /** What deciding a follow-up's owners reads: the stored tickets, Threads and dispositions, as the Store and the core keep them. */
@@ -66,19 +114,18 @@ export interface FollowupRecords {
   triggers: { disposition(id: string): TriggerDisposition | undefined }
 }
 /**
- * The tickets whose worker decides a person's follow-up: those it reached on their own Threads that can still decide it
- * and did not hand it back. A ticket can while it is live, also once a person dropped its Subscription to the Thread, and
- * while it is ended, not by a person, with the Trigger waiting to resume it. None once a person sent it to Eval, or while
- * an Eval holds it, which an earlier version may have queued. While a ticket owns it, the message goes to no Eval, and the
- * main Session may only stop the work on it.
+ * The tickets whose worker decides a person's follow-up: those where it is in an owning state (`OWNING`) and that can still
+ * decide it. A ticket can while it is live, also once a person dropped its Subscription to the Thread, and while it is
+ * ended, not by a person, with the Trigger waiting to resume it. None once a person sent it to Eval, or while an Eval holds
+ * it, which an earlier version may have queued. While a ticket owns it, the message goes to no Eval, and the main Session
+ * may only stop the work on it.
  */
 export function followupOwners(trigger: Pick<Trigger, 'id' | 'human' | 'threads'>, records: FollowupRecords): string[] {
   if (!trigger.human) return []
   const disposition = records.triggers.disposition(trigger.id)
   if (!disposition || disposition.requeued) return []
   // The disposition alone rules most messages out, so a Thread or a ticket is read only for one that may have an owner.
-  const returned = new Set(disposition.handbacks?.map(item => item.ticketId))
-  const reached = disposition.fanout.filter(id => !returned.has(id) && !disposition.context?.includes(id))
+  const reached = disposition.owners.filter(owner => OWNING.includes(owner.state)).map(owner => owner.ticketId)
   if (!reached.length || records.threads.get(threadKey(trigger.threads[0]!))?.evaluating?.triggerIds.includes(trigger.id)) return []
   return reached.filter(id => {
     const ticket = records.tickets.get(id)
@@ -380,6 +427,12 @@ export interface Ticket {
 export interface Follow { thread: string; own: boolean; closed?: { at: string; outcome: 'merged' | 'closed' } }
 export interface Execution { name: string; directory: string; assignment: string }
 
+/**
+ * Whether a ticket's worker read a message: its Session took into a step every copy of it that reached the worker. A copy
+ * that never reached it, or one delivered before reads were recorded, asks for no read.
+ */
+export const readEvery = (ticket: Pick<Ticket, 'inputs' | 'undelivered'>, triggerId: string): boolean => ticket.inputs.every(input =>
+  input.kind !== 'trigger' || input.triggerId !== triggerId || !!input.readAt || (input.readAt === undefined && !ticket.undelivered.includes(input.id)))
 /** Whether a ticket is open: it has not ended. */
 export const liveTicket = (ticket: Pick<Ticket, 'ended'>): boolean => !ticket.ended
 /** How a ticket ended. */

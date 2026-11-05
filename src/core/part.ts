@@ -1,7 +1,7 @@
 /** Shared base class and configuration for Engine domain parts. */
 import { UserError } from './errors.ts'
-import { followupOwners, reached, threadKey } from './model.ts'
-import type { Thread, ThreadRef, Ticket, Trigger } from './model.ts'
+import { followupOwners, reached, threadKey, transition } from './model.ts'
+import type { OwnerEvent, Thread, ThreadRef, Ticket, Trigger } from './model.ts'
 import type { Assessor, AssessmentOutcome, DomainEvent, DomainEvents, Executor, Outbox, Policy, Repositories, SourceScope } from './ports.ts'
 
 export interface EngineOptions {
@@ -43,17 +43,20 @@ export abstract class EnginePart {
    */
   protected handBack(ticketId: string, trigger: Trigger, reason: string): boolean {
     const decided = this.owners(trigger).includes(ticketId)
-    const disposition = this.repo.triggers.disposition(trigger.id) ?? { fanout: [], at: this.now() }
-    const handbacks = [...disposition.handbacks ?? [], { ticketId, reason, at: this.now() }]
-    this.repo.triggers.saveDisposition(trigger.id, { ...disposition, handbacks })
+    this.move(trigger.id, ticketId, 'handedBack', reason)
     return decided && !this.owners(trigger).length && this.queueForEval(trigger)
   }
-  /** Record that a ticket's worker took a person's message up as within the ticket, by acknowledging or answering it. */
-  protected takeUp(ticketId: string, triggerId: string): void {
-    const disposition = this.repo.triggers.disposition(triggerId)
-    if (disposition && !disposition.acked?.includes(ticketId)) {
-      this.repo.triggers.saveDisposition(triggerId, { ...disposition, acked: [...disposition.acked ?? [], ticketId] })
-    }
+  /**
+   * Record that a ticket's worker took a person's message up as within the ticket, by acknowledging or answering it. Only a
+   * ticket that decides the message takes it up (see `OWNER_TRANSITIONS`): a reply to a message no fan-out or attach gave the
+   * ticket, such as the one it started from, or one it follows for context, decides nothing.
+   */
+  protected takeUp(ticketId: string, triggerId: string): void { this.move(triggerId, ticketId, 'taken') }
+  /** Apply what happened to a message on a ticket to its disposition (see `transition`), now. */
+  protected move(triggerId: string, ticketId: string, event: OwnerEvent, reason?: string): void {
+    const disposition = this.repo.triggers.disposition(triggerId) ?? { owners: [], at: this.now() }
+    const next = transition(disposition, ticketId, event, this.now(), reason)
+    if (next !== disposition) this.repo.triggers.saveDisposition(triggerId, next)
   }
   /** Queue a Trigger on its primary Thread for the next Eval, unless it waits there already or an Eval holds it. */
   protected queueForEval(trigger: Trigger): boolean {

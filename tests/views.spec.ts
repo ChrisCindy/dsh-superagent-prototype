@@ -89,7 +89,7 @@ it('classifies a Thread by what it is doing, and offers a filtered Trigger of a 
   store.triggers.save(message('e1', { source: 'feishu', id: 'ou_alice' }))
   store.triggers.save(message('e2', { source: 'feishu', id: 'ou_bob' }))
   store.triggers.save(message('e3', { source: 'feishu', id: 'ou_bot' }, false))
-  for (const id of ['e1', 'e3']) store.triggers.saveDisposition(id, { filtered: { code: 'not_a_member' }, fanout: [], at })
+  for (const id of ['e1', 'e3']) store.triggers.saveDisposition(id, { filtered: { code: 'not_a_member' }, owners: [], at })
   const view = snapshot(host)
   expect(threadSummary(view, store.threads.get('feishu:oc_1:om_root')!).stage).toBe('queued')
   const rows = ['e1', 'e2', 'e3'].map(id => triggerView(view, store.triggers.get(id)!))
@@ -137,9 +137,9 @@ it('does not show a follow-up that reached a ticket as waiting for an Eval, thou
   const host = views()
   live('t1')
   store.triggers.save(message('f1', { source: 'feishu', id: 'ou_alice' }))
-  store.triggers.saveDisposition('f1', { fanout: ['t1'], at })
+  store.triggers.saveDisposition('f1', { owners: [{ ticketId: 't1', state: 'delivered', at }], at })
   store.triggers.save(message('f2', { source: 'feishu', id: 'ou_bob' }))
-  store.triggers.saveDisposition('f2', { fanout: ['t1'], requeued: true, at })
+  store.triggers.saveDisposition('f2', { owners: [{ ticketId: 't1', state: 'delivered', at }], requeued: true, at })
   store.threads.save({ key: 'feishu:oc_1:om_root', ref: { source: 'feishu', id: 'oc_1:om_root' }, createdAt: at, subscriptions: ['t1'],
     correlated: [],
     pending: ['f1'], meta: {} })
@@ -239,9 +239,9 @@ it('shows a follow-up that reached a ticket as delivered, the tickets that hande
     correlated: [],
     pending: [], meta: {} })
   store.triggers.save(message('f1', { source: 'feishu', id: 'ou_alice' }))
-  store.triggers.saveDisposition('f1', { fanout: ['t1'], at })
+  store.triggers.saveDisposition('f1', { owners: [{ ticketId: 't1', state: 'delivered', at }], at })
   store.triggers.save(message('f2', { source: 'feishu', id: 'ou_alice' }))
-  store.triggers.saveDisposition('f2', { fanout: ['t1'], requeued: true, handbacks: [{ ticketId: 't1', reason: 'Asks for a new feature', at }], at })
+  store.triggers.saveDisposition('f2', { owners: [{ ticketId: 't1', state: 'handedBack', reason: 'Asks for a new feature', at }], requeued: true, at })
   const view = snapshot(host)
   expect(triggerView(view, store.triggers.get('f1')!).disposition).toMatchObject({ delivered: true, queued: false, handbacks: [] })
   // A Trigger handed back goes to Eval as any message on its Thread; the Ticket that handed it back is named by its title once it has one.
@@ -279,25 +279,25 @@ it('offers a person to send a follow-up to Eval while a ticket decides it, or on
     correlated: [],
     pending: [], meta: {} })
   store.triggers.save(message('f1', { source: 'feishu', id: 'ou_alice' }))
-  store.triggers.saveDisposition('f1', { fanout: ['t1'], at })
+  store.triggers.saveDisposition('f1', { owners: [{ ticketId: 't1', state: 'delivered', at }], at })
   const row = () => triggerView(snapshot(host), store.triggers.get('f1')!)
   expect(row()).toMatchObject({ actions: { requeue: true }, disposition: { delivered: true } })
   // A ticket that ended after its worker had it leaves it to nobody: a person may still send it to Eval.
   store.tickets.save({ ...store.tickets.get('t1')!, ended: { at, by: 'executor', reason: 'done', outcome: 'completed' } })
   expect(row()).toMatchObject({ actions: { requeue: true }, disposition: { delivered: false } })
   // Not once its worker acknowledged it, which took it up; a stop on it decided only the ticket's work.
-  store.triggers.saveDisposition('f1', { fanout: ['t1'], acked: ['t1'], at })
+  store.triggers.saveDisposition('f1', { owners: [{ ticketId: 't1', state: 'taken', at }], at })
   expect(row().actions.requeue).toBe(false)
   store.decisions.save({ id: 'stop', evalId: 'e', threadKey: 'feishu:oc_1:om_root', triggerIds: ['f1'], policyVersion: 'v', at, kind: 'stop',
     reason: [{ code: 'humanStop' }], strength: 'explicit', ticketId: 't1' })
-  store.triggers.saveDisposition('f1', { fanout: ['t1'], decisionId: 'stop', at })
+  store.triggers.saveDisposition('f1', { owners: [{ ticketId: 't1', state: 'delivered', at }], decisionId: 'stop', at })
   expect(row().actions.requeue).toBe(true)
   // So once the stop ended the ticket, which let go of the message, as the Engine records it.
-  store.triggers.saveDisposition('f1', { fanout: [], decisionId: 'stop', at })
+  store.triggers.saveDisposition('f1', { owners: [{ ticketId: 't1', state: 'released', at }], decisionId: 'stop', at })
   expect(row().actions.requeue).toBe(true)
   // Once sent, it waits for the Eval.
   store.threads.save({ ...store.threads.get('feishu:oc_1:om_root')!, pending: ['f1'] })
-  store.triggers.saveDisposition('f1', { fanout: ['t1'], requeued: true, at })
+  store.triggers.saveDisposition('f1', { owners: [{ ticketId: 't1', state: 'delivered', at }], requeued: true, at })
   expect(row()).toMatchObject({ actions: { requeue: false }, disposition: { queued: true } })
 })
 
@@ -308,7 +308,7 @@ it('reads each ticket a page\'s follow-ups reached once, and nothing for a messa
     correlated: [], pending: [], meta: {} })
   for (const id of ['f1', 'f2', 'f3']) {
     store.triggers.save(message(id, { source: 'feishu', id: 'ou_alice' }))
-    store.triggers.saveDisposition(id, { fanout: ['t1'], at })
+    store.triggers.saveDisposition(id, { owners: [{ ticketId: 't1', state: 'delivered', at }], at })
   }
   const view = snapshot(host)
   const tickets = vi.spyOn(store.tickets, 'get')
@@ -316,7 +316,7 @@ it('reads each ticket a page\'s follow-ups reached once, and nothing for a messa
   expect(tickets).toHaveBeenCalledOnce()
   tickets.mockRestore()
   // A message the ticket handed back is decided by no ticket, which needs no read.
-  store.triggers.saveDisposition('f3', { fanout: ['t1'], handbacks: [{ ticketId: 't1', reason: 'Another change', at }], at })
+  store.triggers.saveDisposition('f3', { owners: [{ ticketId: 't1', state: 'handedBack', reason: 'Another change', at }], at })
   const records = { tickets: { get: vi.fn() }, threads: { get: vi.fn() }, triggers: store.triggers }
   expect(followupOwners(store.triggers.get('f3')!, records)).toEqual([])
   expect([records.tickets.get, records.threads.get].map(read => read.mock.calls.length)).toEqual([0, 0])

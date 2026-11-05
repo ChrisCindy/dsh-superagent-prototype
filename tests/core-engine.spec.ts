@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { Engine, MemoryRepositories, UserError, followupOwners, key, runningAssignment, ticketOutcome, ticketStage,
+import { Engine, MemoryRepositories, UserError, followupOwners, handbacksOf, key, reachedTickets, runningAssignment, ticketOutcome, ticketStage,
   waitsForPerson } from '../src/core/index.ts'
 import type { Assessor, Assignment, Candidate, EngineOptions, Executor, MandateLimits, OutboundMessage, Outcome, Policy, Ticket, Trigger } from '../src/core/index.ts'
 
@@ -227,7 +227,7 @@ describe('subscription fan-out', () => {
     expect(ticket.inputs).toEqual([expect.objectContaining({ kind: 'trigger', triggerId: '2' })])
     expect(ticket.undelivered).toEqual([])
     expect(h.delivered).toEqual([[ticket.id, ticket.inputs[0]!.id]])
-    expect(h.repo.triggers.disposition('2')).toEqual({ fanout: [ticket.id], at: expect.any(String) })
+    expect(h.repo.triggers.disposition('2')).toEqual({ owners: [{ ticketId: ticket.id, state: 'delivered', at: expect.any(String) }], at: expect.any(String) })
     // No Eval, so no Decision and no timeout, and the Thread's queue stays free for a new request.
     expect([h.requests.length, h.repo.threads.get('chat:t1')!.pending, h.repo.decisions.byThread('chat:t1').length]).toEqual([requests, [],
       1])
@@ -433,7 +433,7 @@ describe('hand-back', () => {
     h.engine.receive(trigger('2')); h.engine.receive(trigger('3', { actor: guest })); h.pump()
     expect(h.engine.handback(ticketId, '2', 'A new request')).toBe(true); h.pump()
     expect(h.requests.at(-1)).toMatchObject({ strength: 'explicit', triggers: [{ id: '2' }] })
-    expect(h.repo.triggers.disposition('2')!.handbacks).toEqual([{ ticketId, reason: 'A new request', at: expect.any(String) }])
+    expect(handbacksOf(h.repo.triggers.disposition('2'))).toEqual([{ ticketId, reason: 'A new request', at: expect.any(String) }])
     h.decide(h.requests.at(-1)!, { kind: 'ignore', reason: 'chat' })
     expect(() => h.engine.handback(ticketId, '2', 'Again')).toThrow(new UserError('handedBack'))
     expect(h.engine.handback(ticketId, '3', 'A guest asks for more')).toBe(true); h.pump()
@@ -455,7 +455,7 @@ describe('hand-back', () => {
     for (const id of ['2', '3', '4']) expect(h.engine.handback(ticketId, id, 'Not this ticket')).toBe(false)
     expect([h.repo.threads.get('chat:t1')!.pending, h.repo.threads.get('chat:issue')!.pending]).toEqual([[], []])
     // The hand-back is recorded all the same, so the main Session does not attach the message back.
-    expect(h.repo.triggers.disposition('4')!.handbacks).toEqual([{ ticketId, reason: 'Not this ticket', at: expect.any(String) }])
+    expect(handbacksOf(h.repo.triggers.disposition('4'))).toEqual([{ ticketId, reason: 'Not this ticket', at: expect.any(String) }])
     expect(() => h.engine.attach(ticketId, '4')).toThrow(new UserError('handedBackHere'))
   })
   it('leaves a message the main Session attached to a ticket to its worker, whose hand-back sends it to Eval', () => {
@@ -495,7 +495,7 @@ describe('context threads and notes', () => {
     const follower = accepted(h, '2', 'other').ticketId!
     h.engine.followForContext(follower, { source: 'chat', id: 't1' })
     h.engine.receive(trigger('3', { actor: guest })); h.pump()
-    expect(h.repo.triggers.disposition('3')).toMatchObject({ fanout: [owner, follower], context: [follower] })
+    expect(h.repo.triggers.disposition('3')).toMatchObject({ owners: [{ ticketId: owner, state: 'delivered' }, { ticketId: follower, state: 'context' }] })
     expect(h.repo.tickets.get(follower)!.inputs.at(-1)).toMatchObject({ triggerId: '3', context: true })
     // On the follower's own Thread no longer: a message reaching only it goes to Eval, with the guest's that the stopped owner
     // let go of.
@@ -513,7 +513,7 @@ describe('context threads and notes', () => {
     h.engine.report(owner, { state: 'ready', summary: 'done' })
     h.setVersion('revoked')
     h.engine.receive(trigger('3')); h.setVersion('v1'); h.pump()
-    expect(h.repo.triggers.disposition('3')).toMatchObject({ fanout: [follower], context: [follower] })
+    expect(h.repo.triggers.disposition('3')).toMatchObject({ owners: [{ ticketId: owner, state: 'released' }, { ticketId: follower, state: 'context' }] })
     expect(h.requests.at(-1)!.triggers.map(item => item.id)).toEqual(['3'])
   })
   it('gives an open ticket\'s worker a note as an Input of its own, held like automatic Input, and refuses one for an ended ticket', () => {
@@ -570,7 +570,7 @@ describe('follow-up owners', () => {
     h.engine.report(ticketId, { state: 'dropped', summary: 'nothing to do' })
     expect(h.repo.threads.get('chat:t1')!.pending).toEqual(['3'])
     // The ticket no longer counts as having reached it, so its candidate names no ticket that gave no reason.
-    expect([h.repo.triggers.disposition('2')!.fanout, h.repo.triggers.disposition('3')!.fanout]).toEqual([[ticketId], []])
+    expect([reachedTickets(h.repo.triggers.disposition('2')!), reachedTickets(h.repo.triggers.disposition('3')!)]).toEqual([[ticketId], []])
   })
   it('keeps a ticket open after its pull request merged while its worker is on a person\'s message it took up after its last report',
     () => {
@@ -631,7 +631,7 @@ describe('follow-up owners', () => {
     h.tick(1); h.engine.receive(trigger('2')); h.settle()
     h.engine.report(ticketId, { state: 'ready', summary: 'It reads the config.', answers: '2' })
     expect(h.repo.threads.get('chat:t1')!.pending).toEqual([])
-    expect(h.repo.triggers.disposition('2')).toMatchObject({ fanout: [ticketId], acked: [ticketId] })
+    expect(h.repo.triggers.disposition('2')).toMatchObject({ owners: [{ ticketId, state: 'taken' }] })
   })
   it('sends to Eval a message attached after its Eval was unavailable, once its ticket ends without taking it up', () => {
     const h = harness()
@@ -641,15 +641,6 @@ describe('follow-up owners', () => {
     h.tick(1); h.engine.attach(ticketId, '2'); h.settle()
     h.engine.report(ticketId, { state: 'dropped', summary: 'nothing to do' })
     expect(h.repo.threads.get('chat:x')!.pending).toEqual(['2'])
-  })
-  it('counts an acknowledgement an earlier version queued without recording it on the message as taking the message up', () => {
-    const h = harness()
-    const ticketId = accepted(h).ticketId!
-    h.engine.report(ticketId, { state: 'progress', summary: 'working' })
-    h.tick(1); h.engine.receive(trigger('2')); h.settle()
-    h.outbox.push({ id: key('ack', '2'), channel: trigger('2').channel!, text: 'On it', kind: 'acknowledgement', ticketId })
-    h.engine.report(ticketId, { state: 'dropped', summary: 'nothing to do' })
-    expect([h.repo.threads.get('chat:t1')!.pending, h.repo.triggers.disposition('2')!.fanout]).toEqual([[], [ticketId]])
   })
   it('counts a message that resumed a ticket as taken up by the report that ends it again, unlike one that came later', () => {
     const h = harness()
@@ -698,7 +689,7 @@ describe('follow-up owners', () => {
     // attached goes back with the later one, and each candidate says why.
     h.engine.markUnrelated(ticketId, 'chat:x', 'about something else')
     expect(h.repo.threads.get('chat:x')!.pending).toEqual(['2', '3'])
-    expect(h.repo.triggers.disposition('3')!.handbacks).toEqual([{ ticketId, reason: 'about something else', at: expect.any(String) }])
+    expect(handbacksOf(h.repo.triggers.disposition('3'))).toEqual([{ ticketId, reason: 'about something else', at: expect.any(String) }])
     h.pump()
     expect(h.requests.at(-1)!.triggers.map(item => item.id)).toEqual(['2', '3'])
   })
@@ -710,7 +701,7 @@ describe('follow-up owners', () => {
     const second = h.decide(h.requests.at(-1)!, accept).ticketId!
     h.settle()
     h.tick(1); h.engine.receive(trigger('3')); h.settle()
-    expect(h.repo.triggers.disposition('3')!.fanout).toEqual([first, second])
+    expect(reachedTickets(h.repo.triggers.disposition('3')!)).toEqual([first, second])
     expect(h.engine.handback(first, '3', 'for the other ticket')).toBe(false)
     expect(h.repo.threads.get('chat:t1')!.pending).toEqual([])
     // The main Session may neither take nor dismiss it while the second ticket's worker decides it.

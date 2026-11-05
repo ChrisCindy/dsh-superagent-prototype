@@ -1,7 +1,7 @@
 /** Trigger ingestion, thread correlation, subscription fan-out, and evaluation queuing. */
 import { key } from './ids.ts'
-import { isoTime, liveTicket, threadKey } from './model.ts'
-import type { Ticket, Trigger } from './model.ts'
+import { isoTime, liveTicket, threadKey, transition } from './model.ts'
+import type { Ticket, Trigger, TriggerDisposition } from './model.ts'
 import { EnginePart, type EngineOptions } from './part.ts'
 import type { Tickets } from './tickets.ts'
 
@@ -24,7 +24,7 @@ export class Intake extends EnginePart {
     const at = this.now()
     const filter = this.options.scope.scope(trigger)
     if (!filter.listened) {
-      this.repo.triggers.save(trigger); this.repo.triggers.saveDisposition(trigger.id, { filtered: { code: filter.reason }, fanout: [], at })
+      this.repo.triggers.save(trigger); this.repo.triggers.saveDisposition(trigger.id, { filtered: { code: filter.reason }, owners: [], at })
       return 'filtered'
     }
     this.repo.triggers.save(trigger)
@@ -50,8 +50,9 @@ export class Intake extends EnginePart {
       this.tickets.addInput(ticket, { id: key('input', ticketId, 'trigger', trigger.id), kind: 'trigger', triggerId: trigger.id, at,
         ...trigger.human ? { human: true } : {}, ...followed ? { context: true } : {} })
     }
-    const fanout = [...reached.keys()], context = fanout.filter(id => reached.get(id)!.context)
-    const disposition = { fanout, ...context.length ? { context } : {}, at }
+    const fanout = [...reached.keys()]
+    const disposition = fanout.reduce((current, ticketId) => transition(current, ticketId, reached.get(ticketId)!.context ? 'reachedForContext'
+      : 'reached', at), { owners: [], at } as TriggerDisposition)
     this.repo.triggers.saveDisposition(trigger.id, disposition)
     // A person's message that no ticket decides, such as one that reached only tickets a person stopped or that follow the
     // Thread for context, and every bot's, goes to Eval.

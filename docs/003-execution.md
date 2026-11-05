@@ -135,7 +135,7 @@ Chat Channels receive one final notice about the pull-request outcome. GitHub al
 
 The Executor decides human follow-ups on its Ticket's own Threads. It handles in-scope requests and hands back requests beyond its scope or for another Ticket. Once no Executor owns the message, it becomes a candidate for the main Session. The main Session may otherwise act on the follow-up only to stop work at the person's request.
 
-An Input counts as read after the Session takes it into a step and subsequently reports or ends a turn. When a Ticket ends, unread messages that were not acknowledged, answered or handed back return to Eval, as described in [002 Authorization](002-authorization.md). Read messages left without action, such as thanks, do not.
+Each message has one state on each Ticket, from `delivered` to `read`, `taken`, `handedBack` or `released`. The table in [002 Authorization](002-authorization.md#follow-up-ownership) lists every change. A message read before the Ticket's last Report or turn end stays with the Ticket when it ends, so read messages left without action, such as thanks, do not return to Eval.
 
 Threads followed only for context still deliver messages, but do not give the Ticket ownership of human follow-ups or resume ended Tickets. Those messages can be assessed independently.
 

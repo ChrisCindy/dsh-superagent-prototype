@@ -1,7 +1,7 @@
 /** Evals: the Thread-level assessments of queued Triggers, and the Decisions they end with. */
 import { key } from './ids.ts'
 import { UserError } from './errors.ts'
-import { liveTicket, threadKey } from './model.ts'
+import { liveTicket, ownerState, threadKey } from './model.ts'
 import type { Decision, DecisionKind, Evaluation, Mandate, MandateBasis, Strength, Thread, Trigger } from './model.ts'
 import type { AssessmentOutcome, Candidate, Policy } from './ports.ts'
 import { said, type Reason } from './reasons.ts'
@@ -120,7 +120,7 @@ export class Evals extends EnginePart {
     thread.pending = []
     this.repo.threads.save(thread)
     for (const trigger of triggers) {
-      this.repo.triggers.saveDisposition(trigger.id, { ...(this.repo.triggers.disposition(trigger.id) ?? { fanout: [], at }), evalId })
+      this.repo.triggers.saveDisposition(trigger.id, { ...(this.repo.triggers.disposition(trigger.id) ?? { owners: [], at }), evalId })
     }
     this.emit('eval.started', { evalId, threadKey: thread.key, triggerIds: thread.evaluating.triggerIds, strength: strongest.strength })
     this.options.assessor.request(this.candidateOf(thread))
@@ -188,7 +188,7 @@ export class Evals extends EnginePart {
     if (!trigger) throw new UserError('unknownTrigger')
     if (this.holding(triggerId)) return false
     this.queueForEval(trigger)
-    const disposition = this.repo.triggers.disposition(triggerId) ?? { fanout: [], at: this.now() }
+    const disposition = this.repo.triggers.disposition(triggerId) ?? { owners: [], at: this.now() }
     this.repo.triggers.saveDisposition(triggerId, { ...disposition, requeued: true })
     return true
   }
@@ -202,7 +202,7 @@ export class Evals extends EnginePart {
   handback(ticketId: string, triggerId: string, reason: string): boolean {
     const ticket = this.require(ticketId)
     if (!ticket.inputs.some(input => input.kind === 'trigger' && input.triggerId === triggerId)) throw new UserError('notReached')
-    if (this.repo.triggers.disposition(triggerId)?.handbacks?.some(item => item.ticketId === ticketId)) throw new UserError('handedBack')
+    if (ownerState(this.repo.triggers.disposition(triggerId), ticketId) === 'handedBack') throw new UserError('handedBack')
     return this.handBack(ticketId, this.repo.triggers.get(triggerId)!, reason)
   }
   /**
@@ -354,7 +354,7 @@ export class Evals extends EnginePart {
       ...(outcome.assessed ? { assessed: true } : {}) }
     this.repo.decisions.save(decision)
     for (const id of evaluation.triggerIds) {
-      const disposition = this.repo.triggers.disposition(id) ?? { fanout: [], at }
+      const disposition = this.repo.triggers.disposition(id) ?? { owners: [], at }
       this.repo.triggers.saveDisposition(id, { ...disposition, evalId: evaluation.id, decisionId: decision.id })
     }
     this.emit('decision.recorded', { decisionId: decision.id, evalId: evaluation.id, kind: decision.kind, threadKey: thread.key })

@@ -127,7 +127,7 @@ const ticket: Ticket = { id: 'ticket-1', title: 'Inspect failing check', decisio
   execution: { name: 'ticket-1', directory: '/worktrees/ticket-1', assignment: 'Inspect the check.' },
   follows: [{ thread: 'github:42', own: true }] }
 it('shows a trigger and a ticket as cards with a short preview and references to their bodies', () => {
-  const card = triggerCard(trigger, { fanout: ['ticket-1'], evalId: 'e1', decisionId: 'd1', at: '' })
+  const card = triggerCard(trigger, { owners: [{ ticketId: 'ticket-1', state: 'delivered', at: '' }], evalId: 'e1', decisionId: 'd1', at: '' })
   expect(card).toEqual({ trigger_id: 'request-1', source: 'github', actor: 'alice', thread: 'github:42', human: true, at: '2026-09-09T00:00:00Z',
     preview: expect.stringMatching(/^Please inspect the failing check\. Additional context\./), chars: trigger.text.length, read: 'trigger/request-1',
     disposition: { decision_id: 'd1', delivered_to: ['ticket-1'] } })

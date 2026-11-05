@@ -1,11 +1,11 @@
 /**
- * Migrates a schema 10, 11, 12 or 13 database to schema 14 in a single transaction so runtime readers never convert legacy shapes.
+ * Migrates a schema 10, 11, 12, 13 or 14 database to schema 15 in a single transaction so runtime readers never convert legacy shapes.
  * Databases older than schema 10 are rejected: this version cannot migrate them.
  */
 import { basename } from 'node:path'
 import { z } from 'zod'
-import { isoTime, said, type AcceptMode, type AdmissionCell, type ChannelRef, type Decision, type Execution, type Follow, type MandateBasis,
-  type Reason, type Thread, type Ticket, type TicketInput, type TriggerDisposition } from '../core/index.ts'
+import { isoTime, key, readEvery, said, type AcceptMode, type AdmissionCell, type ChannelRef, type Decision, type Execution, type Follow, type MandateBasis,
+  type Owner, type Reason, type Thread, type Ticket, type TicketInput, type TriggerDisposition } from '../core/index.ts'
 import { feishuChatLink } from '../sources/feishu-channel.ts'
 import { POLL_HORIZON_MS } from '../sources/poll.ts'
 import { SettingsSchema, policyVersion, type SettingsOrigin } from '../policy.ts'
@@ -17,7 +17,7 @@ import type { SettingsVersion, Store } from './store.ts'
 import { Versions } from './versions.ts'
 import { KV, type Key } from '../kv.ts'
 
-export const SCHEMA_VERSION = 14
+export const SCHEMA_VERSION = 15
 /** The oldest database schema version this build can open and migrate directly. */
 export const OLDEST_SCHEMA = 10
 /** Returns an error message explaining why `version` cannot be opened: older schemas need a new state directory. */
@@ -87,6 +87,55 @@ export function migrateTo13(store: Store): void {
  */
 export function migrateTo14(store: Store): void {
   store.db.exec("UPDATE effect SET kind = 'dsh.' || kind WHERE kind IN ('launch', 'delivery')")
+}
+/** A disposition as schema 14 and earlier stored who a message reached and what each ticket's worker did with it. */
+interface LegacyDisposition extends Omit<TriggerDisposition, 'owners'> {
+  fanout: string[]; context?: string[]; handbacks?: { ticketId: string; reason: string; at: string }[]; acked?: string[]
+}
+/**
+ * The state a message is in on each ticket, from a schema 14 disposition: a hand-back first, then the Thread it follows for
+ * context, a take-up, a read of every copy, and else delivered. A ticket that let the message go has left `fanout`, so one
+ * that took it up or handed it back stays so and one that read it only for context is `released`. A message acknowledged
+ * before take-ups were recorded on it (no `acked`) counts as taken up by every ticket that decided it, as the outbox told.
+ */
+export function ownersOf(old: LegacyDisposition, ticket: (id: string) => Ticket | undefined, acknowledged: boolean, triggerId: string): Owner[] {
+  const owners = new Map<string, Owner>()
+  const set = (ticketId: string, state: Owner['state'], at = old.at) => { if (!owners.has(ticketId)) owners.set(ticketId, { ticketId, state, at }) }
+  const handBack = (id: string) => {
+    const item = old.handbacks?.find(handback => handback.ticketId === id)
+    if (item && !owners.has(id)) owners.set(id, { ticketId: id, state: 'handedBack', at: item.at, reason: item.reason })
+  }
+  for (const id of old.fanout) {
+    handBack(id)
+    if (old.context?.includes(id)) set(id, 'context')
+    else if (old.acked ? old.acked.includes(id) : acknowledged) set(id, 'taken')
+    else {
+      const found = ticket(id)
+      const read = !!found && readEvery(found, triggerId)
+        && found.inputs.some(input => input.kind === 'trigger' && input.triggerId === triggerId && !!input.readAt)
+      set(id, read ? 'read' : 'delivered')
+    }
+  }
+  for (const item of old.handbacks ?? []) handBack(item.ticketId)
+  for (const id of old.acked ?? []) set(id, 'taken')
+  for (const id of old.context ?? []) set(id, 'released')
+  return [...owners.values()]
+}
+/**
+ * Rewrite schema 14 records into their schema 15 shapes in place: each disposition keeps who a message reached and what
+ * became of it there as one state for each ticket (see `ownersOf`), in place of its lists.
+ */
+export function migrateTo15(store: Store): void {
+  for (const row of store.db.prepare("SELECT id, value FROM disposition WHERE json_type(value, '$.owners') IS NULL").all()) {
+    const id = String(row.id)
+    step(`disposition ${id}`, () => {
+      const stored = JSON.parse(String(row.value)) as Partial<LegacyDisposition> & Pick<LegacyDisposition, 'at'>
+      const old: LegacyDisposition = { ...stored, fanout: Array.isArray(stored.fanout) ? stored.fanout : [] }
+      const { fanout: _fanout, context: _context, handbacks: _handbacks, acked: _acked, ...rest } = old
+      const owners = ownersOf(old, ticketId => store.tickets.get(ticketId), store.replyStatus(key('ack', id)) !== undefined, id)
+      store.triggers.saveDisposition(id, { ...rest, owners })
+    })
+  }
 }
 /** Rewrite all schema 10 records into their schema 11 shapes in place. */
 export function migrateTo11(store: Store): void {
