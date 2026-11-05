@@ -72,6 +72,7 @@ export const githubKind: SourceKind<GithubConfig> = {
   },
   threadContext: githubThreadContext,
   read: readRepositoryPath,
+  skill: { name: 'github' },
   // `#12` or `12` names Thread 12 of every instance; the page of an Issue or PR names it on the instance of that repository, or
   // on every instance whose repository is not set.
   find: (query, { id, config }) => {

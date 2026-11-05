@@ -105,7 +105,7 @@ const RULES: [rule: string, file: string, says: string[], gone?: string[]][] = [
   ['Removed rules stay removed', '*', [], ['at most three investigation/implementation rounds', 'continue dispatch until explicitly instructed', 'page-size']],
 ]
 const textOf = (file: string) => file === '*' ? composePrompt(defaultPrompts(), 'orchestrator') + composePrompt(defaultPrompts(), 'worker')
-  : file.startsWith('skill ') ? bundledSkills[file.slice(6) as 'github' | 'feishu'].content : promptFile(file)
+  : file.startsWith('skill ') ? bundledSkills[file.slice(6)]!.content : promptFile(file)
 it.each(RULES)('%s (%s)', (_rule, file, says, gone = []) => {
   const text = textOf(file)
   for (const words of says) expect(text).toContain(words)

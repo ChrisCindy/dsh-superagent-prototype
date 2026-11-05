@@ -81,6 +81,8 @@ export const feishuKind: SourceKind<FeishuConfig> = {
     references: trigger => { const ref = feishuRef(trigger); return ref && feishuReferences(ref) },
   },
   threadContext: feishuThreadContext,
+  // Sessions get the Feishu skill only while setup found a Feishu bot.
+  skill: { name: SOURCE, active: deployment => !!deployment?.feishu },
   find: query => ({ threads: [], terms: [...new Set(query.match(/om_[A-Za-z0-9_-]+/g) ?? [])] }),
   // A message's Trigger is named after the message, so the one it answers is named after its parent.
   repliesTo: trigger => typeof trigger.meta.parentId === 'string' ? feishuTriggerId(trigger.meta.parentId) : undefined,

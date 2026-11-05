@@ -192,6 +192,11 @@ export interface SourceKind<C extends Record<string, unknown> = Record<string, u
   policy?: SourcePolicyPart<Record<string, unknown> & { allowed: { id: string; name?: string }[] }>
   /** Rereads display names for row keys (such as chat names), stores the resolved names in `KV.sources.labels(kind)`, and returns them. */
   refreshLabels?(host: SourceHost, signal?: AbortSignal): Promise<Record<string, string>>
+  /**
+   * The packaged skill (`skills/dsh-superagent-<name>`) every Session gets while the kind is installed, and, with `active`, only
+   * while `active` holds for the deployment, which is undefined while setup waits.
+   */
+  skill?: { name: string; active?(deployment: Deployment | undefined): boolean }
   /** Variables the kind registers with the execution environment and how their values are computed. */
   environment?: { variables: readonly VariableSpec[]; values(input: EnvironmentInput<C>): Record<string, string> }
 }

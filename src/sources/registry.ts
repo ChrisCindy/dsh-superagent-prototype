@@ -1,6 +1,7 @@
 /** Registry of installed Source kinds, their configured instances, and the Engine's SourceScope implementation. */
 import type { ChannelRef, OutboundMessage, ScopeResult, SourceScope, Ticket, Trigger } from '../core/index.ts'
 import type { Commands } from '../infra/commands.ts'
+import type { Deployment } from '../deployment.ts'
 import { HealthBoard, type HealthEntry } from '../infra/health.ts'
 import { AdmissionTableSchema, type Settings } from '../policy.ts'
 import { instanceHealth, type ChannelLink, type ChannelLinks, type SourceInstance, type SourceKind, type SourceResources, type TriggerContext,
@@ -190,6 +191,10 @@ export class SourceRegistry implements SourceScope {
   claimant(origin?: string | Pick<Trigger, 'source' | 'threads'>, settings = this.settings()): { kind: SourceKind; id: string } | undefined {
     const kind = [...this.kinds.values()].sort((a, b) => a.kind.localeCompare(b.kind)).find(item => item.claim)
     return kind && { kind, id: this.home(kind.kind, origin, settings) }
+  }
+  /** The packaged skills of the installed kinds that apply to `deployment` (`SourceKind.skill`), kinds in ID order. */
+  skills(deployment: Deployment | undefined): string[] {
+    return this.installed().flatMap(kind => kind.skill && (kind.skill.active?.(deployment) ?? true) ? [kind.skill.name] : [])
   }
   /**
    * Reads `path` of the repository an assessment of `trigger` reads, through the first installed kind with `read`, in ID order,
