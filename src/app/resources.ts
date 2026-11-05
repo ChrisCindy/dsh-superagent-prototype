@@ -227,7 +227,7 @@ const ROUTES: readonly Route[] = [
     const ticket = ticketId ? host.store.tickets.get(ticketId) : undefined
     const shown = (item: Trigger | undefined) => item && (!ticket || readable(host, ticket, item)) ? item : undefined
     const disposition = host.store.triggers.disposition(found.id)
-    const visible = disposition && ticket ? { ...disposition, decisionId: undefined, fanout: disposition.fanout.filter(id => id === ticket.id) }
+    const visible = disposition && ticket ? { ...disposition, decisionId: undefined, owners: disposition.owners.filter(owner => owner.ticketId === ticket.id) }
       : disposition
     // Omit card preview and self-reference because this resource returns the full text.
     const { preview: _preview, chars: _chars, read: _read, ...card } = triggerCard(found, visible)

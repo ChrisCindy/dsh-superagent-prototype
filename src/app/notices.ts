@@ -1,6 +1,6 @@
 /** Formats background notices and steering relays delivered to the main Session via the effect queue. */
 import { randomUUID } from 'node:crypto'
-import { followupOwners, key, liveTicket, type DomainEvent, type Ticket, type WorkerReport } from '../core/index.ts'
+import { followupOwners, key, liveTicket, ownerState, reachedTickets, type DomainEvent, type Ticket, type WorkerReport } from '../core/index.ts'
 import { triggerMessage } from '../executor/dsh.ts'
 import type { SourceRegistry } from '../sources/registry.ts'
 import { repliedTo } from './links.ts'
@@ -87,9 +87,9 @@ export function followupNotice(store: Store, sources: SourceRegistry, triggerId:
   const trigger = store.triggers.get(triggerId)
   const disposition = store.triggers.disposition(triggerId)
   if (!trigger || !followupOwners(trigger, store).length) return undefined
-  const tickets = disposition!.fanout.flatMap(id => {
+  const tickets = reachedTickets(disposition!).flatMap(id => {
     const ticket = store.tickets.get(id)
-    const context = disposition!.context?.includes(id) ? { context: true } : {}
+    const context = ownerState(disposition, id) === 'context' ? { context: true } : {}
     return ticket && liveTicket(ticket) ? [{ ticket_id: id, title: ticket.title, state: ticketCard(ticket).state, ...context }] : []
   })
   if (!tickets.length) return undefined

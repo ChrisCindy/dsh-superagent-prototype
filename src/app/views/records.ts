@@ -1,7 +1,7 @@
 /** Shared view projections for triggers, tickets, threads, decisions, and channel links. */
 import { z } from 'zod'
-import { canRetry, followupOwners, latestReport, liveTicket, settled, threadKey, ticketStage, type ActorRef, type ChannelRef, type Decision,
-  type DecisionKind, type Thread, type ThreadFacts, type Ticket, type TicketStage, type Trigger } from '../../core/index.ts'
+import { canRetry, followupOwners, handbacksOf, latestReport, liveTicket, reachedTickets, settled, threadKey, ticketStage, type ActorRef,
+  type ChannelRef, type Decision, type DecisionKind, type Thread, type ThreadFacts, type Ticket, type TicketStage, type Trigger } from '../../core/index.ts'
 import { allowedSender, listedBot } from '../../policy.ts'
 import type { ChannelLink, Localized } from '../../sources/kind.ts'
 import type { SourceRegistry } from '../../sources/registry.ts'
@@ -92,16 +92,16 @@ export function triggerView(view: Snapshot, trigger: Trigger, threadDecisions?: 
   const delivered = view.owners(trigger).length > 0
   const queued = !!home?.pending.includes(trigger.id) && !delivered
   const evaluating = !!home?.evaluating?.triggerIds.includes(trigger.id)
-  const taken = disposition?.acked?.some(id => !disposition.handbacks?.some(item => item.ticketId === id))
+  const taken = disposition?.owners.some(owner => owner.state === 'taken')
   const decided = !!taken || (!!decision && settled(decision))
-  const unjudged = !!disposition?.filtered || decision?.kind === 'unavailable' || delivered || (!!disposition?.fanout.length && !decided)
+  const unjudged = !!disposition?.filtered || decision?.kind === 'unavailable' || delivered || (!!disposition && reachedTickets(disposition).length > 0 && !decided)
     || (!!decision && !decided)
   const requeue = trigger.human && !queued && !evaluating && unjudged
   return { id: trigger.id, source: trigger.source, actor: view.actor(trigger.actor, trigger.human), human: trigger.human, at: trigger.at,
     text: plain(readable(trigger.text), true),
     preview: preview(trigger.text), url: trigger.url, threads: trigger.threads.map(threadKey), actions: { requeue },
-    disposition: { queued, evaluating, delivered, filtered: disposition?.filtered, fanout: disposition?.fanout ?? [],
-      handbacks: (disposition?.handbacks ?? []).map(item => ({ ...item,
+    disposition: { queued, evaluating, delivered, filtered: disposition?.filtered, fanout: disposition ? reachedTickets(disposition) : [],
+      handbacks: handbacksOf(disposition).map(item => ({ ...item,
         title: store.tickets.get(item.ticketId)?.title ?? item.ticketId })),
       decision: decision ? { id: decision.id, outcome: outcomeOf(decision), reason: decision.reason, ticketId: decision.ticketId }
         : undefined } }

@@ -1,7 +1,7 @@
 /** Shared base class and configuration for Engine domain parts. */
 import { UserError } from './errors.ts'
-import { followupOwners, reached, threadKey } from './model.ts'
-import type { Thread, ThreadRef, Ticket, Trigger } from './model.ts'
+import { followupOwners, reached, threadKey, transition } from './model.ts'
+import type { OwnerEvent, Thread, ThreadRef, Ticket, Trigger } from './model.ts'
 import type { Assessor, AssessmentOutcome, DomainEvent, DomainEvents, Executor, Outbox, Policy, Repositories, SourceScope } from './ports.ts'
 
 export interface EngineOptions {
@@ -43,23 +43,20 @@ export abstract class EnginePart {
    */
   protected handBack(ticketId: string, trigger: Trigger, reason: string): boolean {
     const decided = this.owners(trigger).includes(ticketId)
-    const disposition = this.repo.triggers.disposition(trigger.id) ?? { fanout: [], at: this.now() }
-    const handbacks = [...disposition.handbacks ?? [], { ticketId, reason, at: this.now() }]
-    this.repo.triggers.saveDisposition(trigger.id, { ...disposition, handbacks })
+    this.move(trigger.id, ticketId, 'handedBack', reason)
     return decided && !this.owners(trigger).length && this.queueForEval(trigger)
   }
   /**
    * Record that a ticket's worker took a person's message up as within the ticket, by acknowledging or answering it. Only a
-   * ticket the message reached as its own and that did not hand it back takes it up: a reply to a message no fan-out or
-   * attach gave the ticket, such as the one it started from, or one it follows for context, decides nothing.
+   * ticket that decides the message takes it up (see `OWNER_TRANSITIONS`): a reply to a message no fan-out or attach gave the
+   * ticket, such as the one it started from, or one it follows for context, decides nothing.
    */
-  protected takeUp(ticketId: string, triggerId: string): void {
-    const disposition = this.repo.triggers.disposition(triggerId)
-    if (!disposition || disposition.acked?.includes(ticketId)) return
-    const own = disposition.fanout.includes(ticketId) && !disposition.context?.includes(ticketId)
-      && !disposition.handbacks?.some(item => item.ticketId === ticketId)
-    // An empty list still says take-ups are recorded on the message, so an acknowledgement in the outbox counts for none (see `takenUp`).
-    if (own || !disposition.acked) this.repo.triggers.saveDisposition(triggerId, { ...disposition, acked: [...disposition.acked ?? [], ...own ? [ticketId] : []] })
+  protected takeUp(ticketId: string, triggerId: string): void { this.move(triggerId, ticketId, 'taken') }
+  /** Apply what happened to a message on a ticket to its disposition (see `transition`), now. */
+  protected move(triggerId: string, ticketId: string, event: OwnerEvent, reason?: string): void {
+    const disposition = this.repo.triggers.disposition(triggerId) ?? { owners: [], at: this.now() }
+    const next = transition(disposition, ticketId, event, this.now(), reason)
+    if (next !== disposition) this.repo.triggers.saveDisposition(triggerId, next)
   }
   /** Queue a Trigger on its primary Thread for the next Eval, unless it waits there already or an Eval holds it. */
   protected queueForEval(trigger: Trigger): boolean {

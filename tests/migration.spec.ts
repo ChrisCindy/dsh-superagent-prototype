@@ -6,6 +6,7 @@ import { afterEach, beforeEach, expect, it } from 'vitest'
 import { SCHEMA_VERSION, Store } from '../src/app/store.ts'
 import { KV } from '../src/kv.ts'
 import { basisOf, reasonsOf, withoutCopies } from '../src/app/migration.ts'
+import { key } from '../src/core/index.ts'
 import { Prompts, composePrompt, defaultPrompts } from '../src/app/prompts.ts'
 import { masterPrompt } from '../src/app/context.ts'
 
@@ -623,5 +624,59 @@ it('names the DshExecutor in the kinds of the effects a schema 13 database queue
     .toEqual([{ kind: 'dsh.launch', key: 'a1', attempts: 2, error: 'offline' }, { kind: 'dsh.delivery', key: 't1', attempts: 0, error: '' },
       { kind: 'relay', key: 'r1', attempts: 0, error: '' }])
   expect(store.tickets.get('t1')).toEqual(ticket)
+  store.close()
+})
+
+it('writes who each message of a schema 14 database reached as one state for each ticket, as the lists it kept said', () => {
+  const path = join(directory, 'db.sqlite')
+  const seed = new Store(path)
+  const channel = { source: 'chat', thread: 't1', address: {} }
+  // An acknowledgement an earlier version queued without recording the take-up on the message.
+  seed.receipts.add({ id: key('ack', 'm-old'), channel, text: 'On it', kind: 'acknowledgement', ticketId: 'a' })
+  seed.close()
+  const db = new DatabaseSync(path)
+  db.prepare("UPDATE kv SET value = '14' WHERE key = 'schema'").run()
+  const ticket = { id: 'a', title: 'Fix', decisionId: 'd1', channels: [], assignments: [], undelivered: [], createdAt: '', updatedAt: '',
+    origin: { triggerId: 'x', triggerIds: ['x'] }, mandate: mandate({ via: 'followup' }),
+    inputs: [{ id: 'i1', kind: 'trigger', triggerId: 'm-read', at: '1', human: true, readAt: '2' },
+      { id: 'i2', kind: 'trigger', triggerId: 'm-new', at: '1', human: true, readAt: null }] }
+  db.prepare('INSERT INTO ticket VALUES (?,?)').run(ticket.id, JSON.stringify(ticket))
+  const dispositions: Record<string, object> = {
+    'm-new': { fanout: ['a', 'b'], acked: [], at: '0' },
+    'm-read': { fanout: ['a'], acked: [], at: '0' },
+    'm-taken': { fanout: ['a', 'b'], acked: ['b'], requeued: true, evalId: 'e1', at: '0' },
+    'm-back': { fanout: ['a', 'b'], acked: ['a'], handbacks: [{ ticketId: 'a', reason: 'Not this ticket', at: '3' }, { ticketId: 'c', reason: 'Nor this', at: '4' }], at: '0' },
+    'm-context': { fanout: ['b'], context: ['a', 'b'], at: '0' },
+    'm-old': { fanout: ['a'], at: '0' },
+    'm-filtered': { filtered: { code: 'not_a_member' }, at: '0' },
+  }
+  for (const [id, value] of Object.entries(dispositions)) db.prepare('INSERT INTO disposition VALUES (?,?)').run(id, JSON.stringify(value))
+  db.close()
+  const store = new Store(path)
+  expect(store.get(KV.store.schema)).toBe(SCHEMA_VERSION)
+  const owners = (id: string) => store.triggers.disposition(id)!.owners.map(({ ticketId, state, reason }) => [ticketId, state, ...reason ? [reason] : []])
+  expect(owners('m-new')).toEqual([['a', 'delivered'], ['b', 'delivered']])
+  expect(owners('m-read')).toEqual([['a', 'read']])
+  expect(owners('m-taken')).toEqual([['a', 'delivered'], ['b', 'taken']])
+  expect(store.triggers.disposition('m-taken')).toMatchObject({ requeued: true, evalId: 'e1' })
+  expect(owners('m-back')).toEqual([['a', 'handedBack', 'Not this ticket'], ['b', 'delivered'], ['c', 'handedBack', 'Nor this']])
+  expect(owners('m-context')).toEqual([['b', 'context'], ['a', 'released']])
+  expect(owners('m-old')).toEqual([['a', 'taken']])
+  expect(store.triggers.disposition('m-filtered')).toEqual({ filtered: { code: 'not_a_member' }, owners: [], at: '0' })
+  for (const id of Object.keys(dispositions)) expect(Object.keys(store.triggers.disposition(id)!)).not.toContain('fanout')
+  store.close()
+})
+
+it('reads a schema 15 disposition as it is, so a second open migrates nothing', () => {
+  const path = join(directory, 'db.sqlite')
+  const seed = new Store(path)
+  const disposition = { owners: [{ ticketId: 'a', state: 'released' as const, at: '1' }], at: '0' }
+  seed.triggers.saveDisposition('m', disposition)
+  seed.close()
+  const db = new DatabaseSync(path)
+  db.prepare("UPDATE kv SET value = '14' WHERE key = 'schema'").run()
+  db.close()
+  const store = new Store(path)
+  expect(store.triggers.disposition('m')).toEqual(disposition)
   store.close()
 })

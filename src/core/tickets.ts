@@ -1,8 +1,8 @@
 /** Tickets: their lifecycle from an accept to their end, their Subscriptions and their Inputs. */
 import { key } from './ids.ts'
 import { UserError } from './errors.ts'
-import { DEFAULT_EXECUTOR, executorOf, latestAssignment, latestReport, liveTicket, readUntil, runningAssignment, settled, threadKey, waitsForPerson }
-  from './model.ts'
+import { DEFAULT_EXECUTOR, executorOf, latestAssignment, latestReport, liveTicket, ownerState, readUntil, runningAssignment, settled, threadKey,
+  transition, waitsForPerson } from './model.ts'
 import type { Assignment, ChannelRef, Evaluation, Follow, Mandate, PolicyEffect, ThreadRef, Ticket, TicketEndBy, TicketInput, TicketOutcome,
   Trigger, TriggerDisposition } from './model.ts'
 import type { AssessmentOutcome } from './ports.ts'
@@ -122,11 +122,9 @@ export class Tickets extends EnginePart {
   attach(ticketId: string, trigger: Trigger, note?: string): void {
     for (const ref of trigger.threads) this.subscribe(ticketId, ref)
     // A person's sending it to Eval, which routed it here, is over, and so is the ticket's reading it for context only.
-    const current: TriggerDisposition = this.repo.triggers.disposition(trigger.id) ?? { fanout: [], at: this.now() }
-    const { context, requeued, ...disposition } = current
-    const followed = context?.filter(id => id !== ticketId)
-    this.repo.triggers.saveDisposition(trigger.id, { ...disposition, fanout: [...new Set([...disposition.fanout, ticketId])],
-      ...followed?.length ? { context: followed } : {} })
+    const { requeued, ...current }: TriggerDisposition = this.repo.triggers.disposition(trigger.id) ?? { owners: [], at: this.now() }
+    const was = ownerState(current, ticketId)
+    this.repo.triggers.saveDisposition(trigger.id, transition(current, ticketId, 'reached', this.now()))
     const ticket = this.require(ticketId)
     const id = key('input', ticketId, 'trigger', trigger.id)
     const existing = ticket.inputs.find(input => input.id === id)
@@ -137,7 +135,7 @@ export class Tickets extends EnginePart {
     else if (note && ticket.undelivered.includes(id)) { existing.note = note; ticket.updatedAt = at; this.repo.tickets.save(ticket) }
     // A person sent it to Eval, or the ticket let it go before its worker took it up, read it for context only, or ended after
     // its worker had it, so the worker gets it again.
-    else if (requeued || !current.fanout.includes(ticketId) || context?.includes(ticketId) || !liveTicket(ticket)) {
+    else if (requeued || !was || was === 'released' || was === 'context' || !liveTicket(ticket)) {
       this.addInput(ticket, input(key('input', ticketId, 'trigger', trigger.id, 'attached', at)))
     }
     // The worker has the message already, so the note comes with it again.
@@ -337,13 +335,9 @@ export class Tickets extends EnginePart {
     return ticket.inputs.flatMap(input => input.kind === 'trigger' && (!ids || ids.includes(input.id))
       ? this.repo.triggers.get(input.triggerId) ?? [] : [])
   }
-  /**
-   * Whether a ticket's worker took a person's message up, by acknowledging or answering it. A message acknowledged before
-   * acknowledgements were recorded on it has only the acknowledgement's message in the outbox.
-   */
+  /** Whether a ticket's worker took a person's message up, by acknowledging or answering it (see `OWNER_TRANSITIONS`). */
   private takenUp(ticket: Ticket, trigger: Trigger): boolean {
-    const acked = this.repo.triggers.disposition(trigger.id)?.acked
-    return acked ? acked.includes(ticket.id) : this.options.outbox.status(key('ack', trigger.id)) !== undefined
+    return ownerState(this.repo.triggers.disposition(trigger.id), ticket.id) === 'taken'
   }
   /** The person's messages among a ticket's Inputs `ids` that it decides and its worker did not take up. */
   private untaken(ticket: Ticket, ids: readonly string[]): Trigger[] {
@@ -357,23 +351,16 @@ export class Tickets extends EnginePart {
    * up, a Decision settled it, or it is the message a stop ended this ticket on.
    */
   private letGo(ticketId: string, waiting: readonly Trigger[], left: readonly Trigger[]): void {
-    for (const trigger of [...waiting, ...left]) {
-      const disposition = this.repo.triggers.disposition(trigger.id)
-      // A message its worker took up or handed back stays so, whatever copy of it still waited.
-      const kept = disposition?.acked?.includes(ticketId) || disposition?.handbacks?.some(item => item.ticketId === ticketId)
-      if (disposition?.fanout.includes(ticketId) && !kept) {
-        this.repo.triggers.saveDisposition(trigger.id, { ...disposition, fanout: disposition.fanout.filter(id => id !== ticketId) })
-      }
-    }
+    // A message its worker took up or handed back stays so, whatever copy of it still waited (see `OWNER_TRANSITIONS`).
+    for (const trigger of [...waiting, ...left]) this.move(trigger.id, ticketId, 'released')
     for (const trigger of left) {
       const disposition = this.repo.triggers.disposition(trigger.id)
       const decision = disposition?.decisionId ? this.repo.decisions.get(disposition.decisionId) : undefined
+      const states = disposition?.owners.map(owner => owner.state) ?? []
       // The main Session that stopped this ticket on the message decides the rest of it itself, unless a ticket handed it back.
-      const stopped = decision?.kind === 'stop' && decision.ticketId === ticketId && !disposition?.handbacks?.length
+      const stopped = decision?.kind === 'stop' && decision.ticketId === ticketId && !states.includes('handedBack')
       const decided = !!decision && (settled(decision) || stopped)
-      // A ticket that took it up and then handed it back took nothing up.
-      const taken = disposition?.acked?.some(id => !disposition.handbacks?.some(item => item.ticketId === id))
-      if (!this.owners(trigger).length && !taken && !decided) this.queueForEval(trigger)
+      if (!this.owners(trigger).length && !states.includes('taken') && !decided) this.queueForEval(trigger)
     }
   }
   /** An ended ticket that cannot resume takes none of the messages that waited for it (see `letGo`). */

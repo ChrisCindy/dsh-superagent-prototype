@@ -1,7 +1,7 @@
 /** What the Executor and its workers report about the Assignments that run tickets. */
 import { key } from './ids.ts'
 import { UserError } from './errors.ts'
-import { latestAssignment, liveTicket, outsidePaths, runningAssignment, waitsForPerson } from './model.ts'
+import { latestAssignment, liveTicket, outsidePaths, readEvery, runningAssignment, waitsForPerson } from './model.ts'
 import type { PullChanges, ReportState, Ticket } from './model.ts'
 import { EnginePart, type EngineOptions } from './part.ts'
 import type { Replies } from './replies.ts'
@@ -65,12 +65,19 @@ export class Assignments extends EnginePart {
     delete ticket.delivery
     this.repo.tickets.save(ticket)
   }
-  /** Records when the worker's Session of an open ticket took `inputIds` into a step, from which its model reads them. */
+  /**
+   * Records when the worker's Session of an open ticket took `inputIds` into a step, from which its model reads them; a
+   * message whose every copy its worker has read moves to `read` (see `OWNER_TRANSITIONS`).
+   */
   read(ticketId: string, inputIds: string[]): void {
     const ticket = this.require(ticketId)
     if (!liveTicket(ticket)) return
-    for (const input of ticket.inputs) if (input.kind === 'trigger' && inputIds.includes(input.id)) input.readAt ||= this.now()
+    const triggers = new Set<string>()
+    for (const input of ticket.inputs) {
+      if (input.kind === 'trigger' && inputIds.includes(input.id)) { input.readAt ||= this.now(); triggers.add(input.triggerId) }
+    }
     this.repo.tickets.save(ticket)
+    for (const triggerId of triggers) if (readEvery(ticket, triggerId)) this.move(triggerId, ticketId, 'read')
   }
   turnEnded(ticketId: string, assignmentId: string): void {
     const ticket = this.running(ticketId, assignmentId)

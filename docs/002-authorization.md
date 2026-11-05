@@ -20,23 +20,29 @@ The Source records whether a message addresses the agent: `mention` for a mentio
 
 Every message on a subscribed Thread reaches its subscribed Tickets as context, including messages from bots and CI. This delivery bypasses the gate and grants no new authority. Each Ticket remains limited by its Mandate.
 
-A person's message on a Ticket's own Thread belongs to that Ticket's Executor to decide. The same applies when the main Session attaches a message to a Ticket. While an Executor owns the message, it takes no Eval and gets no Decision. Each Executor either handles the request within its Ticket's scope or hands it back for routing elsewhere.
+A person's message on a Ticket's own Thread belongs to that Ticket's Executor to decide. The same applies when the main Session attaches a message to a Ticket. Each Executor either handles the request within its Ticket's scope or hands it back for routing elsewhere.
 
-Ownership continues while the Ticket is live, even if a person removes its Subscription. It also covers an ended Ticket that was not stopped by a person and has the message waiting to resume it.
+The main Session receives a follow-up notice. While an Executor owns the message, it takes no Eval and gets no Decision, and the main Session may only stop or hold work on the person's request; accept, attach, ignore and requeue are refused. A stop or a hold still passes through the gate with the follow-up strength described below.
 
-The main Session receives a follow-up notice. While an Executor owns the message, the main Session may only stop or hold work on the person's request; accept, attach, ignore and requeue are refused. A stop or a hold still passes through the gate with the follow-up strength described below.
+### Follow-up ownership
 
-### Handing back and releasing follow-ups
+A message has one state on each Ticket it reached. The states `delivered`, `read` and `taken` own it. A Ticket owns it while the Ticket is live, even after a person removes its Subscription, and while it is ended, not by a person, with the message waiting to resume it.
 
-An Executor hands a message back once when it asks for work beyond the Ticket's scope or belongs to another Ticket. The Ticket keeps its Subscription. If an attached Thread is unrelated, the Executor hands back the messages it owns there.
+| From | Event | To |
+| --- | --- | --- |
+| none | It reaches the Ticket on a Thread of its own, or the main Session attaches it | `delivered` |
+| none | It reaches the Ticket only on a Thread the Ticket follows for context | `context` |
+| `delivered` | The Executor's Session takes every copy of it into a step | `read` |
+| `delivered`, `read` | The Executor acknowledges or answers it | `taken` |
+| any | The Executor hands it back, once, with a reason; the Ticket keeps its Subscription | `handedBack` |
+| `delivered`, `read`, `context` | The Ticket ends or cannot resume, and its Executor never got it, or did not read it before its last Report or turn end | `released` |
+| `read`, `released`, `context` | It reaches the Ticket again, or the main Session attaches it | `delivered` |
 
-A message goes to a fresh Eval only after no Ticket still owns it. Its candidate includes the Executors' reasons. The gate judges it as an ordinary message on that Thread, and the main Session can accept it, attach it elsewhere or ignore it. Handing back a message the Ticket did not own, such as a bot message or one a person already sent to Eval, queues nothing.
+Any other event leaves the state as it is. A take-up stands through a new copy and the Ticket's end. A hand-back stands for good, and the main Session cannot attach the message to that Ticket again.
 
-When a Ticket ends, it releases follow-ups its Executor did not read or take up. These include messages never delivered to the Executor and messages delivered after its last Report or turn end, provided it neither acknowledged, answered nor handed them back. Each released message goes to Eval when no other Ticket owns it. A stop ends only the stopped Ticket's work.
+The message goes to a fresh Eval once no Ticket owns it, unless a Ticket took it up or a Decision settled it. Its candidate includes the Executors' reasons. A person can send an owned message to Eval from the panel; no Ticket owns it after that, until the main Session attaches it again. A stopped Ticket does not send its stop message to Eval unless another Ticket handed it back. The main Session that stopped it may accept the rest of the message as new work.
 
-A stopped Ticket does not send its stop message to Eval again unless another Ticket handed it back. The main Session that stopped it may accept the rest of the message as new work.
-
-A person can send an owned follow-up to Eval from the panel. If the main Session then attaches it back to a live Ticket, the Executor receives it again. The panel also offers re-evaluation when no effective judgement covers the message.
+If an attached Thread is unrelated, the Executor hands back every message it owns there. Handing back a message the Ticket did not own, such as a bot's, queues nothing. The panel offers re-evaluation when no effective judgement covers a message.
 
 ### Context-only subscriptions
 

@@ -29,7 +29,7 @@ it('delivers a follow-up to the worker and tells the main Session with a card, w
   expect(h.runtime.store.threads.get(THREAD)).toMatchObject({ pending: [] })
   expect(h.runtime.store.threads.get(THREAD)).not.toHaveProperty('evaluating')
   expect(h.runtime.store.decisions.byThread(THREAD)).toHaveLength(1)
-  expect(h.runtime.store.triggers.disposition(message.id)).toEqual({ fanout: [ticket.id], at: expect.any(String) })
+  expect(h.runtime.store.triggers.disposition(message.id)).toEqual({ owners: [{ ticketId: ticket.id, state: 'delivered', at: expect.any(String) }], at: expect.any(String) })
 })
 
 it('sends a person\'s message that reaches no ticket, such as only one a person stopped, to Eval as before', async () => {
@@ -224,7 +224,7 @@ it('tells the main Session of a follow-up an earlier version queued for Eval, wh
   // An earlier version delivered the follow-up to the ticket, queued it for Eval as well, and told the main Session nothing.
   h.runtime.store.atomic(() => {
     h!.runtime.store.triggers.save(message)
-    h!.runtime.store.triggers.saveDisposition(message.id, { fanout: [ticket.id], at: message.at })
+    h!.runtime.store.triggers.saveDisposition(message.id, { owners: [{ ticketId: ticket.id, state: 'delivered', at: message.at }], at: message.at })
     h!.runtime.store.threads.save({ ...h!.runtime.store.threads.get(THREAD)!, pending: [message.id] })
   })
   await h.runtime.pump(); await h.runtime.idle()
@@ -243,7 +243,7 @@ it('sends a request on a thread a worker follows only for context to Eval, and m
   // It is nobody's follow-up: the main Session assesses it, and the worker reads it as context.
   expect(h.candidates()).toEqual([request.id])
   expect(notices(h)).toEqual([])
-  expect(h.runtime.store.triggers.disposition(request.id)).toMatchObject({ fanout: [ticket.id], context: [ticket.id] })
+  expect(h.runtime.store.triggers.disposition(request.id)).toMatchObject({ owners: [{ ticketId: ticket.id, state: 'context' }] })
   expect(h.relays(sessionId)).toEqual([expect.objectContaining({ trigger_id: request.id, context: true })])
 })
 
