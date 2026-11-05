@@ -1,6 +1,6 @@
 /** Settings tab shell routing between stage settings (Sources, Eval, Execution), Prompts, and Deployment. */
 import type { StateView } from './api.ts'
-import { DeploymentPage, type DeploymentForm } from './deployment.tsx'
+import { DeploymentPage, RetentionBlock, type DeploymentForm } from './deployment.tsx'
 import { EvalSettings } from './eval.tsx'
 import { ExecutionSettings } from './execution.tsx'
 import { PromptsPage } from './prompts.tsx'
@@ -20,7 +20,10 @@ export function SettingsPage({ group, query, state, deploymentForm }: {
       case 'eval': return <SettingsProvider><EvalSettings version={query.version} /></SettingsProvider>
       case 'execution': return <SettingsProvider><ExecutionSettings /></SettingsProvider>
       case 'prompts': return <PromptsPage />
-      case 'deployment': return <DeploymentPage setup={state.setup} form={deploymentForm} />
+      case 'deployment': return <>
+        <DeploymentPage setup={state.setup} form={deploymentForm} />
+        <SettingsProvider><RetentionBlock /></SettingsProvider>
+      </>
     }
   })()
   return <div className="dt-settings">

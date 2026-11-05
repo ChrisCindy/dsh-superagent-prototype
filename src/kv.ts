@@ -66,3 +66,12 @@ export const KV = {
    */
   schedule: { fired: family<{ period: number; at: string; hits: number }, [entry: string]>('schedule-fired:') },
 }
+
+/**
+ * The Source records kept per Thread, by the kind that writes them: keyed by the Thread's key or by its id on its Source.
+ * Pruning a Thread deletes them with it (`src/app/retention.ts`), so a Thread seen again starts as a new one.
+ */
+export const THREAD_RECORDS: readonly { kind: string; prefix: string; by: 'key' | 'id' }[] = [
+  { kind: 'feishu', prefix: KV.feishu.seen.prefix, by: 'key' }, { kind: 'feishu', prefix: KV.feishu.initialized.prefix, by: 'key' },
+  { kind: 'github', prefix: KV.github.cursor.prefix, by: 'id' }, { kind: 'github', prefix: KV.github.ci.prefix, by: 'id' },
+]

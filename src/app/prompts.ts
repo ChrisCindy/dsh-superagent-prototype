@@ -214,10 +214,14 @@ export class Prompts {
       return this.versions.save(revision => ({ revision, previousRevision: previous.revision, savedAt: new Date().toISOString(), source, config }))
     })
   }
+  /** The versions newest first from `offset`, which end at the oldest the daily prune kept. */
   history(offset = 0, limit = 20) {
     const current = this.current()
-    const revisions = Array.from({ length: Math.min(limit, Math.max(0, current.revision + 1 - offset)) }, (_, i) => {
-      const version = current.revision - offset - i === 0 && current.revision === 0 ? current : this.version(current.revision - offset - i)
+    const kept = (revision: number) => revision === 0 && current.revision === 0 ? current : this.versions.get(revision)
+    const shown = Array.from({ length: Math.min(limit, Math.max(0, current.revision + 1 - offset)) }, (_, i) => current.revision - offset - i)
+    const gap = shown.findIndex(revision => !kept(revision))
+    const revisions = (gap < 0 ? shown : shown.slice(0, gap)).map(revision => {
+      const version = kept(revision)!
       const { config, ...summary } = version
       const previous = version.previousRevision === null ? undefined : this.versions.get(version.previousRevision)?.config
       // Pre-team-section revisions are not comparable field-by-field.
@@ -232,7 +236,8 @@ export class Prompts {
       const changed = previous ? [...new Set([...Object.keys(before), ...Object.keys(after)])].filter(name => (before as Record<string, string>)[name] !== (after as Record<string, string>)[name]) : []
       return { ...summary, changed }
     })
-    return { revisions, next_offset: offset + revisions.length <= current.revision ? offset + revisions.length : null }
+    const next = offset + revisions.length
+    return { revisions, next_offset: gap < 0 && next <= current.revision && kept(current.revision - next) ? next : null }
   }
 }
 /** Save a new prompt revision and notify the main Session when the change originated outside its own tool call. */

@@ -30,6 +30,7 @@ import { evalsHealth } from './views/overview.ts'
 import { TextCache } from './cache.ts'
 import { Effects } from './effects.ts'
 import { Prompts } from './prompts.ts'
+import { schedulePrune } from './retention.ts'
 import { registerHttp, type HttpHost } from './http.ts'
 import type { LinkTarget } from './views/records.ts'
 import { candidateCard, correlatedThreads, repliedTo, sourceLink, type LinkHost } from './links.ts'
@@ -55,7 +56,7 @@ const now = (): string => new Date().toISOString()
 const GITHUB_KIND = { kind: GITHUB, health: [GITHUB] } as const
 
 /**
- * Composition root of dsh-superagent that connects `Store`, `Setup`, `Engine`, `SourceRegistry`, `Effects`, `Outbox`, `Passes`, `Sessions`, `Settings`, `Prompts`, `DshExecutor`, and `MasterAssessor`.
+ * Composition root of dsh-superagent that connects `Store`, `Setup`, `Engine`, `SourceRegistry`, `Effects`, `Outbox`, `Passes`, `Sessions`, `Settings`, `Prompts`, `DshExecutor`, `MasterAssessor`, and the daily prune.
  * Exposes the `SourceHost` service on the Cordis context for source plugins and coordinates startup, setup checks, HTTP route registration, and graceful shutdown.
  * Locks the state directory before opening SQLite so concurrent processes cannot corrupt or double-migrate state.
  */
@@ -145,6 +146,7 @@ export class Runtime extends Service implements SourceHost {
         deliver: (id, text) => sessions.prompt(masterId, id, text, 'steer'), candidateCard: candidate => candidateCard(links, candidate),
         correlatedThreads: thread => correlatedThreads(store, thread) })
       const outbox = this.outbox = new Outbox({ store, effects, sources, commands, paused: () => this.paused() })
+      schedulePrune(effects, store, machine.stateDir, report)
       const { assessor, executor } = this
       const executors = this.executors = new Executors((ticket, assignment, name) => { store.afterCommit(() => {
         // A ticket whose Assignment names an Executor no plugin provides fails it, for a person to retry with another.

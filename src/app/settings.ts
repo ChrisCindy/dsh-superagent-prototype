@@ -2,7 +2,8 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { z } from 'zod'
 import { UserError, type EngineForSettings, type Ticket } from '../core/index.ts'
-import { EvalConfigSchema, ExecutorConfigSchema, ExecutorNameSchema, PolicyConfigSchema, SettingsSchema, policyEffects, policyVersion } from '../policy.ts'
+import { EvalConfigSchema, ExecutorConfigSchema, ExecutorNameSchema, PolicyConfigSchema, RetentionConfigSchema, SettingsSchema, policyEffects,
+  policyVersion } from '../policy.ts'
 import type { Settings as SettingsValue, SettingsBlock, SettingsOrigin, SettingsSave } from '../policy.ts'
 import type { SourceHost } from '../sources/host.ts'
 import type { HealthBoard, HealthEntry } from '../infra/health.ts'
@@ -56,7 +57,7 @@ interface Block {
   merge(settings: SettingsValue, value: unknown, id: string): SettingsValue
   guard?(current: SettingsValue, candidate: SettingsValue, origin: SettingsOrigin, id: string): void
 }
-const BLOCKS: Record<'policy' | 'eval' | 'executor' | 'source', Block> = {
+const BLOCKS: Record<'policy' | 'eval' | 'executor' | 'retention' | 'source', Block> = {
   policy: {
     parse: (value, sources) => {
       const policy = PolicyConfigSchema.parse(value)
@@ -75,6 +76,9 @@ const BLOCKS: Record<'policy' | 'eval' | 'executor' | 'source', Block> = {
     // Only the management panel may modify shell execution paths or commands, the merge account and its conditions, or the budget.
     guard: (current, candidate, origin) => { if (origin !== 'panel' && environment(current) !== environment(candidate)) throw new UserError('panelOnlyEnvironment') },
   },
+  // What pruning deletes is the panel's alone: the main Session neither reads nor saves the block.
+  retention: { parse: value => RetentionConfigSchema.parse(value), merge: (settings, value) => ({ ...settings, retention: value as SettingsValue['retention'] }),
+    guard: (_current, _candidate, origin) => { if (origin !== 'panel') throw new UserError('unknownBlock', { block: 'retention' }) } },
   source: {
     parse: (value, sources, id, kind) => sources.validate(id, z.object({ enabled: z.boolean(), config: z.unknown(), executor: ExecutorNameSchema.optional() })
       .parse(value), undefined, kind),
@@ -225,7 +229,7 @@ export class Settings {
     const notified = [...effects.keys()]
     store.atomic(() => {
       store.saveSettings(SettingsSchema.parse(settings), { source: origin, block, policyVersion: after, policyChanged: before !== after, notified })
-      if (origin !== 'tool') sessions.notify(...settingsNotice(block, changedPaths(old, settings)))
+      if (origin !== 'tool' && block !== 'retention') sessions.notify(...settingsNotice(block, changedPaths(old, settings)))
       if (before !== after) engine.policyChanged(before, after, effects)
     })
     // Rewrite worker command shims immediately when `blockedCommands` changes.

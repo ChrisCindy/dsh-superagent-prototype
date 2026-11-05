@@ -63,7 +63,10 @@ export class Store implements Repositories {
     this.read = storeReads(this.db)
     try {
       chmodSync(path, 0o600)
-      this.db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL)')
+      // A new database frees pages on request (`PRAGMA incremental_vacuum`, which the daily prune runs); the mode takes effect only
+      // before its first table, so an older database takes it with the one VACUUM its first prune runs (`src/app/retention.ts`).
+      this.db.exec(`PRAGMA auto_vacuum=INCREMENTAL; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;
+        CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL)`)
       const version = this.get(KV.store.schema)
       if (version !== undefined && version > SCHEMA_VERSION) throw new Error(`Unsupported orchestrator database version ${version}`)
       if (version !== undefined && version < OLDEST_SCHEMA) throw new Error(tooOld(version))
@@ -260,7 +263,8 @@ export class Store implements Repositories {
   }
   /**
    * The append-only audit trail of domain events: one row per event, in the order they happened, written in the transaction
-   * of the change that emitted it, so a rolled back change leaves no event. Nothing updates or deletes a row.
+   * of the change that emitted it, so a rolled back change leaves no event. Nothing updates a row; only the daily prune deletes
+   * rows older than the retention window (`src/app/retention.ts`).
    */
   readonly events = {
     /** @returns The event's `seq`. */
@@ -270,7 +274,10 @@ export class Store implements Repositories {
   /** Read-only queries for management views, orchestrator tools, and source polling (see `storeReads`). */
   readonly read: ReturnType<typeof storeReads>
 
-  /** Delivery status of a queued message; receipts are retained permanently so message IDs are idempotent. */
+  /**
+   * Delivery status of a queued message; receipts are retained so message IDs are idempotent, until the daily prune deletes a
+   * settled one whose Ticket or Thread it pruned.
+   */
   replyStatus(id: string): ReplyStatus | undefined { return this.receipts.get(id)?.status }
   /** Outbox message receipts for channel delivery; only `Outbox` writes to `receipts`. */
   readonly receipts = {

@@ -183,6 +183,7 @@ Failures retry with exponential backoff. Throwing `Later` defers work without co
 | `relay` | Sessions | Steers a worker's report or question, or a person's follow-up, into the main Session's turn | 1, in queue order | 2 s doubling to 60 s |
 | `notice` | Sessions | Injects a notice into the main Session without waking it | 1, in queue order | 2 s doubling to 60 s |
 | `reply` | Outbox | Sends a message for a Channel through its Source, after the earlier messages of its Ticket to its conversation that have not failed three times; withdrawing the message cancels it | 1, none while paused | 5 s doubling to 300 s; one whose Source is off, or behind an earlier message, tries again after 5 s |
+| `prune` | Retention | Prunes old records (see Persistence), then queues the next prune a day later; the first runs an hour after start | 1 | 60 s doubling to 1 h |
 
 A kind that belongs to one Executor starts with that Executor's name and a dot. Each kind has a health entry under its name without that prefix, so the DshExecutor's report as `launch` and `delivery`. It reports an error once one of its effects failed three times in a row, except `delivery`, whose failures show on their Ticket instead. Relays keep their order, and so do notices; a failed one holds back the later ones of its kind.
 
@@ -345,6 +346,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/app/cache.ts` | `TextCache`: texts kept in memory within a size, the least recently used dropped first |
 | `src/app/settings.ts` | Settings |
 | `src/app/settings-history.ts` | `policyHistory`: each saved settings revision with what it changed from the one before |
+| `src/app/retention.ts` | The daily prune: deletes the records the `retention` settings no longer keep, after writing them to an archive, then frees the file's pages |
 | `src/app/prompts.ts` | Prompts, `builtInParts`, the built-in parts a team may override, and `promptParts`, the order of a role's prompt sections |
 | `src/app/context.ts` | The built-in prompt text, read from `prompts/`, and the transcript entries Sessions read |
 | `src/app/skill-files.ts` | Packaged text: `promptFile`, which joins a file's one-sentence lines into paragraphs, and the bundled skills |
@@ -409,7 +411,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/client/settings-kit.tsx` | The building blocks of settings blocks: the settings the stage groups share, `useBlockDraft`, the fields, among them a Source kind's, and the history of saves |
 | `src/client/prompts.tsx` | The Prompts settings: the page owns the view it read and its editor the draft, and the Edit, Full prompt and History tabs render from them; a built-in part's editor shows a changed default and keeps or drops the override |
 | `src/client/prompt-config.ts` | The prompt configuration by section, by the team sections, skill names, built-in parts (`part/<key>`, with `withOverride`) and part headings the prompt views give, and the line diff of the full prompt, as pure functions |
-| `src/client/deployment.tsx` | The Deployment settings, also shown in DeepSeek Harness's Plugin Manager |
+| `src/client/deployment.tsx` | The Deployment settings, also shown in DeepSeek Harness's Plugin Manager, and the retention block below them |
 | `src/client/draft.tsx` | Settings drafts: `draftReducer`, their states and their merge with a newer saved revision, `saveBarText`, the save bar's line, and the save bar |
 | `src/client/controls.tsx` | Local copies of DeepSeek Harness's controls, which follow its markup, keyboard behaviour and design tokens, since the bundle does not import `@deepseek-ai/dsh-client-ui-primitives`; they read no context |
 | `src/client/widgets.tsx` | The small components the pages share, which read the panel's context: sections, page heads, load states, times, links, confirmed actions, the setup check and Markdown |
@@ -458,6 +460,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `tests/views.spec.ts` | What the management views derive from the Store, such as the Thread a dropped message belongs to, and the metrics a window's events give |
 | `tests/timeline.spec.ts` | A Thread's pages and a Trigger's neighbours by time and then id, with every received Trigger's time in one form |
 | `tests/migration.spec.ts` | The schema 11 to 15 migrations: every stored record in its current shape, each stored Source's kind, the Decisions and Inputs of a reopened Ticket, the DshExecutor's effect kinds, the owner states of each disposition, and the refusal of older schemas |
+| `tests/retention.spec.ts` | The daily prune on a large generated database: what it deletes and keeps, its archive, the freed pages, and a pruned Thread's next message, handled as a new one |
 | `tests/store.spec.ts` | Repositories and their working sets, in SQLite as in memory, the kv area, with every key of `KV` spelled only in `src/kv.ts` and the migration, settings history, the event table and queries |
 | `tests/prompts.spec.ts` | Prompt validation, assembly and versions |
 | `tests/cards.spec.ts` | The rules the built-in text must state, file by file |
@@ -503,7 +506,7 @@ A generated column is computed from its row's JSON and is empty outside its set,
 | Policy proposal | `settings-proposal`: the main Session's one pending change to `policy` or `eval`, its revision, request and changed paths |
 | Prompt versions | `prompt-revision`, `prompt-version:<n>` |
 | Main Session | `master-id` |
-| Session prompt history | `session-prompts:<session id>` |
+| Session prompt history | `session-prompts:<session id>`; the prune deletes a pruned Ticket's |
 | Source state | Read positions such as `github-cursor:<number>`, PR CI fingerprints and seen Feishu-topic messages; keys begin with the kind or `thread-` plus a Thread key |
 | Display names | `source-labels:<source id>` |
 
@@ -511,9 +514,26 @@ Dismissal is stored on its Decision. Input text is rendered from the Ticket when
 
 Read caches use bounded in-memory `TextCache` instances and are lost on restart. A Session paging through an original Source record or prompt preview must reread offset 0 after a restart. Feishu links resolved after intake are cached the same way; link-based search finds them only after that link has been read during the current process lifetime.
 
-Nothing deletes old records yet, so these grow without bound: the `trigger`, `disposition`, `decision` and `event` rows; ended Tickets and their Threads; the outbox's receipts; and in `kv`, every saved settings revision and prompt version, the prompt revisions each Session worked under, and the Sources' records per Thread and per Issue or pull request.
-
 `SCHEMA_VERSION` only increases. A database of a newer version refuses to start; `src/app/migration.ts` upgrades a database of the pre-release schema 10, or of schemas 11 to 14, once, at start, and refuses an older one.
+
+### Retention
+
+The `prune` effect (`src/app/retention.ts`) runs once a day. It reads the `retention` settings block: `days` (default 90, at least 15), and how many settings and prompt versions to keep (default 200 each). The cutoff is `days` before now. It deletes:
+
+- A Thread whose last Trigger is older than the cutoff, with no Trigger queued and no Eval running, that no open Ticket follows or answers on, and to which no open Ticket, and no Ticket that ended after the cutoff, subscribes.
+- The Decisions of such a Thread, unless a kept Ticket came from one.
+- A Trigger older than the cutoff once none of its Threads is kept and no kept Ticket came from it or took it as an Input, with its disposition.
+- A Ticket that ended before the cutoff and that no kept Thread subscribes to, with the `session-prompts:` record of its worker.
+- The outbox receipts of a pruned Ticket, or of a pruned Thread when they have no Ticket, once they are `sent` or `dropped` and have no `reply` effect.
+- The Source records of a pruned Thread, as `THREAD_RECORDS` in `src/kv.ts` lists them: the GitHub read cursor and CI fingerprint of its number, the seen Feishu messages of its key.
+- `event` rows older than the cutoff.
+- Settings and prompt versions beyond the newest ones kept, except the current ones and the prompt version a Session works under now.
+
+Each row goes first to `<stateDir>/archive/prune-<time>.jsonl`, one JSON object per line with its `table`, readable only by the owner. Nothing deletes old archives. A prune works in transactions of at most 2000 Threads and Tickets and 20 000 Triggers or events, and yields between them.
+
+The cutoff is at least 15 days, longer than the 14 days a Source polls a Thread after its last Trigger or Ticket end, so a Source never polls a pruned Thread. The Sources' cursors per repository or chat stay. A new message on a pruned Thread makes a new Thread, and the Source reads it as on any new Thread: GitHub from its notification cursor, Feishu marking the earlier messages seen. So it is handled as a new message, and does not resume the pruned Ticket.
+
+A new database uses `auto_vacuum = INCREMENTAL`, and a prune that deleted something runs `PRAGMA incremental_vacuum`. An older database takes this mode with one full `VACUUM` after its first prune; the mode cannot change inside the migration's transaction. Then the write-ahead log is truncated.
 
 ## Model-facing interfaces
 

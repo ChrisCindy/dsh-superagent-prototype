@@ -267,6 +267,7 @@ describe('settings migration', () => {
       eval: { mode: 'auto', timeoutSeconds: 90, maxInferredPerHour: 20, model: { provider: 'p', model: 'm' } },
       executor: { model: null, maxWorkers: 5, directory: '', prepare: '', blockedCommands: [], sandbox: 'workspace', writableRoots: [],
         merge: { cli: '', method: 'squash', maxLines: 200, requireApprovals: 1 }, budget: { turns: 300, minutes: 120, tokens: null } },
+      retention: { days: 90, settingsVersions: 200, promptVersions: 200 },
     })
     expect(migrateSettings(migrated)).toEqual(migrated)
   })

@@ -15,6 +15,12 @@ export const LIMITS = {
   budgetTurns: { min: 1, max: 100_000 },
   budgetMinutes: { min: 1, max: 10_080 },
   budgetTokens: { min: 1000, max: 10_000_000_000 },
+  /**
+   * Retention: the days ended work is kept, at least one more than the Sources' two-week polling horizon, so a pruned Thread is
+   * never one a Source still polls; and how many settings and prompt versions are kept.
+   */
+  retentionDays: { min: 15, max: 3650 },
+  retentionVersions: { min: 10, max: 100_000 },
   promptMaxChars: { min: 1000, max: 1_000_000 },
   admissionContextMaxPages: { min: 1, max: 100 },
   admissionContextTimeoutMs: { min: 1, max: 90_000 },

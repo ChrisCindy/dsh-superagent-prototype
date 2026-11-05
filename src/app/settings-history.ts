@@ -1,7 +1,7 @@
 /** Computes structured settings diffs across saved revisions for display in the management panel. */
 import type { FieldSpec } from '../sources/kind.ts'
 import type { SourceRegistry } from '../sources/registry.ts'
-import { BudgetSchema, EvalConfigSchema, MergeConfigSchema } from '../policy.ts'
+import { BudgetSchema, EvalConfigSchema, MergeConfigSchema, RetentionConfigSchema } from '../policy.ts'
 import { KV } from '../kv.ts'
 import type { Store, SettingsVersion } from './store.ts'
 
@@ -11,7 +11,7 @@ export type SettingsChangeCode = 'ruleAdded' | 'ruleRenamed' | 'ruleInstruction'
   | 'sourceEnabled' | 'sourceDisabled' | 'sourceField' | 'sourceRowsAdded' | 'sourceRowsRemoved' | 'sourceRowsChanged' | 'sourceAdmission'
   | 'mode' | 'timeout' | 'proactiveLimit' | 'evalModel' | 'executorModel' | 'maxWorkers' | 'paused' | 'resumed' | 'executionDirectory' | 'prepareCommand'
   | 'blockedCommands' | 'sandbox' | 'writableRoots' | 'mergeCli' | 'mergeMethod' | 'mergeMaxLines' | 'mergeApprovals'
-  | 'budgetTurns' | 'budgetMinutes' | 'budgetTokens' | 'ruleBudget' | 'ruleLimits'
+  | 'budgetTurns' | 'budgetMinutes' | 'budgetTokens' | 'ruleBudget' | 'ruleLimits' | 'retentionDays' | 'retentionSettings' | 'retentionPrompts'
 /** A single settings diff entry rendered by the panel using `change.<code>` and field labels from the Source listing. */
 export interface SettingsChange {
   code: SettingsChangeCode; items?: string[]; from?: string | number | boolean; to?: string | number | boolean; name?: string; source?: string
@@ -94,6 +94,11 @@ function settingsChanges(before: SettingsVersion['settings'], after: SettingsVer
   const amount = (value: number | null) => value === null ? '—' : value
   for (const [field, code] of [['turns', 'budgetTurns'], ['minutes', 'budgetMinutes'], ['tokens', 'budgetTokens']] as const) {
     if (budget[0]![field] !== budget[1]![field]) changes.push({ code, from: amount(budget[0]![field]), to: amount(budget[1]![field]) })
+  }
+  // Revisions saved before retention was a setting hold none, which reads as its defaults.
+  const retention = [before, after].map(version => RetentionConfigSchema.parse(version.retention ?? {}))
+  for (const [field, code] of [['days', 'retentionDays'], ['settingsVersions', 'retentionSettings'], ['promptVersions', 'retentionPrompts']] as const) {
+    if (retention[0]![field] !== retention[1]![field]) changes.push({ code, from: retention[0]![field], to: retention[1]![field] })
   }
   for (const id of new Set([...Object.keys(before.sources), ...Object.keys(after.sources)])) changes.push(...sourceChanges(id, before.sources[id], after.sources[id], sources))
   return changes
