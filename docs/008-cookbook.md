@@ -75,7 +75,7 @@ export const webhookKind: SourceKind<WebhookConfig> = {
 - `kind` is the stable kind id and the ID of its first instance. An instance ID appears in Trigger `source`, Thread-key prefixes, the `source:webhook` settings block and the Source Policy. Set `multiple: true` to let operators add more instances, such as one per queue, and read the instance from `ctx.source` instead of a constant. `shared` lists configuration keys a new instance copies from the first.
 - `schema` validates stored configuration and supplies defaults. Before an operator saves an instance, the registry creates an enabled instance from those defaults. Make defaults receive nothing; this example defaults to no conversations.
 - `fields` generates the Source settings form without custom panel code. A `rows` field edits entries keyed by its first column; once saved, that column cannot be edited. A text column with `wide: true` takes twice the width of the others, for long values such as a search. `advanced` hides less common settings. Implement `refreshLabels` if the Source can resolve ids to display names. Save those names under `KV.sources.labels(kind)`. Columns with `choose` and `refresh` can then offer them.
-- Optional `facts(deployment)` displays values derived by setup, such as the account behind a CLI. Setup currently checks only GitHub and Feishu fields listed in `SETUP_FIELDS`, so this example supplies no facts.
+- Optional `facts(deployment)` displays values derived by setup, such as the account behind a CLI. Setup resolves only the GitHub account and the Feishu bot, so this example supplies no facts. Optional `setup` lists the configuration keys setup reads: only the panel may change them, and a change restarts dsh-superagent. This example has none.
 - `health` declares the Source's health entries, initially `starting`. Registration claims each name and refuses collisions with entries such as `runtime`, `reply`, `worker` or effect kinds. Use the kind's name and reserve `sync:<id>` for Policy syncs. An `error` makes the status script exit 2 and the hourly check notify the operator, so report it only when human action may be needed.
 
 ### 3. Translate a message into a Trigger
@@ -122,7 +122,7 @@ export function webhookTrigger(message: QueueMessage, me: string): Trigger | und
 - **Sender.** Use Source-native ids in `actor`. Set `human: false` for bots and CI. Listed bots can only become inferred candidates. An empty actor id, as for CI, uses the admission cell for unlisted, unaddressed senders. Set `addressed` to `mention` or `direct` only when the message actually addresses the agent; this gives an allowed person's message explicit strength. Never produce a Trigger for the agent's own message.
 - **Reply destination and metadata.** `channel` identifies where replies go; `url` links to the source message. `channel.thread` groups messages for ordered delivery: a Ticket's later messages wait behind its earlier ones until an earlier message has failed three times. Other Tickets do not wait. Keep Source-specific fields in `meta`, such as the receiving conversation and Thread root. Both `meta` and `text` are untrusted data, not authorization.
 
-Agents can read the new kind through `orchestrator_read trigger/<id>` and `thread/<key>`. These expose message text, disposition and neighboring Triggers. A new kind does not automatically receive a built-in skill, resources for original service records or pull-request binding.
+Agents can read the new kind through `orchestrator_read trigger/<id>` and `thread/<key>`. These expose message text, disposition and neighboring Triggers. A new kind gets no built-in skill, no resources for original service records and no pull-request binding unless it declares them; [More hooks](#more-hooks) lists those hooks.
 
 Text search works without extra code. Implement `find(query)` when people use Source-specific references such as message ids, URLs or `#12`. Return the Thread keys and search terms those references identify:
 
@@ -413,6 +413,18 @@ it('takes in what the queue holds after the cursor, once, and moves the cursor a
 - the Thread context: the messages of a page and the cursor of the next, as `tests/registry.spec.ts` reads a kind's Threads through `SourceRegistry.threadContext`;
 - the plugin: `apply` registers the kind and reports `setupPending` while setup waits, its disposers unregister the kind, and a failure that escapes the loop becomes the Source's health instead of an unhandled rejection;
 - the Source's part of the Policy and its admission rows, as `tests/registry.spec.ts` and `tests/policy.spec.ts` check the Feishu Source's.
+
+### More hooks
+
+The host reaches a Source only through its kind, so a kind that needs more declares these optional hooks. The example needs none of them; the GitHub and Feishu kinds show each one.
+
+- `channel.limit`: the most words a reply may have. Feishu sets one; Outbox refuses a longer reply.
+- `channel.messageLink`: looks up the link of a Trigger's own message when the event carried none, within the kind's own time limit.
+- `resources`: originals that `orchestrator_read` serves under the kind's ID, such as `github/…`, with `references` for the reads `trigger/<id>` shows as `context`.
+- `read(commands, path, kind)`: a file, or a directory listing, of the repository an assessment reads. The first installed kind with `read` serves it.
+- `claim`: binds the changes an Executor reports, such as a pull request, and merges one. The first installed kind with `claim` provides it.
+- `ticketEnded(ctx, ticket)`: runs in the transaction that ends a Ticket, to tell its conversations through `ctx.notify`, as GitHub does when the pull request merged.
+- `skill`: names a packaged skill, `skills/dsh-superagent-<name>/SKILL.md`, that every Session gets while the kind is installed. With `active(deployment)`, only while that holds, as Feishu's needs a Feishu bot.
 
 ### Checklist
 

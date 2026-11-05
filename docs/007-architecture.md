@@ -111,7 +111,7 @@ After a change, the Engine emits an event from `DomainEvents` in `src/core/ports
 
 Runtime writes every event to the `event` table, in the transaction of the change that emitted it, so a change that rolls back leaves no event. The table is the audit trail and the data for metrics: `eval.started`, `eval.delivered` and `decision.recorded` carry the same `evalId`, so one Eval's latency reads from its three rows. `GET events` lists them, and `GET metrics` reads the evidence for switching the accept mode from `observe` to `auto` from them (`src/app/views/metrics.ts`): what Evals accepted and would accept, how long they took, and how Tickets ended. What an Assignment used of its budget is counted in memory only, so the metrics count the Tickets that used one up. When the machine's `eventLog` names a file, Runtime also appends each event to it as one JSON line once the change commits; a failed append loses only that line and is logged once.
 
-Runtime also turns `ticket.ended`, `trigger.requeued` and `thread.unsubscribed` into notices. A human `trigger.received` delivered to Tickets, and a `ticket.resumed` or `trigger.followup`, becomes a follow-up relay. `pullEndNotices` sends one chat notice, using a stable id, when a Ticket ends merged or closed.
+Runtime also turns `ticket.ended`, `trigger.requeued` and `thread.unsubscribed` into notices. A human `trigger.received` delivered to Tickets, and a `ticket.resumed` or `trigger.followup`, becomes a follow-up relay. When a Ticket ends, Runtime calls each installed kind's `ticketEnded`. The GitHub kind sends one chat notice with `pullEndNotices`, using a stable id, when the Ticket ended merged or closed.
 
 ### Model
 
@@ -189,13 +189,13 @@ A kind that belongs to one Executor starts with that Executor's name and a dot. 
 
 ### Sources
 
-Sources extend the host through `SourceKind`, defined in `src/sources/kind.ts`. A kind declares its identity, title, description, configuration `schema` and `fields`, derived `facts`, and `health` entries. Optional behavior includes `scope`, a `channel` (`allowed`, `send`, `link`), `threadContext`, `find`, `policy`, `environment` and `refreshLabels`.
+Sources extend the host through `SourceKind`, defined in `src/sources/kind.ts`. A kind declares its identity, title, description, configuration `schema` and `fields`, derived `facts`, and `health` entries. Optional behavior includes `scope`, a `channel` (`limit`, `allowed`, `send`, `link`, `messageLink`), `resources`, `threadContext`, `read`, `find`, `repliesTo`, `claim`, `ticketEnded`, `skill`, `setup`, `policy`, `environment` and `refreshLabels`. [Source hooks](#source-hooks) lists what the host does with each Source-specific one.
 
 `SourceRegistry` (`registry.ts`) owns registered kinds and stored instances, and implements the Engine's `SourceScope`. Registration claims health entries on `HealthBoard`; duplicate claims and reserved `sync:` names are refused. A SourceContext writes only through its registration's claimed entries, so reports after unregistration do nothing.
 
 `settings.sources` holds instances by ID, each with its `kind`. A kind's first instance has the kind's ID and exists even when nothing is stored for it. A kind with `multiple` allows more, with IDs `<kind>-<name>` (`instanceIdError`); a new one copies the `shared` configuration keys of the first. The registry finds an instance's kind with `kindOf`, and `home(kind, source)` names the instance of a kind a Trigger came from, or the kind's first. Given the Trigger itself, `home` also takes the Source of its primary Thread: a schedule hit on `github-docs:3` gets the `github-docs` repository for its Ticket's variables, resources and pull request. Another instance reports its health under the names `instanceHealth` gives and keeps its KV records under `source:<id>:`. Its Trigger IDs and Thread keys start with its ID, so the first instance keeps the names it always had.
 
-Registry configuration methods include `kind`, `kindOf`, `home`, `instances`, `instance`, `healthNames`, `validate`, `validatePolicy`, `policyPart`, `channelAllowed`, `declarations`, `environments`, `find` and `scope`. `find` asks each kind that supports search.
+Registry configuration methods include `kind`, `kindOf`, `installed`, `home`, `instances`, `instance`, `healthNames`, `validate`, `validatePolicy`, `policyPart`, `channelAllowed`, `declarations`, `environments`, `find` and `scope`. `find` asks each kind that supports search.
 
 Generic code accesses Source behavior through the registry. `send(message, commands)` calls the instance's kind's Channel, with commands scoped to the instance (`Commands.forSource`), and returns `sent`, `gone` or `waiting` if the kind is not installed. `link` resolves its Channel link. `threadContext` pairs a kind's reader with its configuration, or returns nothing when the kind has no reader. Invalid stored configuration disables the instance.
 
@@ -233,7 +233,7 @@ Its `context`, `read` and `decide` methods serve `orchestrator_eval`, `orchestra
 
 `Settings` (`src/app/settings.ts`) reads and writes revisioned settings blocks. `current` and `view` read them; `save(block, value, revision, origin)` validates a save; `pause(paused, origin)` changes the separate `paused` setting.
 
-Every save declares its origin: `panel`, `tool` or `sync`. Only `panel` can change the execution environment or fields listed in `SETUP_FIELDS` (`src/deployment.ts`). A `tool` save cannot change the `policy` block or the accept mode (`panelOnlyPolicy`); `sync` still saves a Source's synced list.
+Every save declares its origin: `panel`, `tool` or `sync`. Only `panel` can change the execution environment or a field a kind lists in `SourceKind.setup`. A `tool` save cannot change the `policy` block or the accept mode (`panelOnlyPolicy`); `sync` still saves a Source's synced list.
 
 `propose(block, value, revision, reason)` records the main Session's change to `policy` or `eval` as the one pending proposal, `KV.settings.proposal`, with the paths it changes (`changedPaths`); a later proposal replaces it. `proposal()` reads it, `stale` once its block's revision moved; `acceptProposal()` saves it with origin `panel` against its revision, refusing a stale one with `SettingsConflict`; `dismissProposal()` discards it.
 
@@ -274,7 +274,7 @@ Each model request binds the Session to the current prompt revision. The revisio
 ## Dependency rules
 
 - **Explicit, narrow dependencies.** Each class receives an interface that names what it uses, mostly as `Pick` types of other classes: `ExecutorHost`, `AssessorHost`, `SessionsHost`, `SettingsHost`, `SetupHost`, `PassesHost` and `OutboxHost` for the core classes, and `HttpHost`, `MainToolsHost`, `ExecutorToolsHost`, `ResourceHost`, `LinkHost` and `SourceContextDeps` for the glue, with the Engine as the `Pick` of the role that calls it. The Runtime passes itself only behind such an interface. A Source plugin injects the `orchestrator` service, which its type names as a `SourceHost`: the registry and `context(kind)`; its kind's code sees only its `SourceContext`.
-- **What may import what.** `src/core` imports nothing outside itself apart from Node's hashing, and does no I/O. `src/sources` imports nothing from `src/app`. The panel imports only types from the host side, and the plain values of `src/admission.ts`, `src/limits.ts`, `src/setup.ts`, `src/navigation.ts`, `src/sources/host.ts`, `src/core/errors.ts`, `src/core/reasons.ts` and the filter lists of `src/app/api.ts`.
+- **What may import what.** `src/core` imports nothing outside itself apart from Node's hashing, and does no I/O. `src/sources` imports nothing from `src/app`, and `src/app` imports nothing from `src/sources/github*` or `src/sources/feishu*` (`tests/dependencies.spec.ts`). The panel imports only types from the host side, and the plain values of `src/admission.ts`, `src/limits.ts`, `src/setup.ts`, `src/navigation.ts`, `src/sources/host.ts`, `src/core/errors.ts`, `src/core/reasons.ts` and the filter lists of `src/app/api.ts`.
 - **One writer per state.** Each kind of state has one writer, and the others read it or ask that writer.
 
   | State | Writer |
@@ -291,18 +291,21 @@ Each model request binds the Session to the current prompt revision. The revisio
 - **Requests and facts.** A method that asks for something is named by an imperative verb and its object, such as `stopTicket` or `bindThread`, and may be refused; a method that records what an adapter did is named in the past tense, such as `assignmentStarted` or `deliveryFailed`. Each host receives the Engine as the role type it needs.
 - **Typed fields, and Source data under the Source.** The code reads typed fields of Tickets and Mandates. A Source keeps nothing on a Ticket: which of its Threads a Ticket follows is the Ticket's `follows`, and what it keeps about a Trigger or a Thread is in their `meta`.
 - **Fixed refusals.** A refusal a person or an agent can cause is a `UserError(code, values)` from `USER_ERRORS` in `src/core/errors.ts`. The management API answers a `missing` code with 404 and the others with 400, and the panel words each code in its language. Setup problems are `SetupError` codes and setup warnings `SetupWarningCode`s (`src/setup.ts`), and fixed health texts `HealthCode`s (`src/sources/host.ts`), worded the same way.
-### Source-specific dependencies
 
-Some generic modules still refer directly to GitHub or Feishu:
+### Source hooks
 
-- Outbox applies the Feishu chat word limit.
-- `src/app/links.ts` resolves Feishu message links and `repliedTo`. It and Runtime read settings with `feishuSettings`.
-- `src/app/resources.ts` reads the `feishu/` and `github/` originals; `src/app/cards.ts` uses `pullOf` for Ticket cards.
-- Runtime sends `pullEndNotices` for merged or closed Tickets.
-- Executor tools bind reported pull requests with `readPull` and `claimPull`, and request a merge with `requestMerge`, using the GitHub context exposed by Runtime. For a `ready` Report under a Mandate with `paths`, they read the files of each open pull request the Ticket opened with `pullFiles` and pass them to `Engine.report` as `changes`, which records the Report as `blocked` when a file lies outside (`outsidePaths` in `src/core/model.ts`).
-- MasterAssessor reads repository files with `readRepositoryPath`.
-- Sessions and Prompts register built-in skills only for GitHub and Feishu. Migration converts their schema-10 records.
-- Setup probes only GitHub and Feishu account fields (`SETUP_FIELDS`). Only those Sources receive account setup problems through `SourceContext.problem`.
+Generic code reaches a specific Source only through the `SourceKind` hooks, by way of the registry:
+
+- `channel.limit`: the most words a reply may have. Outbox refuses a longer one.
+- `channel.messageLink` and `repliesTo`: the link of a Trigger's own message, and the Trigger it replies to, for `src/app/links.ts`.
+- `resources`: the originals `orchestrator_read` serves, such as `github/…` and `feishu/…`.
+- `claim`: binds a reported pull request, collects the files of a `ready` Report under `paths` as `changes`, requests a merge, and gives Ticket cards their `pr_number` (`SourceRegistry.claimant` and `pull`).
+- `ticketEnded`: runs when a Ticket ends. The GitHub kind tells the Ticket's conversations that its pull request merged or closed.
+- `read`: file and directory reads of MasterAssessor (`SourceRegistry.readRepository`).
+- `skill`: the packaged skill Sessions get while the kind is installed, and while `active` holds (`SourceRegistry.skills`).
+- `setup`: the configuration keys setup reads (`setupChanged`).
+
+Some knowledge of GitHub and Feishu stays outside `src/sources`. Setup (`src/app/setup.ts`, `src/deployment.ts`) resolves the GitHub account and the Feishu bot, which `Deployment`, `Commands` and the worker shims use before any Source plugin registers. So only those two kinds receive account problems through `SourceContext.problem`. Migration converts their records of older schemas, and keeps its own copy of the formats it writes.
 
 
 ## Modules
@@ -310,7 +313,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | Path | Responsibility |
 | --- | --- |
 | `src/index.ts` | The main plugin entry: reads the machine settings, starts the Runtime, and gives it the restart that a save of a Source's account uses |
-| `src/deployment.ts` | The plugin `Config` and `Machine`; `resolveDeployment` and `resolveFeishuBot` read the repository and the accounts from the Source settings, each CLI run as Executor shells run it; `SETUP_FIELDS` lists the Source fields setup reads; `checkMerging` reads, as the agent account, whether GitHub requires a review before a merge to the default branch. The code names no person, account or organization |
+| `src/deployment.ts` | The plugin `Config` and `Machine`; `resolveDeployment` and `resolveFeishuBot` read the repository and the accounts from the Source settings, each CLI run as Executor shells run it; `checkMerging` reads, as the agent account, whether GitHub requires a review before a merge to the default branch. The code names no person, account or organization |
 | `src/setup.ts` | Setup problems: `SetupError`, with a code, the place that fixes it and the English text the log, the main Session and the panel share; and setup warnings (`SETUP_WARNINGS`, `setupWarning`), which leave dsh-superagent running |
 | `src/policy.ts` | The Policy: the settings schemas by block, the Policy version, the gate and Mandate revalidation |
 | `src/admission.ts` | The admission table's values, each cell's options and defaults, shared with the panel |
@@ -349,7 +352,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/app/retention.ts` | The daily prune: deletes the records the `retention` settings no longer keep, after writing them to an archive, then frees the file's pages |
 | `src/app/prompts.ts` | Prompts, `builtInParts`, the built-in parts a team may override, and `promptParts`, the order of a role's prompt sections |
 | `src/app/context.ts` | The built-in prompt text, read from `prompts/`, and the transcript entries Sessions read |
-| `src/app/skill-files.ts` | Packaged text: `promptFile`, which joins a file's one-sentence lines into paragraphs, and the bundled skills |
+| `src/app/skill-files.ts` | Packaged text: `promptFile`, which joins a file's one-sentence lines into paragraphs, and the bundled skills, read from `skills/` by name |
 | `src/app/sessions.ts` | Sessions |
 | `src/app/permissions.ts` | The permission preset of each role by the `sandbox` setting, and the setup checks of the presets and the extra writable roots |
 | `src/app/delivery.ts` | `AgentDelivery`: delivers a message to a DeepSeek Harness agent once per request id, also across a restored Session |
@@ -431,6 +434,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `tests/core-engine.spec.ts` | Domain rules on in-memory repositories: receiving, Eval, fan-out, resume and stop, interrupted Assignments, the pause, Policy changes, reports and outcomes, attaching, replies, failed deliveries and dismissed problems |
 | `tests/stage.spec.ts` | The Ticket stages, row by row |
 | `tests/policy.spec.ts` | Source scope, the gate, the admission table, Mandate revalidation, the Policy version, settings migrations and assessment outcomes |
+| `tests/dependencies.spec.ts` | That `src/app` imports no module of a specific Source |
 | `tests/registry.spec.ts` | `SourceRegistry`: instances and their dispatch by kind, validation, Policy parts, Channels, Thread context, and each instance's health, KV records and variables |
 | `tests/sources.spec.ts` | The Feishu and GitHub Sources on a `SourceContext`: translation, polls and read positions, the pull request rules, health |
 | `tests/schedule.spec.ts` | The schedule Source: entries, searches limited to a repository, Triggers on GitHub Threads, one firing per period across restarts, its Policy part with the accept mode and the proactive limit, and its plugin |
