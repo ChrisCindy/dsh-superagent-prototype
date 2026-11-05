@@ -23,6 +23,24 @@ export const workerGitConfig = (stateDir: string): string => join(stateDir, 'wor
 const shellQuote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`
 const gitQuote = (value: string): string => `"${value.replace(/[\\"]/g, char => `\\${char}`)}"`
 export const credentialHelper = (cli: string): string => `!${shellQuote(cli)} auth git-credential`
+/** The git credential helper of a code-host adapter, which git runs as `<adapter> git-credential get|store|erase`. */
+export const adapterCredentialHelper = (adapter: string): string => `!${shellQuote(adapter)} git-credential`
+/** The origins (`https://host[:port]`) of the code-host clone URLs whose credentials the adapter serves to workers' git. */
+export function codehostOrigins(deployment: Pick<Deployment, 'codehost'>): string[] {
+  const { codehost } = deployment
+  if (!codehost?.capabilities.includes('git-credential')) return []
+  return [...new Set(Object.values(codehost.repositories).flatMap(repository => {
+    try { return repository.cloneUrl ? [new URL(repository.cloneUrl).origin] : [] } catch { return [] }
+  }))].sort()
+}
+/**
+ * The `case` pattern of the worker CLI shim for one deny pattern, matched against the CLI's arguments joined by spaces: its `*`
+ * and `?` stay wildcards and everything else is quoted, so a pattern cannot inject shell.
+ */
+export const casePattern = (pattern: string): string =>
+  `*${pattern.split(/([*?])/).map(part => part === '*' || part === '?' ? part : part ? shellQuote(part) : '').join('')}*`
+/** What the code-host worker CLI's shim answers for a command a deny pattern names. */
+export const CODEHOST_MERGE_REFUSED = 'The agent account does not merge or enable auto-merge: request the merge with orchestrator_merge_request, which checks the PR and enables auto-merge as the merge account.'
 
 export function sameDirectory(a: string, b: string): boolean {
   const real = (path: string): string => { try { return realpathSync(path) } catch { return resolve(path) } }
@@ -105,8 +123,8 @@ async function own(file: string, text: string, mode = 0o644): Promise<void> {
  * Atomically writes worker CLI shims and the isolated git configuration file into the state directory, refusing to overwrite foreign files.
  * Each shim strips the shim directory from PATH before exec so wrapper scripts resolving `gh` or `lark-cli` by name reach the real binary.
  */
-export async function writeEnvironment(deployment: Pick<Deployment, 'stateDir' | 'github' | 'feishu'>, blockedCommands: readonly string[]): Promise<void> {
-  const { stateDir, github, feishu } = deployment
+export async function writeEnvironment(deployment: Pick<Deployment, 'stateDir' | 'github' | 'feishu' | 'codehost'>, blockedCommands: readonly string[]): Promise<void> {
+  const { stateDir, github, feishu, codehost } = deployment
   const dir = workerBin(stateDir)
   await mkdir(dir, { recursive: true })
   const before = await readdir(dir)
@@ -126,10 +144,20 @@ export async function writeEnvironment(deployment: Pick<Deployment, 'stateDir' |
   ].join('\n')
   const run = (program: string): string => `${withoutShims}\nexec ${shellQuote(program)} "$@"`
   const fail = (message: string): string => `echo ${shellQuote(message)} >&2\nexit 1`
-  await shim('gh', `${MERGE_GUARD}\n${run(github.cli)}`)
+  await shim('gh', github ? `${MERGE_GUARD}\n${run(github.cli)}` : fail('gh is unavailable: this installation has no GitHub account.'))
   await shim('lark-cli', feishu ? run(feishu.cli) : fail('lark-cli is unavailable: this installation has no Feishu bot.'))
-  for (const name of new Set(blockedCommands.filter(name => !WORKER_COMMANDS.includes(name)))) {
-    await shim(name, fail(`${name} is blocked in this installation; use gh, which acts as ${github.login}.`))
+  // The code host's own CLI, when the Source names one, refuses the merge commands its patterns name, as gh refuses pr merge.
+  const worker = codehost?.worker
+  if (worker) {
+    const refuse = worker.deny.length
+      ? ['case " $* " in', `  ${worker.deny.map(casePattern).join('|')}) echo ${shellQuote(CODEHOST_MERGE_REFUSED)} >&2; exit 1 ;;`, 'esac'] : []
+    await shim(worker.name, [...refuse, run(worker.path)].join('\n'))
+  }
+  const owned = [...WORKER_COMMANDS, ...worker ? [worker.name] : []]
+  const acting = github ? `gh, which acts as ${github.login}` : codehost ? `the code host's tools, which act as ${codehost.account.login}`
+    : 'the tools of this installation'
+  for (const name of new Set(blockedCommands.filter(name => !owned.includes(name)))) {
+    await shim(name, fail(`${name} is blocked in this installation; use ${acting}.`))
   }
   for (const name of before) if (!kept.has(name)) await unlink(join(dir, name))
   await own(workerGitConfig(stateDir), [
@@ -137,8 +165,11 @@ export async function writeEnvironment(deployment: Pick<Deployment, 'stateDir' |
     // Make git refuse to commit without an explicit identity set by the worker instead of guessing from the operator's OS user.
     '[user]', '\tuseConfigOnly = true',
     '[credential]', '\thelper =',
-    '[credential "https://github.com"]', `\thelper = ${gitQuote(credentialHelper(github.cli))}`,
-    '[url "https://github.com/"]', '\tinsteadOf = git@github.com:', '\tinsteadOf = ssh://git@github.com/',
+    ...github ? ['[credential "https://github.com"]', `\thelper = ${gitQuote(credentialHelper(github.cli))}`,
+      '[url "https://github.com/"]', '\tinsteadOf = git@github.com:', '\tinsteadOf = ssh://git@github.com/'] : [],
+    // The code-host adapter answers git's credential requests for its clone URLs' origins.
+    ...codehost ? codehostOrigins(deployment).flatMap(origin => [`[credential ${gitQuote(origin)}]`,
+      `\thelper = ${gitQuote(adapterCredentialHelper(codehost.adapter))}`]) : [],
     // Include Git LFS filters because the operator's global gitconfig (which usually holds them) is ignored.
     '[filter "lfs"]', '\tclean = git-lfs clean -- %f', '\tsmudge = git-lfs smudge -- %f', '\tprocess = git-lfs filter-process', '\trequired = true',
   ].join('\n') + '\n')
@@ -163,12 +194,17 @@ export async function runAsWorker(subprocess: SubprocessRuntime, argv: string[],
   throw new CliError(read(handle.collected.stderr).trim() || `${argv.join(' ')} ${ended}`, undefined, exitCode ?? undefined)
 }
 
-/** Verifies that worker git invocations resolve the deployment's GitHub credential helper. */
-export async function verifyEnvironment(deployment: Pick<Deployment, 'github' | 'stateDir'>, subprocess: SubprocessRuntime, signal: AbortSignal): Promise<void> {
-  const { github, stateDir } = deployment
-  // `-z` separates fields with NUL and never quotes paths.
-  const helpers = (await runAsWorker(subprocess, ['git', 'config', '-z', '--show-origin', '--get-all', 'credential.https://github.com.helper'], stateDir, AbortSignal.any([signal, AbortSignal.timeout(60_000)])).catch(() => '')).split('\0')
-  if (helpers.join('\0') !== [`file:${workerGitConfig(stateDir)}`, credentialHelper(github.cli), ''].join('\0')) throw new SetupError('gitTooOld')
+/** Verifies that worker git invocations resolve the deployment's GitHub and code-host credential helpers. */
+export async function verifyEnvironment(deployment: Pick<Deployment, 'github' | 'codehost' | 'stateDir'>, subprocess: SubprocessRuntime, signal: AbortSignal): Promise<void> {
+  const { github, codehost, stateDir } = deployment
+  const expected: [origin: string, helper: string][] = [...github ? [['https://github.com', credentialHelper(github.cli)] as [string, string]] : [],
+    ...codehost ? codehostOrigins(deployment).map(origin => [origin, adapterCredentialHelper(codehost.adapter)] as [string, string]) : []]
+  for (const [origin, helper] of expected) {
+    // `-z` separates fields with NUL and never quotes paths.
+    const helpers = (await runAsWorker(subprocess, ['git', 'config', '-z', '--show-origin', '--get-all', `credential.${origin}.helper`], stateDir,
+      AbortSignal.any([signal, AbortSignal.timeout(60_000)])).catch(() => '')).split('\0')
+    if (helpers.join('\0') !== [`file:${workerGitConfig(stateDir)}`, helper, ''].join('\0')) throw new SetupError('gitTooOld')
+  }
 }
 
 /**

@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SENSITIVE_ENV_PATTERN, type SubprocessRuntime } from '@deepseek-ai/dsh-subprocess'
-import { GIT_LOCATION, MERGE_REFUSED, agentVariables, credentialHelper, runAsWorker, verifyDirectory, withoutDirectory, workerBin, workerGitConfig, writeEnvironment }
+import { CODEHOST_MERGE_REFUSED, GIT_LOCATION, MERGE_REFUSED, adapterCredentialHelper, agentVariables, credentialHelper, runAsWorker, verifyDirectory, withoutDirectory, workerBin, workerGitConfig, writeEnvironment }
   from '../src/infra/environment.ts'
 import { CliError } from '../src/infra/commands.ts'
 import { testDeployment } from './fixtures/deployment.ts'
@@ -63,6 +63,27 @@ describe('worker shims', () => {
       ['api', 'repos/acme/widgets/pulls/7'], ['-R', 'merge', 'pr', 'list']]) {
       expect((await exec(shim, args)).stdout, args.join(' ')).toBe(`gh ${args.join(' ')}\n`)
     }
+  })
+  it('give the code host\'s worker CLI a shim that refuses its deny patterns, the adapter as git\'s credential helper, and no gh without GitHub', async () => {
+    const b1 = program(join(dir, 'real', 'b1'), 'echo b1 "$@"')
+    const codehost = { adapter: '/opt/adapter it', capabilities: ['whoami', 'repository', 'events', 'git-credential'],
+      account: { id: '7', login: 'agent-bot', name: 'Agent', email: '' },
+      repositories: { codehost: { path: 'acme/widgets', defaultBranch: 'main', webUrl: '', cloneUrl: 'https://code.example.com:8443/acme/widgets.git' } },
+      worker: { name: 'b1', path: b1, deny: ['mr merge', '*/merge_requests/*/merge', 'it\'s;$(rm -rf /)'] } }
+    await writeEnvironment({ stateDir: dir, github: undefined, feishu: undefined, codehost }, ['b1', 'other'])
+    const bin = workerBin(dir)
+    for (const args of [['mr', 'merge', '5'], ['api', '-X', 'PUT', 'projects/1/merge_requests/5/merge']]) {
+      await expect(exec(join(bin, 'b1'), args), args.join(' ')).rejects.toMatchObject({ code: 1, stderr: `${CODEHOST_MERGE_REFUSED}\n` })
+    }
+    for (const args of [['mr', 'view', '5'], ['mr', 'list', '--merged'], ['echo', '$(true)']]) {
+      expect((await exec(join(bin, 'b1'), args)).stdout, args.join(' ')).toBe(`b1 ${args.join(' ')}\n`)
+    }
+    await expect(exec(join(bin, 'gh'), ['api', 'user'])).rejects.toMatchObject({ code: 1, stderr: 'gh is unavailable: this installation has no GitHub account.\n' })
+    await expect(exec(join(bin, 'other'), [])).rejects.toMatchObject({ stderr: 'other is blocked in this installation; use the code host\'s tools, which act as agent-bot.\n' })
+    const config = readFileSync(workerGitConfig(dir), 'utf8')
+    expect(config).not.toContain('github.com')
+    expect(config).toContain(`[credential "https://code.example.com:8443"]\n\thelper = "${adapterCredentialHelper('/opt/adapter it')}"`)
+    expect(adapterCredentialHelper('/opt/adapter it')).toBe('!\'/opt/adapter it\' git-credential')
   })
   it('replace only what dsh-superagent wrote and refuse anything else in its places', async () => {
     await writeEnvironment(testDeployment({ stateDir: dir }), ['old-cli'])

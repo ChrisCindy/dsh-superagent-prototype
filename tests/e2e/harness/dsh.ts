@@ -5,8 +5,8 @@
  * own. Everything the run creates lives in one run directory, removed by `teardown()` unless the run failed or
  * SAE2E_KEEP=1.
  *
- * Fakes stand in for everything outside the machine: `gh` and `lark-cli` stubs (tests/e2e/fakes) answer from local JSON
- * state, and a scripted Messages server (mock-llm.ts) is the profile's model provider.
+ * Fakes stand in for everything outside the machine: `gh` and `lark-cli` stubs and a code-host adapter (tests/e2e/fakes) answer
+ * from local JSON state, and a scripted Messages server (mock-llm.ts) is the profile's model provider.
  */
 import { execFile, spawn, spawnSync } from 'node:child_process'
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
@@ -18,6 +18,7 @@ import { authFromEnvironment, ManagementApi } from './api.ts'
 import { MockLlm, type Script } from './mock-llm.ts'
 import { createWorld, FakeGithub, initialWorld } from '../fakes/github-world.ts'
 import { createLarkWorld, initialLarkWorld } from '../fakes/lark-world.ts'
+import { createCodehostWorld, FakeCodehost, initialCodehostWorld } from '../fakes/codehost-world.ts'
 
 /** This checkout, which holds the harness and the fakes. */
 export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
@@ -89,13 +90,15 @@ export interface HarnessOptions {
   schedule?: boolean
   /** Enables the bundle's DingTalk Source plugin in the profile. */
   dingtalk?: boolean
+  /** Enables the bundle's code-host Source plugin in the profile. */
+  codehost?: boolean
   script: Script
 }
 
 interface HarnessFields {
   runDir: string; dshHome: string; home: string; stateDir: string; binDir: string; larkDir: string
   profile: string; port: number; url: string; dsh: string; repository: string; agent: string
-  github: FakeGithub; llm: MockLlm; api: ManagementApi; tmuxDir: string; tmux: boolean
+  github: FakeGithub; codehost: FakeCodehost; llm: MockLlm; api: ManagementApi; tmuxDir: string; tmux: boolean
 }
 
 export class DshHarness implements HarnessFields {
@@ -112,6 +115,8 @@ export class DshHarness implements HarnessFields {
   readonly repository!: string
   readonly agent!: string
   readonly github!: FakeGithub
+  /** The code host the fake adapter serves. */
+  readonly codehost!: FakeCodehost
   readonly llm!: MockLlm
   readonly api!: ManagementApi
   /** The tmux server's socket directory; short, because a Unix socket path has at most 107 bytes. */
@@ -134,6 +139,7 @@ export class DshHarness implements HarnessFields {
     const base = tmpdir().length < 60 ? tmpdir() : '/tmp'
     const tmuxDir = mkdtempSync(join(base, 'sae2e-'))
     const ghDir = join(runDir, 'fake-github')
+    const codehostDir = join(runDir, 'fake-codehost')
     const dirs = { dshHome: join(runDir, 'dsh-home'), home: join(runDir, 'home'), stateDir: join(runDir, 'state'), binDir: join(runDir, 'bin'),
       larkDir: join(runDir, 'fake-lark') }
     for (const dir of [...Object.values(dirs), ghDir]) mkdirSync(dir, { recursive: true })
@@ -141,12 +147,14 @@ export class DshHarness implements HarnessFields {
     const agent = options.agent ?? 'widgets-agent'
     createWorld(ghDir, initialWorld(repository, agent))
     createLarkWorld(dirs.larkDir, initialLarkWorld())
+    createCodehostWorld(codehostDir, initialCodehostWorld(repository, agent))
     // The wrappers name their state directory themselves: setup runs them through DSH's subprocess service, which passes
     // only part of the environment.
     const wrapper = (name: string, fake: string, variable: string, state: string) => writeFileSync(join(dirs.binDir, name),
       `#!/bin/sh\n${variable}='${state}' exec '${process.execPath}' --no-warnings '${join(FAKES, fake)}' "$@"\n`, { mode: 0o755 })
     wrapper('gh-agent', 'gh.ts', 'SAE2E_GH_STATE', ghDir)
     wrapper('lark-bot', 'lark-cli.ts', 'SAE2E_LARK_STATE', dirs.larkDir)
+    wrapper('codehost-adapter', 'codehost-adapter.ts', 'SAE2E_CODEHOST_STATE', codehostDir)
     const port = await freePort()
     const url = `http://127.0.0.1:${port}`
     const profile = `sae2e-${process.pid}-${Math.random().toString(36).slice(2, 6)}`
@@ -154,7 +162,7 @@ export class DshHarness implements HarnessFields {
     const tmux = spawnSync('tmux', ['-V']).status === 0 && process.env.SAE2E_NO_TMUX !== '1'
     let harness!: DshHarness
     const api = new ManagementApi(url, authFromEnvironment(url, () => harness.launchToken()))
-    harness = new DshHarness({ runDir, ...dirs, profile, port, url, dsh, github: new FakeGithub(ghDir), llm, api, repository, agent, tmuxDir, tmux })
+    harness = new DshHarness({ runDir, ...dirs, profile, port, url, dsh, github: new FakeGithub(ghDir), codehost: new FakeCodehost(codehostDir), llm, api, repository, agent, tmuxDir, tmux })
     // docs/006: create the profile from the Web template (in this run's DSH_HOME), then add this checkout as a plugin.
     const created = await run(dsh, [profile, '--from-default-profile', 'web', '--dump-config'], { env: harness.env() })
     if (created.code !== 0) throw new Error(`Creating profile ${profile} failed:\n${created.stderr}`)
@@ -168,12 +176,14 @@ export class DshHarness implements HarnessFields {
       '- id: llm-deepseek', '  config:', `    baseURL: ${llm.baseURL}`,
       ...options.feishu ? ['- id: dsh-superagent-feishu', '  disabled: false'] : [],
       ...options.schedule ? ['- id: dsh-superagent-schedule', '  disabled: false'] : [],
-      ...options.dingtalk ? ['- id: dsh-superagent-dingtalk', '  disabled: false'] : [], ''].join('\n'))
+      ...options.dingtalk ? ['- id: dsh-superagent-dingtalk', '  disabled: false'] : [],
+      ...options.codehost ? ['- id: dsh-superagent-codehost', '  disabled: false'] : [], ''].join('\n'))
     return harness
   }
 
   get gh(): string { return join(this.binDir, 'gh-agent') }
   get lark(): string { return join(this.binDir, 'lark-bot') }
+  get adapter(): string { return join(this.binDir, 'codehost-adapter') }
 
   /** The environment of every dsh and service-script process: this run's DSH_HOME, HOME and tmux server, no real credentials. */
   env(): NodeJS.ProcessEnv {

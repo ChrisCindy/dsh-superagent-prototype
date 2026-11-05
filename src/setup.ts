@@ -4,7 +4,7 @@
  */
 import { fill } from './infra/text.ts'
 
-export type SetupPlace = 'deployment' | 'execution' | 'github' | 'feishu' | 'dingtalk'
+export type SetupPlace = 'deployment' | 'execution' | 'github' | 'feishu' | 'dingtalk' | 'codehost'
 export const SETUP_PROBLEMS = {
   foreignFile: ['deployment', '{file} was not written by dsh-superagent; move it, or choose another state directory.'],
   gitTooOld: ['deployment', 'git does not read the github.com credential configuration dsh-superagent writes; dsh-superagent needs git 2.32 or later.'],
@@ -35,6 +35,18 @@ export const SETUP_PROBLEMS = {
   dingtalkEndpointInvalid: ['dingtalk', 'The DingTalk OpenAPI endpoint {endpoint} is not an https URL.'],
   dingtalkCredentialsRejected: ['dingtalk', 'DingTalk gave the app no access token; check its AppKey and AppSecret.'],
   dingtalkStreamRefused: ['dingtalk', 'DingTalk refused a Stream mode connection for the app; set the robot\'s message receiving mode to Stream mode, as docs/006-deployment.md describes.'],
+  codehostAdapterUnset: ['codehost', 'The code-host Source is on, and its adapter is not set.'],
+  codehostAdapterMissing: ['codehost', 'The code-host adapter {adapter} was not found.'],
+  codehostAdapterFailed: ['codehost', 'The code-host adapter {adapter} does not work.'],
+  codehostContract: ['codehost', 'The code-host adapter {adapter} speaks contract version {version}, not {expected}, or lacks required operations: {missing}; docs/010 describes the contract.'],
+  codehostNoAccount: ['codehost', 'The code-host adapter {adapter} did not report the agent\'s account.'],
+  codehostRepositoryUnset: ['codehost', 'The code-host Source names no repository.'],
+  codehostAdapterMismatch: ['codehost', 'This code-host Source uses the adapter {adapter}, but code-host Sources share the agent\'s adapter {first}.'],
+  codehostRepositoryUnreadable: ['codehost', '@{account} cannot read {repository} on the code host.'],
+  codehostRepositoryReadOnly: ['codehost', '@{account} cannot push to {repository} on the code host.'],
+  codehostRepositoryTwice: ['codehost', 'Another code-host Source already receives {repository}.'],
+  codehostMergeAgent: ['codehost', 'The merge adapter {adapter} acts as the agent account @{account}; give it the credential of another account that may merge.'],
+  codehostWorkerCli: ['codehost', 'The workers\' code-host CLI {cli} cannot be used.'],
 } as const satisfies Record<string, readonly [SetupPlace, string]>
 export type SetupCode = keyof typeof SETUP_PROBLEMS
 /** `source` names the Source instance a problem of a Source place belongs to, when it is not the kind's first instance. */
@@ -72,6 +84,11 @@ export const SETUP_WARNINGS = {
   mergeUnverified: ['github', '@{account} cannot read the review rules of {branch} in {repository}, so dsh-superagent cannot check that GitHub requires an approval before a merge; check in the repository settings that {branch} requires an approving review and dismisses stale approvals when new commits are pushed.'],
   mergeUnprotected: ['github', '{branch} in {repository} does not require an approving review that a new push dismisses, so only the prompts keep unreviewed commits from merging; in a branch protection rule or ruleset of {branch}, require at least one approving review and dismiss stale approvals when new commits are pushed.'],
   mergeBypass: ['github', '@{account} may bypass the review rules of {branch} in {repository}, so the agent could merge without an approval; remove it from the bypass list, or turn on Do not allow bypassing the above settings.'],
+  codehostCapabilities: ['codehost', 'The code-host adapter {adapter} does not answer {missing}: {effects}.'],
+  codehostMergeUnverified: ['codehost', 'The code-host adapter cannot tell whether {branch} in {repository} requires an approval before a merge; check on the code host that {branch} requires an approving review, withdraws approvals on a push, and that @{account} can neither push to it nor merge without one.'],
+  codehostMergeUnprotected: ['codehost', '{branch} in {repository} does not require an approval that a new push withdraws, so only dsh-superagent\'s checks keep unreviewed commits from merging; require one on the code host.'],
+  codehostMergeBypass: ['codehost', '@{account} may push to {branch} in {repository}, or merge into it without an approval, so the agent could merge unreviewed work; take that right from the agent\'s account on the code host.'],
+  codehostShimUnguarded: ['codehost', 'The workers\' CLI {cli} refuses no command: no merge pattern is set, so only the code host\'s branch rules keep the agent from merging with it; add the CLI\'s merge commands as patterns.'],
 } as const satisfies Record<string, readonly [SetupPlace, string]>
 export type SetupWarningCode = keyof typeof SETUP_WARNINGS
 /** `source` names the Source instance a warning belongs to, when it is not the first instance of the kind `place` names. */

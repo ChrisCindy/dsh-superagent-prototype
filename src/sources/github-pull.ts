@@ -4,7 +4,7 @@
  */
 import { z } from 'zod'
 import { actionAllowed, key, liveTicket, type Follow, type OutboundMessage, type PullChanges, type ThreadFact, type Ticket } from '../core/index.ts'
-import type { Deployment } from '../deployment.ts'
+import { githubAccount, type GithubAccount } from '../deployment.ts'
 import { sameName } from '../infra/text.ts'
 import type { SourceContext } from './host.ts'
 import { githubPage, SOURCE, UserSchema } from './github-trigger.ts'
@@ -33,7 +33,7 @@ export const pullOf = (ticket: Pick<Ticket, 'follows'>, source = SOURCE): number
   pullsOf(ticket, true, source).at(-1) ?? pullsOf(ticket, false, source).at(-1)
 /** True when the PR was opened by the agent account from a branch in `repository` (not a fork). */
 export const agentPull = (pr: { user: { login: string }; head?: { repo?: { full_name: string } | null } | null },
-  account: Pick<Deployment['github'], 'login'>, repository: string): boolean =>
+  account: Pick<GithubAccount, 'login'>, repository: string): boolean =>
   sameName(pr.user.login, account.login) && sameName(pr.head?.repo?.full_name ?? '', repository)
 /** True when a branch belongs to the ticket: its last path segment is the ticket's short name, such as `agent/<name>`. */
 export const ticketBranch = (ticket: Pick<Ticket, 'execution'>, ref: string): boolean =>
@@ -53,9 +53,9 @@ export function claimPull(ctx: SourceContext, ticketId: string, pr: Pull): strin
   const source = ctx.triggers.get(ticket.origin.triggerId)
   // The origin's primary Thread, not its Source, names the PR: a schedule hit on a PR is on this instance's Thread too.
   const started = source?.threads[0]?.source === ctx.source && source.meta.isPr === true && source.meta.number === pr.number
-  const opened = agentPull(pr, ctx.deployment.github, ctx.commands.repository) && ticketBranch(ticket, pr.head.ref)
+  const opened = agentPull(pr, githubAccount(ctx.deployment), ctx.commands.repository) && ticketBranch(ticket, pr.head.ref)
   if (!started && !opened) {
-    const { login } = ctx.deployment.github
+    const { login } = githubAccount(ctx.deployment)
     return `PR does not belong to this ticket: use the source PR or a PR by ${login} from a branch whose last path segment is DSH_SUPERAGENT_NAME; omit pr_number when no PR exists`
   }
   // A Mandate whose limits leave out opening a pull request lets the ticket follow its source PR, never one it opened.
@@ -73,7 +73,7 @@ export function claimPull(ctx: SourceContext, ticketId: string, pr: Pull): strin
 export async function readyChanges(ctx: SourceContext, ticket: Ticket, state: string, pull: Pull | undefined, signal: AbortSignal): Promise<PullChanges[]> {
   if (state !== 'ready' || !ticket.mandate.limits?.paths) return []
   const own = new Set((ticket.follows ?? []).filter(item => item.own && !item.closed).flatMap(item => pullsOf({ follows: [item] }, false, ctx.source)))
-  if (pull && pull.state === 'open' && agentPull(pull, ctx.deployment.github, ctx.commands.repository) && ticketBranch(ticket, pull.head.ref)) own.add(pull.number)
+  if (pull && pull.state === 'open' && agentPull(pull, githubAccount(ctx.deployment), ctx.commands.repository) && ticketBranch(ticket, pull.head.ref)) own.add(pull.number)
   const commands = ctx.commands.withSignal(signal)
   return Promise.all([...own].map(number => pullFiles(commands, number)))
 }
@@ -87,7 +87,7 @@ export async function observePull(ctx: SourceContext, pr: Pull): Promise<boolean
   const ended = pr.state === 'closed' || !!pr.merged
   if (ended) closePull(ctx, pr)
   else {
-    const candidates = agentPull(pr, ctx.deployment.github, ctx.commands.repository) ? ctx.tickets.open().filter(ticket => ticketBranch(ticket, pr.head.ref)) : []
+    const candidates = agentPull(pr, githubAccount(ctx.deployment), ctx.commands.repository) ? ctx.tickets.open().filter(ticket => ticketBranch(ticket, pr.head.ref)) : []
     const ticket = candidates.length === 1 ? candidates[0]! : undefined
     // A PR the ticket followed until it closed, and that is open again, is followed again.
     const openedAgain = ticket?.follows?.some(item => item.thread === `${ctx.source}:${pr.number}` && item.closed)

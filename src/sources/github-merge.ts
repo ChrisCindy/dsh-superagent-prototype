@@ -6,6 +6,7 @@ import { z } from 'zod'
 import { actionAllowed, outsidePaths, type Ticket } from '../core/index.ts'
 import type { MergeConfig } from '../policy.ts'
 import { sameName } from '../infra/text.ts'
+import { githubAccount } from '../deployment.ts'
 import { ciFailures, pullChecks, pullFiles } from './github-read.ts'
 import { readPull } from './github-pull.ts'
 import { isHumanLogin } from './github-trigger.ts'
@@ -58,7 +59,7 @@ export async function mergeChecks(ctx: SourceContext, ticket: Pick<Ticket, 'foll
   if (failed.length) refused.push({ check: 'ci', detail: `CI failed on ${head.slice(0, 7)}: ${names(failed)}` })
   else if (running.length) refused.push({ check: 'ci', detail: `CI is still running on ${head.slice(0, 7)}: ${names(running)}` })
   // The latest decision of each person other than the agent and the PR's author; a comment decides nothing, a dismissal withdraws one.
-  const { login } = ctx.deployment.github
+  const { login } = githubAccount(ctx.deployment)
   const latest = new Map<string, { state: string; commit?: string }>()
   for (const review of await commands.pages(ReviewSchema, `pulls/${number}/reviews?per_page=100`)) {
     const user = review.user

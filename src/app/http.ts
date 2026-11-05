@@ -116,7 +116,10 @@ function setupView(runtime: HttpHost) {
     dingtalkProblem: runtime.dingtalkProblem ?? null,
     warnings: runtime.setupWarnings,
     // `repository` stays the first GitHub Source's, as before Sources had several instances.
-    accounts: resolved ? { repository: resolved.repositories.github ?? '', repositories: resolved.repositories, agent: resolved.github.login, feishu: resolved.feishu ? { appId: resolved.feishu.appId, brand: resolved.feishu.brand, botId: resolved.feishu.botId, name: resolved.feishu.name } : null,
+    // A code-host Source's repositories and account count with GitHub's: the agent is one account on whichever code host serves.
+    accounts: resolved ? { repository: resolved.repositories.github ?? '', repositories: { ...resolved.repositories,
+      ...Object.fromEntries(Object.entries(resolved.codehost?.repositories ?? {}).map(([id, repository]) => [id, repository.path])) },
+      agent: resolved.github?.login ?? resolved.codehost?.account.login ?? '', feishu: resolved.feishu ? { appId: resolved.feishu.appId, brand: resolved.feishu.brand, botId: resolved.feishu.botId, name: resolved.feishu.name } : null,
       // The DingTalk app's credentials stay where the Source names them; the panel learns only that setup verified them.
       dingtalk: resolved.dingtalk ? { verified: true } : null } : null,
   }

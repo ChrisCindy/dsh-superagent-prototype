@@ -16,6 +16,7 @@ export const HEALTH_TEXT = {
   pollFailures: '{count} consecutive failed polls; last: {error}',
   dingtalkUnset: 'The Source is on, and its app credentials are not set',
   streamFailures: '{count} consecutive failed connections; last: {error}',
+  codehostUnresolved: 'Waiting for setup to resolve this code-host Source; save it with its adapter and repository',
 } as const
 export type HealthCode = keyof typeof HEALTH_TEXT
 export type Health = { state: 'starting' | 'ready' | 'paused' | 'error'; detail: string; at?: string; code?: HealthCode; values?: Record<string, string> }

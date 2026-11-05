@@ -18,6 +18,7 @@
     "./feishu-watch": "./lib/feishu-watch.js",
     "./schedule-watch": "./lib/schedule-watch.js",
     "./dingtalk-watch": "./lib/dingtalk-watch.js",
+    "./codehost-watch": "./lib/codehost-watch.js",
     "./package.json": "./package.json",
     "./locale/*.json": "./locale/*.json"
   },

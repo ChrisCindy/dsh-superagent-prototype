@@ -1,7 +1,7 @@
 # End-to-end tests on a real DeepSeek Harness
 
 `tests/e2e` runs dsh-superagent inside a real DeepSeek Harness (DSH) installation, not the simulated host of
-`tests/fixtures/host.ts`. Nothing leaves the machine: GitHub, Feishu and DingTalk are local stubs, and the model is a scripted
+`tests/fixtures/host.ts`. Nothing leaves the machine: GitHub, Feishu, DingTalk and the code host are local stubs, and the model is a scripted
 local server. `pnpm test` does not run it.
 
 ## Run it
@@ -34,7 +34,7 @@ restarts. The first run also installs DSH, which takes about a minute.
 1. It installs `@deepseek-ai/dsh` (cached) and creates a profile `sae2e-<pid>-<random>` from the Web template in a
    temporary `DSH_HOME`. Then it runs `dsh plugin --profile <p> add link:<checkout>`.
 2. It writes the profile's `cordis.patch.yml` with a free port, a temporary `stateDir`, the `llm-deepseek` route's
-   `baseURL` pointed at the scripted model, and the Feishu, schedule and DingTalk plugins enabled.
+   `baseURL` pointed at the scripted model, and the Feishu, schedule, DingTalk and code-host plugins enabled.
 3. It starts the service with `scripts/dsh-superagent start` in a tmux server of its own (`TMUX_TMPDIR` is a short
    temporary directory). The service runs with a temporary `HOME` and without the caller's GitHub, DSH or model
    variables.
@@ -56,6 +56,11 @@ Fakes (`fakes/`, executed by Node with type stripping):
   Source calls (access token, Stream mode gateway, group and direct robot sends) for the app `FAKE_APP`, and serves the
   Stream mode WebSocket the gateway names, a minimal RFC 6455 server that pings every 20 seconds. `push` sends a robot
   message as a `CALLBACK` frame; requests and acknowledgements are kept for assertions.
+- `codehost-adapter.ts`: a code-host adapter of contract version 1 ([docs/010](../../docs/010-codehost-adapter.md)). It
+  answers `describe`, `whoami`, `repository`, `events` (paged by index into the world's event log; the first call answers
+  the cursor of now), `thread`, `comments`, `comment` (once per `key`) and `git-credential get` from
+  `fake-codehost/state.json`, which `codehost-world.ts` seeds and edits. It logs calls and posted comments like `gh.ts`,
+  and an operation it does not answer fails with 501 and is marked `unknown`.
 - `harness/mock-llm.ts`: a Messages-protocol SSE server. It classifies each request by the tools offered: the main
   Session has `orchestrator_route`, a worker `orchestrator_report`. `harness/script.ts` answers it.
 
@@ -71,8 +76,8 @@ Fakes (`fakes/`, executed by Node with type stripping):
 | (f) | `POST sources` adds `github-docs`, switched off, with the first Source's CLI, and restarts nothing. Saving it with the first Source's repository answers 400 `repositoryTwice`. Saving it with `acme/docs`, a second repository of the fake, restarts the service. Setup resolves both repositories on the one agent account with no warning, reads the second one's push access and review rules, and the second Source polls that repository's notifications and reports `github-docs` ready. `POST sources/github-docs/remove` restarts the service without it |
 | (g) | With the panel headers but without the DeepSeek Harness cookie, `GET state` answers 200, and reading the settings, saving the Policy, pausing and accepting a Policy proposal answer 401 |
 | (h) | Saving the schedule Source with one entry (`is:issue is:open no:assignee updated:<{now-48h}`) restarts nothing. Within a minute the entry's search runs through the fake `gh` as `api -X GET search/issues` with `repo:` added, and its one hit, an Issue untouched for three days, becomes a Trigger on that Issue's Thread with `human: false` and the entry as its actor; the recently active Issue gets none. The entry is not on the Policy's list, so the hit is ignored without a candidate for the main Session. After a full `restart` the Source reports the same period again and searches nothing more |
-
 | (i) | Saving the DingTalk Source with a credentials file others may read answers 400 `dingtalkCredentialsExposed`. After `chmod 600` the save restarts the service; setup gets a token and opens the gateway, `accounts.dingtalk` is verified, `dingtalk` reports ready, and neither the settings nor the state hold the secret. With the sender's staff ID on the Policy's DingTalk list, a mention pushed over the connection becomes a human Trigger on Thread `dingtalk:<conversation>:<msgId>` and is acknowledged on the connection. The main Session gets it as an explicit candidate and accepts, and the acknowledgement and the result go to the group through `groupMessages/send`, each starting with `@Alice` |
+| (j) | Saving the `codehost` Source with the fake adapter restarts the service. Setup resolves its repository beside GitHub's and warns about the operations the adapter lacks and the review rules it cannot check. After the Policy allows the login, a comment that mentions the agent, reported by `events`, becomes a Trigger on Thread `codehost:1` and an explicit candidate. The accept posts the acknowledgement through the adapter's `comment` once with its marker, the worker reports, and the result is posted once; nothing goes to GitHub, the Ticket ends `completed`, and no operation outside `describe` was asked |
 
 ## Not covered
 
@@ -80,6 +85,8 @@ Fakes (`fakes/`, executed by Node with type stripping):
   candidates and Evals (`orchestrator_eval*`, Eval mode `auto`) are not driven, so a listed schedule entry's candidate
   is left to the unit tests.
 - A Ticket from the second repository. The runtime tests check that its workers get that repository in `DSH_SUPERAGENT_GITHUB_REPOSITORY`.
+- Code-host pull requests, CI and merges: the fake adapter answers none of `files`, `checks`, `approvals` or `merge`, so
+  the unit tests (`tests/codehost.spec.ts`) cover them.
 - Pull requests, CI and git pushes. A worker's `git push` would need GitHub. The fake `gh` refuses `auth git-credential`,
   so no credential would reach one.
 - DingTalk direct messages, quotes, the Thread window, images and reconnects: the unit tests (`tests/dingtalk.spec.ts`) cover them.

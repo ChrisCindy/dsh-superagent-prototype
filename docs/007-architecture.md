@@ -252,13 +252,13 @@ Each model request binds the Session to the current prompt revision. The revisio
 | `src/app/tools/main.ts`, `src/app/tools/executor.ts` | Tool arguments of the main Session and the Executor Sessions into calls of the core classes, and their results into cards |
 | `src/app/http.ts`, `src/app/views/`, `src/app/api.ts` | HTTP requests into calls, and Store reads into the panel's views; `api.ts` types every route for the panel |
 | `src/app/resources.ts`, `src/app/links.ts`, `src/app/cards.ts` | Resource names into reads, source messages into links, records into compact cards for models |
-| `src/sources/github*.ts`, `src/sources/feishu*.ts`, `src/sources/dingtalk*.ts`, `src/sources/schedule.ts`, `src/sources/poll.ts` | GitHub, Feishu and DingTalk payloads and schedule search hits into Triggers and Thread facts, and messages into CLI or OpenAPI calls |
+| `src/sources/github*.ts`, `src/sources/feishu*.ts`, `src/sources/schedule.ts`, `src/sources/poll.ts` | GitHub and Feishu payloads and schedule search hits into Triggers and Thread facts, and messages into CLI calls |
 | `src/deployment.ts`, `src/setup.ts`, `src/infra/` | Setup probes and problems, CLI transport, the agent's process environment |
 
 ## Dependency rules
 
 - **Explicit, narrow dependencies.** Each class receives an interface that names what it uses, mostly as `Pick` types of other classes: `ExecutorHost`, `AssessorHost`, `SessionsHost`, `SettingsHost`, `SetupHost`, `PassesHost` and `OutboxHost` for the core classes, and `HttpHost`, `MainToolsHost`, `ExecutorToolsHost`, `ResourceHost`, `LinkHost` and `SourceContextDeps` for the glue, with the Engine as the `Pick` of the role that calls it. The Runtime passes itself only behind such an interface. A Source plugin injects the `orchestrator` service, which its type names as a `SourceHost`: the registry and `context(kind)`; its kind's code sees only its `SourceContext`.
-- **What may import what.** `src/core` imports nothing outside itself apart from Node's hashing, and does no I/O. `src/sources` imports nothing from `src/app`, and `src/app` imports nothing from `src/sources/github*`, `src/sources/feishu*` or `src/sources/dingtalk*` (`tests/dependencies.spec.ts`). The panel imports only types from the host side, and the plain values of `src/admission.ts`, `src/limits.ts`, `src/setup.ts`, `src/navigation.ts`, `src/sources/host.ts`, `src/core/errors.ts`, `src/core/reasons.ts` and the filter lists of `src/app/api.ts`.
+- **What may import what.** `src/core` imports nothing outside itself apart from Node's hashing, and does no I/O. `src/sources` imports nothing from `src/app`, and `src/app` imports nothing from `src/sources/github*` or `src/sources/feishu*` (`tests/dependencies.spec.ts`). The panel imports only types from the host side, and the plain values of `src/admission.ts`, `src/limits.ts`, `src/setup.ts`, `src/navigation.ts`, `src/sources/host.ts`, `src/core/errors.ts`, `src/core/reasons.ts` and the filter lists of `src/app/api.ts`.
 - **One writer per state.** Each kind of state has one writer, and the others read it or ask that writer.
 
   | State | Writer |
@@ -282,14 +282,14 @@ Generic code reaches a specific Source only through the `SourceKind` hooks, by w
 
 - `channel.limit`: the most words a reply may have. Outbox refuses a longer one.
 - `channel.messageLink` and `repliesTo`: the link of a Trigger's own message, and the Trigger it replies to, for `src/app/links.ts`.
-- `resources`: the originals `orchestrator_read` serves, such as `github/…`, `feishu/…` and `dingtalk/…`.
+- `resources`: the originals `orchestrator_read` serves, such as `github/…` and `feishu/…`.
 - `claim`: binds a reported pull request, collects the files of a `ready` Report under `paths` as `changes`, requests a merge, and gives Ticket cards their `pr_number` (`SourceRegistry.claimant` and `pull`).
 - `ticketEnded`: runs when a Ticket ends. The GitHub kind tells the Ticket's conversations that its pull request merged or closed.
 - `read`: file and directory reads of MasterAssessor (`SourceRegistry.readRepository`).
 - `skill`: the packaged skill Sessions get while the kind is installed, and while `active` holds (`SourceRegistry.skills`).
 - `setup`: the configuration keys setup reads (`setupChanged`).
 
-Some knowledge of GitHub and Feishu stays outside `src/sources`. Setup (`src/app/setup.ts`, `src/deployment.ts`) resolves the GitHub account and the Feishu bot, which `Deployment`, `Commands` and the worker shims use before any Source plugin registers, and checks the DingTalk app's credentials and Stream mode before its Source connects. So only those three kinds receive account problems through `SourceContext.problem`. Migration converts their records of older schemas, and keeps its own copy of the formats it writes.
+Some knowledge of GitHub and Feishu stays outside `src/sources`. Setup (`src/app/setup.ts`, `src/deployment.ts`) resolves the GitHub account and the Feishu bot, which `Deployment`, `Commands` and the worker shims use before any Source plugin registers. So only those two kinds receive account problems through `SourceContext.problem`. Migration converts their records of older schemas, and keeps its own copy of the formats it writes.
 
 
 ## Modules
@@ -319,6 +319,7 @@ Each row is the first paragraph of the comment its file opens with; `node script
 | `src/limits.ts` | The limits of the values a person sets, which the settings schemas check and the panel's fields offer |
 | `src/kv.ts` | `KV`: every family of `kv` records with its key, its value's type and its owner, and the `Key` and `Family` types the Store and `SourceContext.state` take |
 | `src/navigation.ts` | Opens a DeepSeek Harness Session from the panel once the host's catalog lists it |
+| `src/codehost.ts` | The code-host adapter contract, version 1: the operations an operator's adapter command answers, their zod schemas (the source of truth that docs/010 describes and `contractSchemas` exports as JSON Schema), `adapterCall`, and setup of the code-host Sources: `resolveCodehost` checks each instance's adapter, account and repository, the merge adapter and the worker CLI, and returns the warnings that leave dsh-superagent running |
 | `src/core/model.ts` | The domain types, among them the typed Ticket and `MandateBasis`, with `threadKey`, `ticketOutcome`, `reached`, `followupOwners`, `settled`, `waitsForPerson`, `liveTicket`, `runningAssignment`, `latestAssignment` and `latestReport` |
 | `src/core/ports.ts` | The ports: `Repositories`, `Policy`, `SourceScope`, `Assessor`, `Executor`, `Outbox`, and the domain events |
 | `src/core/engine.ts` | The Engine, the core's entry point, and the role interfaces `EngineForSources`, `EngineForMainSession`, `EngineForPeople`, `EngineForSettings` and `EngineForExecutor` |
@@ -391,6 +392,10 @@ Each row is the first paragraph of the comment its file opens with; `node script
 | `src/sources/feishu-read.ts` | The `feishu/` reads of a Trigger's message, its root, parent and topic, and `feishuThreadContext`, which gives them to assessments with their images |
 | `src/sources/admission-context.ts` | The bounded window an assessment starts from: the first pages of a Trigger's Thread, read through its kind, and the messages around the Trigger |
 | `src/sources/feishu-image.ts` | Reads a Feishu message's image as an attachment for the assessing Session |
+| `src/sources/codehost-pull.ts` | The code-host pull request rules: which pull requests a Ticket follows (`claimPr`, `observePr`), the closes it reports to the Engine, their CI as Triggers (`pollChecks`), the end notices for other conversations, and `orchestrator_merge_request`'s host checks (`mergeChecks`) before the merge adapter enables auto-merge of the checked head commit (`requestMerge`) |
+| `src/sources/codehost-read.ts` | The code-host Source's reads through its adapter: the `codehost/` resources, `codehostThreadContext` (an Issue's or pull request's conversation by page) and `readCodehostPath`, a repository file or directory for assessments |
+| `src/sources/codehost-trigger.ts` | The code-host Source's adapter calls (`codehostCall`, `mergeCall`), its Thread ids (`12` for an Issue, `!12` for a pull request), adapter events and CI changes as Triggers, and its Channel: comments posted once by their idempotency marker, `sent` or `gone` |
+| `src/sources/codehost.ts` | The code-host kind and plugin entry, exported as `./codehost-watch`: a Source for a code host that an operator's adapter command reaches (docs/010). A poll round reads the adapter's events after its cursor, then the pull requests of open Tickets with their CI |
 | `src/sources/dingtalk-channel.ts` | The DingTalk Channel: the robot's markdown messages to a group or a person, `sent` or `gone` |
 | `src/sources/dingtalk-loops.ts` | The DingTalk loop and intake: the Stream mode connection with its health and backoff, and what a robot message does on the way in: the Thread it joins (`threadOf`), its Trigger, the Thread's transcript and the sender's Thread window |
 | `src/sources/dingtalk-read.ts` | The `dingtalk/` reads of a Trigger's message and its Thread, and `dingtalkThreadContext`, which gives the Thread to assessments with its images. DingTalk keeps no message history a robot may read, so a Thread is what the Source received and sent on it, its transcript; an image is downloaded with the robot's download code |
@@ -428,7 +433,7 @@ Each row is the first paragraph of the comment its file opens with; `node script
 
 <!-- modules:end -->
 
-`src/sources/github.ts`, `src/sources/feishu.ts`, `src/sources/schedule.ts` and `src/sources/dingtalk.ts` are also the entries of the four Source plugins, built by `tsdown.config.ts` and exported in `package.json` as `./github-watch`, `./feishu-watch`, `./schedule-watch` and `./dingtalk-watch`. The bundle's `cordis.patch.yml` inserts the five plugins, with Feishu, the schedule Source and DingTalk disabled.
+`src/sources/github.ts`, `src/sources/feishu.ts` and `src/sources/schedule.ts` are also the entries of the three Source plugins, built by `tsdown.config.ts` and exported in `package.json` as `./github-watch`, `./feishu-watch` and `./schedule-watch`. The bundle's `cordis.patch.yml` inserts the four plugins, with Feishu and the schedule Source disabled.
 
 ## Tests
 
@@ -500,8 +505,9 @@ Each row is the first paragraph of the comment its file opens with; `node script
 | `tests/locales.spec.ts` | The copy in both languages |
 | `tests/styles.spec.ts` | The stylesheet: only classes a component uses, and one rule per line |
 | `tests/class-docs.spec.ts` | Every class in `src` has a JSDoc block before it |
-| `tests/e2e/superagent.e2e.ts` | Only with `pnpm test:e2e` (tests/e2e/README.md): the bundle in a real DeepSeek Harness installation, through `scripts/dsh-superagent` and the management API, with fake `gh`, `lark-cli` and DingTalk and a scripted model: setup, the API's shapes, a mention through acceptance, the worker and the result reply, the Feishu bot setup, a second GitHub Source for another repository, a schedule entry's Trigger on an Issue's Thread that a restart does not repeat, the DingTalk Source's setup and a mention of its robot carried to the replies in the group, and the escalations of 009 a worker or local process can try (writing the state directory, merging, the API without the sign-in) |
+| `tests/e2e/superagent.e2e.ts` | Only with `pnpm test:e2e` (tests/e2e/README.md): the bundle in a real DeepSeek Harness installation, through `scripts/dsh-superagent` and the management API, with fake `gh`, `lark-cli`, DingTalk and code-host adapter and a scripted model: setup, the API's shapes, a mention through acceptance, the worker and the result reply, the Feishu bot setup, a second GitHub Source for another repository, a schedule entry's Trigger on an Issue's Thread that a restart does not repeat, the DingTalk Source's setup and a mention of its robot carried to the replies in the group, a code-host Source on the fake adapter of docs/010 from setup to the result reply, and the escalations of 009 a worker or local process can try (writing the state directory, merging, the API without the sign-in) |
 | `tests/docs.spec.ts` | Numbered documents link only to earlier ones, every local link and image resolves, also in the decision records, no document has merge conflict markers or a Mermaid block, and the module and test tables of 007 Architecture list every module and every test, as `scripts/doc-tables.ts` writes them |
+| `tests/codehost.spec.ts` | The code-host Source: translation, a poll round and its cursor, the Channel, pull request binding, CI, merge checks and setup |
 | `tests/dingtalk.spec.ts` | The DingTalk Source: robot messages as Triggers and the Threads they join, intake with its transcript and Thread windows, the gate and the admission rows, the Channel, the OpenAPI client with its credentials and token cache, setup's check, the Stream mode connection, the loop's health and backoff, and the reads |
 
 <!-- tests:end -->
@@ -555,7 +561,7 @@ The `prune` effect (`src/app/retention.ts`) runs once a day. It reads the `reten
 - A Trigger older than the cutoff once none of its Threads is kept and no kept Ticket came from it or took it as an Input, with its disposition.
 - A Ticket that ended before the cutoff and that no kept Thread subscribes to, with the `session-prompts:` record of its worker.
 - The outbox receipts of a pruned Ticket, or of a pruned Thread when they have no Ticket, once they are `sent` or `dropped` and have no `reply` effect.
-- The Source records of a pruned Thread, as `THREAD_RECORDS` in `src/kv.ts` lists them: the GitHub read cursor and CI fingerprint of its number, the seen Feishu messages of its key, the DingTalk transcript of its key.
+- The Source records of a pruned Thread, as `THREAD_RECORDS` in `src/kv.ts` lists them: the GitHub read cursor and CI fingerprint of its number, the seen Feishu messages of its key.
 - `event` rows older than the cutoff.
 - Settings and prompt versions beyond the newest ones kept, except the current ones and the prompt version a Session works under now.
 
@@ -655,7 +661,6 @@ Ticket cards use the closed `TICKET_STATES` set from `src/app/cards.ts`: an open
 | `prompts`, `prompts/<revision>`, `prompts/current`, `prompts/defaults`, `prompt-preview/<id>` | Prompt configurations and composed text |
 | `models`, `models/<provider>` | Available models |
 | `feishu/<trigger id>/…`, `github/…` | Original Source records, described in the Source skills |
-| `dingtalk/<trigger id>/message`, `dingtalk/<trigger id>/thread` | A DingTalk Trigger's message, and the transcript of its Thread |
 
 Ticket Threads are marked `context` for context-only follows and `bound` for Source bindings. Assignment pages are newest first and include report previews. Continue lists with `next_offset`. `/input/<id>` accepts an Input's name or id. `settings` includes small blocks in full and summarizes Policy and Source blocks.
 
